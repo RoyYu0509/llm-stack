@@ -64,7 +64,7 @@ uv run python ./cs336-basics/cs336_basics/trainer.py \
 # Text Generation
 ```
 uv run python ./cs336-basics/cs336_basics/text_gen.py \
-    --model-checkpoint ./cs336-basics/artifacts/transformer-lm:v46/iter_4999-loss_10.660388946533203.pt \
+    --model-checkpoint ./cs336-basics/artifacts/iter_4999-loss_10.660388946533203.pt \
     --input-text "Once, there were" \
     --max-new-tokens 500 \
     --temperature 0.75 \

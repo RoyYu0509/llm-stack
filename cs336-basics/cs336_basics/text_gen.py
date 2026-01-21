@@ -59,7 +59,11 @@ toeknizer = Tokenizer.from_files(VOCAB_PATH, MERGES_PATH, special_tokens=["<|end
 model = TransformerLM(VOCAB_SIZE, CONTEXT_LENGTH, NUM_LAYERS, D_MODEL, NUM_HEADS, D_FF, ROPE_THETA,
                          device=DEVICE, dtype=DTYPE)
 # Load the model checkpoint
-model.load_state_dict(torch.load(MODEL_CHECKPOINT)["model"])
+if DEVICE == "cuda":
+    checkpoint = torch.load(MODEL_CHECKPOINT, map_location="cuda")
+    model.load_state_dict(checkpoint["model"])
+else:
+    model.load_state_dict(torch.load(MODEL_CHECKPOINT)["model"])
 model.eval()
 
 def generate_next(model, tokenizer, input_text, temperature, top_p, device):
