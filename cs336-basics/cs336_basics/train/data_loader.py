@@ -3,7 +3,10 @@ import torch
 
 def data_loading(x, batch_size, context_length, device="cpu", offsets=None):
     """
-    Sample `batch_size` sequences of length `context_length` from 1D token tensor `x`.
+    Sample `batch_size` number of sequences of length `context_length` from 
+    1D token tensor `x`. Input and target sequences are returned, where targets are
+    the input sequences shifted by one token.
+
     Uses pure torch ops so the CPU-to-GPU copy can be overlapped (non-blocking).
     """
     if context_length > x.shape[0]:

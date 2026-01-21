@@ -58,6 +58,7 @@ from cs336_basics.bpe_tokenizer.tokenizer import Tokenizer
 toeknizer = Tokenizer.from_files(VOCAB_PATH, MERGES_PATH, special_tokens=["<|endoftext|>"])
 model = TransformerLM(VOCAB_SIZE, CONTEXT_LENGTH, NUM_LAYERS, D_MODEL, NUM_HEADS, D_FF, ROPE_THETA,
                          device=DEVICE, dtype=DTYPE)
+# Load the model checkpoint
 model.load_state_dict(torch.load(MODEL_CHECKPOINT)["model"])
 model.eval()
 
@@ -99,9 +100,13 @@ def generate_text(model, tokenizer, input_text, max_new_tokens, temperature, top
 
 
 def main():
-    generated_text = generate_text(model, toeknizer, INPUT_TEXT, MAX_NEW_TOKENS, TEMPERATURE, TOP_P, DEVICE)
-    print("Generated Text:")
-    print(generated_text)
+    model.eval()
+    model.to(DEVICE)
+    for i in range(5):
+        generated_text = generate_text(model, toeknizer, INPUT_TEXT, MAX_NEW_TOKENS, TEMPERATURE, TOP_P, DEVICE)
+        print(f"Generated Text {i}:")
+        print(f"============================")
+        print(generated_text)
 
 if __name__ == "__main__":
     main()
