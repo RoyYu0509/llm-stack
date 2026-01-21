@@ -12,3 +12,8 @@ uv run python profiling.py \
     --VOCAB_SIZE 10000 \
     --DEVICE "cuda" \
 ```
+
+
+```
+uv run nsys profile -o result python profiling.py
+```
