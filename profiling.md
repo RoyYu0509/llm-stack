@@ -17,3 +17,8 @@ uv run python profiling.py \
 ```
 uv run nsys profile -o result python profiling.py
 ```
+
+```
+nsys profile -t cuda,nvtx -o my_profile_report python profiling.py
+
+```
