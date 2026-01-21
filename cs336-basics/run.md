@@ -69,7 +69,7 @@ uv run python ./cs336-basics/cs336_basics/text_gen.py \
     --max-new-tokens 500 \
     --temperature 0.75 \
     --top-p 0.9 \
-    --device "mps" \
+    --device "cuda" \
     --dtype "float32" \
     --vocab-path ./cs336-basics/cs336_basics/bpe_tokenizer/vocab_id2b_dict.pkl \
     --merges-path ./cs336-basics/cs336_basics/bpe_tokenizer/merges_seq.pkl \
