@@ -10,7 +10,6 @@ uv run python ./cs336-basics/cs336_basics/build_tokenizer.py \
 # Build the NumPy data from the raw text (train + valid)
 ```
 uv run python ./cs336-basics/cs336_basics/build_dataset.py \
-    --size 5000000 \
     --text-path  ./cs336-basics/data/ts.txt \
     --vocab-path ./cs336-basics/cs336_basics/bpe_tokenizer/vocab_id2b_dict.pkl \
     --merges-path ./cs336-basics/cs336_basics/bpe_tokenizer/merges_seq.pkl \
@@ -54,7 +53,7 @@ uv run python ./cs336-basics/cs336_basics/trainer.py \
     --MAX_ITERS 5000 \
     --EPOCHES 5000 \
     --WANDB_PROJECT "Train_Transformer_LM" \
-    --DEVICE "mps" \
+    --DEVICE "cuda" \
     --COMPILE \
     --EVAL_INTERVAL 100 \
     --SAVE_INTERVAL 200 

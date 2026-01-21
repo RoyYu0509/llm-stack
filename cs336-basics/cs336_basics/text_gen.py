@@ -40,7 +40,13 @@ MAX_NEW_TOKENS = args.max_new_tokens
 TEMPERATURE = args.temperature
 TOP_K = args.top_k
 TOP_P = args.top_p
+# Add a safe fall back
 DEVICE = args.device
+if DEVICE.startswith("cuda") and not torch.cuda.is_available():
+    print("CUDA is not available; switching to MPS.")
+    DEVICE = "mps"
+
+
 DTYPE = DTYPE_DICT[args.dtype]
 VOCAB_SIZE = args.vocab_size
 CONTEXT_LENGTH = args.context_length

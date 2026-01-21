@@ -86,8 +86,11 @@ ADAM_EPS = args.ADAM_EPS
 GRAD_CLIP = args.GRAD_CLIP
 MAX_ITERS = args.MAX_ITERS
 WARMUP_ITERS = args.WARMUP_ITERS
-
+# Add a safe fall back
 DEVICE = args.DEVICE
+if DEVICE.startswith("cuda") and not torch.cuda.is_available():
+    print("CUDA is not available; switching to CPU.")
+    DEVICE = "mps"
 DTYPE = DTYPE_DICT[args.DTYPE]
 COMPILE = args.COMPILE
 
