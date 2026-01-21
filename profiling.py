@@ -25,14 +25,6 @@ config_df = pd.DataFrame({
     "NUM_LAYERS": [2, 6, 12, 24],
 })
 
-config_df = pd.DataFrame({
-    "SIZE": ["s",],
-    "D_MODEL": [128,],
-    "NUM_HEADS": [4, ],      # head dim ~32–64
-    "D_FF": [512, ], # ≈4×d_model
-    "NUM_LAYERS": [2,],
-})
-
 
 # Data / experiment setup.
 parser.add_argument("--WARM_UP_ITER", type=int, required=True, help="Path to tokenized training data file.")
