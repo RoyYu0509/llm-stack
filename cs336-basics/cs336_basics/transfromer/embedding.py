@@ -2,6 +2,7 @@ from cs336_basics.transfromer.para_init import trunct_normal_para_init
 import torch
 from jaxtyping import Float, Int
 from einops import rearrange, einsum
+import torch.cuda.nvtx as nvtx
 
 class Embedding(torch.nn.Module):
     def __init__(self, num_embeddings, embedding_dim, device=None, dtype=None):
@@ -27,6 +28,7 @@ class Embedding(torch.nn.Module):
         self.device = device
         self.dtype = dtype
 
+    @nvtx.range("Embedding_forward")
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         """
         Return the embedding vectors of the given token IDs.

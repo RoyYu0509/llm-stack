@@ -4,6 +4,8 @@ from torch import Tensor
 from einops import rearrange, reduce, repeat, einsum
 from cs336_basics.transfromer.para_init import trunct_normal_para_init
 from cs336_basics.transfromer.scaled_dot_prod_attention import softmax, scaled_dot_product_attention
+import torch.cuda.nvtx as nvtx
+
 
 class MultiHeadsAttention(torch.nn.Module):
     def __init__(self,d_model: int, heads_num: int, pos_encod=None, token_positions=None, device=None, dtype=torch.float16):
@@ -71,6 +73,7 @@ class MultiHeadsAttention(torch.nn.Module):
         self.pos_encod = pos_encod 
         self.token_positions = token_positions  # optional fallback
 
+    @nvtx.range("MultiHeadsAttention computation")
     def _multiHead(self, x, token_positions=None):
         """
         Return the result of MultiHead(W_Q, W_K, W_V, x) 
@@ -118,6 +121,7 @@ class MultiHeadsAttention(torch.nn.Module):
         seq_len = x.shape[-2]
         return ~torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to(device=x.device)  
     
+    @nvtx.range("MultiHeadsAttention_forward")
     def forward(self, x, token_positions=None):
         """
         Return tensor: W_O @ MultiHead(W_Q, W_K, W_V, x) 
@@ -127,5 +131,6 @@ class MultiHeadsAttention(torch.nn.Module):
 
         multi_head_attention = rearrange(multi_head_attention, "... h seq d_v -> ... seq (h d_v)")
         self.W_O: Float[Tensor, "d_model (h_d_v)"]
-        out = einsum(self.W_O, multi_head_attention, "d_model (h_d_v), ... seq (h_d_v) -> ... seq d_model")
+        with nvtx.range("Output_projection"):
+            out = einsum(self.W_O, multi_head_attention, "d_model (h_d_v), ... seq (h_d_v) -> ... seq d_model")
         return out

@@ -7,7 +7,7 @@ from cs336_basics.transfromer.rmsnorm import Rmsnorm
 from cs336_basics.transfromer.transformer import PreNormTransformer
 from cs336_basics.transfromer.scaled_dot_prod_attention import softmax
 import torch.nn as nn
-import torch
+import torch.cuda.nvtx as nvtx
 
 
 
@@ -185,17 +185,23 @@ class TransformerLM(nn.Module):
             the vocabulary.
         """
         # MatMul: (batch_size, sequence_length) . (vocab_size, embedding_dim) 
-        x = self.in_embedding.forward(x)
+        with nvtx.range("LM Input Embedding"):
+            x = self.in_embedding.forward(x)
+        
         
         batch_size, seq_len = x.shape[0], x.shape[1]
         positions = self.token_positions[:seq_len].unsqueeze(0).expand(batch_size, -1)
         positions = positions.to(x.device)
-        for tf_block in self.tf_layers:
-            x = tf_block.forward(x, token_positions=positions)
 
-        x = self.norm.forward(x)
+        with nvtx.range("LM Tranformer Blocks Forward Pass"):
+            for tf_block in self.tf_layers:
+                x = tf_block.forward(x, token_positions=positions)
 
-        x = self.head.forward(x)
+        with nvtx.range("LM Final Norm"):
+            x = self.norm.forward(x)
+
+        with nvtx.range("LM Output Head"):
+            x = self.head.forward(x)
         
         # softmax(x, -1)  # Softmax muted, Return raw logit
         return x
