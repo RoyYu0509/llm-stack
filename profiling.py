@@ -178,6 +178,7 @@ for _, config in config_df.iterrows():
     backward_pass_times = []
 
     # Warm-up iterations without timing
+    nvtx.range_push("Warm-up")
     for iter in tqdm(range(WARM_UP_ITER), desc="Training", unit="iter"):
         inputs, targets = data_loading(train_data, TR_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
         # Reset the gradients for all learnable parameters.
@@ -188,9 +189,10 @@ for _, config in config_df.iterrows():
         tr_loss.backward()
         cliped_gra_l2 = grad_clip(lm_model.parameters(), GRAD_CLIP) # Clip gradient
         opt.step()
+    nvtx.range_pop()
 
     # Profiling iterations with timing
-    nvtx.range_push("training_loop")
+    nvtx.range_push("Profiling")
     for iter in tqdm(range(PROFILE_ITER), desc="Training", unit="iter"):
         # Data Loading
         inputs, targets = data_loading(train_data, TR_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
