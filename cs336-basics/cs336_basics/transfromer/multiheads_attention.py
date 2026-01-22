@@ -107,7 +107,7 @@ class MultiHeadsAttention(torch.nn.Module):
         multi_head = scaled_dot_product_attention(Q, K, V, bool_mask)
         
         return multi_head
-
+    
     def _build_mask(self, x):
         """
         Return a bool mask for the batch x, True -> Attend To.

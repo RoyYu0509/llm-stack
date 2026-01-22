@@ -20,10 +20,10 @@ parser = argparse.ArgumentParser(description="Training LLM")
 # Profiling Arguments
 config_df = pd.DataFrame({
     "SIZE": ["xl"],
-    "D_MODEL": [1024],
-    "NUM_HEADS": [16],      # head dim ~32–64
-    "D_FF": [4096], # ≈4×d_model
-    "NUM_LAYERS": [24],
+    "D_MODEL": [1280],
+    "NUM_HEADS": [20],      # head dim ~32–64
+    "D_FF": [5120], # ≈4×d_model
+    "NUM_LAYERS": [36],
 })
 
 
@@ -59,6 +59,11 @@ parser.add_argument("--DEVICE", type=str, default="cpu", help="Torch device stri
 parser.add_argument("--DTYPE", type=str, default="float32", help="Torch dtype string, e.g., 'float32', 'bfloat16'.")
 parser.add_argument("--COMPILE", action="store_true", help="Compile the model to enable kernel fusion.")
 
+# Training autocast dtype
+parser.add_argument("--CAST_DTYPE", type=str, default="float32", help="Torch autocast dtype string, e.g., 'float32', 'bfloat16'.")
+
+# Profiling settings
+parser.add_argument("--MEMORY_PROFILE", type=bool, default=False, help="Whether to perform memory profiling during training.")
 
 
 args = parser.parse_args()
@@ -97,6 +102,16 @@ COMPILE = args.COMPILE
 
 SEED = 0
 
+DTYPE_DICT = {
+    "float32": torch.float32,
+    "float16": torch.float16,
+    "bfloat16": torch.bfloat16,
+    "tf32": torch.float32,
+}
+CAST_DTYPE = DTYPE_DICT[args.CAST_DTYPE]
+
+MEMORY_PROFILE = args.MEMORY_PROFILE
+
 
 def timing_wrapper(function_obj:object, inputs: dict=None, contianer:dict=None):
     """
@@ -118,6 +133,9 @@ from cs336_basics.bpe_tokenizer.tokenizer import Tokenizer
 import numpy as np
 from tqdm import tqdm
 from cs336_basics.train.optimizer import lr_scheduler    
+
+if MEMORY_PROFILE:
+    torch.cuda.memory._record_memory_history(max_entries=25_000)
 
 profiling_result = pd.DataFrame(
     columns=["size", "forward_pass_time", "backward_pass_time"]
@@ -181,14 +199,18 @@ for _, config in config_df.iterrows():
     nvtx.range_push("Warm-up")
     for iter in tqdm(range(WARM_UP_ITER), desc="Training", unit="iter"):
         inputs, targets = data_loading(train_data, TR_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
+        
         # Reset the gradients for all learnable parameters.
         opt.zero_grad() 
+        
         #Forward
         prediction = lm_model.forward(x=inputs)
         tr_loss = cross_entropy(prediction, targets)
         tr_loss.backward()
         cliped_gra_l2 = grad_clip(lm_model.parameters(), GRAD_CLIP) # Clip gradient
+
         opt.step()
+
     nvtx.range_pop()
 
     # Profiling iterations with timing
@@ -196,14 +218,23 @@ for _, config in config_df.iterrows():
     for iter in tqdm(range(PROFILE_ITER), desc="Training", unit="iter"):
         # Data Loading
         inputs, targets = data_loading(train_data, TR_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
+
         # Reset the gradients for all learnable parameters.
         opt.zero_grad() 
+
         #Forward
         value = {}
         _sync_device()
         forward_start = timeit.default_timer()
+        
+        # Record the following chunks
         with nvtx.range("forward_pass"):
-            prediction = lm_model.forward(x=inputs)
+            if CAST_DTYPE != torch.float32:
+                with torch.autocast(device_type=DEVICE, dtype=CAST_DTYPE):
+                    prediction = lm_model.forward(x=inputs)
+            else:
+                prediction = lm_model.forward(x=inputs)
+
         _sync_device()
         forward_pass_time = timeit.default_timer() - forward_start
         tr_loss = cross_entropy(prediction, targets)
@@ -211,12 +242,16 @@ for _, config in config_df.iterrows():
         # Backward
         _sync_device()
         backward_start = timeit.default_timer()
+        # Record the following chunks
         with nvtx.range("backward_pass"):
             tr_loss.backward()
+
         _sync_device()
         backward_pass_time = timeit.default_timer() - backward_start
         cliped_gra_l2 = grad_clip(lm_model.parameters(), GRAD_CLIP) # Clip gradient
+        
         opt.step() 
+
         # After bp, all parameters' tensors have collect grad values
         forward_pass_times.append(forward_pass_time)
         backward_pass_times.append(backward_pass_time)
@@ -246,5 +281,11 @@ for _, config in config_df.iterrows():
     if torch.backends.mps.is_available():
         torch.cuda.empty_cache()
 
+    
+
 # Display the profiling summary instead of calling the nonexistent DataFrame.view().
 print(profiling_result)
+
+if MEMORY_PROFILE:
+    torch.cuda.memory._dump_snapshot(f"memory_profile_context_len{CONTEXT_LENGTH}.pickle")
+    torch.cuda.memory._record_memory_history(enabled=None)

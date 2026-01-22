@@ -20,6 +20,7 @@ uv run nsys profile -o result python profiling.py
 
 ```
 source .venv/bin/activate
+
 nsys profile -t cuda,nvtx -o my_profile_report --force-overwrite true python profiling.py \
     --WARM_UP_ITER 10\
     --PROFILE_ITER 10\
@@ -30,6 +31,8 @@ nsys profile -t cuda,nvtx -o my_profile_report --force-overwrite true python pro
     --TR_BAT_SIZE 4 \
     --CONTEXT_LENGTH 256 \
     --VOCAB_SIZE 10000 \
-    --DEVICE "cuda" 
+    --DEVICE "cuda" \
+    --CAST_DTYPE "bfloat16" \
+    --MEMORY_PROFILE True
 
 ```
