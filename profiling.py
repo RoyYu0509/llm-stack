@@ -10,9 +10,6 @@ import torch.cuda.nvtx as nvtx
 os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.9"
 os.environ["PYTORCH_MPS_LOW_WATERMARK_RATIO"] = "0.8"
 
-# Create directory for profiling results
-os.makedirs("./profiling_lm", exist_ok=True)
-
 DTYPE_DICT={
     "float32": torch.float32,
     "float16": torch.float16
@@ -66,8 +63,8 @@ parser.add_argument("--COMPILE", action="store_true", help="Compile the model to
 parser.add_argument("--CAST_DTYPE", type=str, default="float32", help="Torch autocast dtype string, e.g., 'float32', 'bfloat16'.")
 
 # Profiling settings
-parser.add_argument("--MEMORY_PROFILE", type=bool, default=False, help="Whether to perform memory profiling during training.")
-
+parser.add_argument("--MEMORY_PROFILE", action="store_true", help="Whether to perform memory profiling during training.")
+parser.add_argument("--COMPILED", action="store_true", help="Whether to use compiled model.")
 
 args = parser.parse_args()
 
@@ -114,12 +111,18 @@ DTYPE_DICT = {
 CAST_DTYPE = DTYPE_DICT[args.CAST_DTYPE]
 
 MEMORY_PROFILE = args.MEMORY_PROFILE
+COMPILED = args.COMPILED
 
+compiled_str = "compiled" if COMPILED else "uncompiled"
+
+# Create directory for profiling results
+os.makedirs(f"./profiling_lm_{compiled_str}", exist_ok=True)
 
 def timing_wrapper(function_obj:object, inputs: dict=None, contianer:dict=None):
     """
     Define a function wrapper to wrap around the function, 
-    so that we can get the function's return val.
+    so that we can get the function's r
+    eturn val.
     """
     contianer["value"] = function_obj(**inputs)
 
@@ -162,22 +165,10 @@ for _, config in config_df.iterrows():
     # Initialize Modules
     lm_model = TransformerLM(VOCAB_SIZE, CONTEXT_LENGTH, NUM_LAYERS, D_MODEL, NUM_HEADS, D_FF, ROPE_THETA,
                             device=DEVICE, dtype=DTYPE)
-    """ DON'T COMPILE
-    if COMPILE:
-        # Pick a backend based on the selected device.
-        if DEVICE.startswith("cuda") and torch.cuda.is_available():
-            backend = "inductor"
-        elif DEVICE.startswith("mps") and torch.backends.mps.is_available():
-            # aot_eager is currently the most stable backend for MPS.
-            backend = "aot_eager"
-        else:
-            backend = "eager"
-        try:
-            lm_model = torch.compile(lm_model, mode="reduce-overhead", backend=backend)
-            print(f"Compiled model with backend='{backend}' for kernel fusion.")
-        except Exception as compile_err:
-            print(f"torch.compile failed ({compile_err}); continuing without compilation.")
-    """
+    if COMPILED:
+        lm_model = torch.compile(lm_model)
+    lm_model.to(device=DEVICE, dtype=DTYPE)
+
     opt = AdamW(lm_model.parameters(), LR, WEIGHT_DECAY, BETAS)
     toeknizer = Tokenizer.from_files(VOCAB_PATH, MERGES_PATH, special_tokens=["<|endoftext|>"])
 

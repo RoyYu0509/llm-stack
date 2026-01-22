@@ -11,18 +11,23 @@ import torch.cuda.nvtx as nvtx
 import os
 import tqdm
 
-# Create directory for profiling results
-os.makedirs("./profiling_attention", exist_ok=True)
+
 
 parser = argparse.ArgumentParser(description="Benchmarking Attention Mechanism")
 parser.add_argument("--DTYPE", type=str, default="float32", help="Data type for the tensors")
 parser.add_argument("--PROFILE_FORWARD_MEMORY", type=bool, default=False, help="Whether to perform memory profiling during forward pass.")
 parser.add_argument("--PROFILE_BACKWARD_MEMORY", type=bool, default=False, help="Whether to perform memory profiling during backward pass.")
+parser.add_argument("--COMPILED", action="store_true", help="Whether to use compiled attention module")
+
 args = parser.parse_args()
 DTYPE = getattr(torch, args.DTYPE)
 PROFILE_FORWARD_MEMORY = args.PROFILE_FORWARD_MEMORY
 PROFILE_BACKWARD_MEMORY = args.PROFILE_BACKWARD_MEMORY
+COMPILED = args.COMPILED
+COMPILED_STR = "True" if COMPILED else "False"
 
+# Create directory for profiling results
+os.makedirs(f"./profiling_attention_compile=={COMPILED_STR}", exist_ok=True)
 
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
@@ -51,6 +56,9 @@ def benchmarking_naive_attention(
     for head, d_model in itertools.product(heads_num, d_models):
         print(f"Benchmarking MultiHead Attention: heads={head}, d_model={d_model}")
         mha = MultiHeadsAttention(d_model, head, device=device, dtype=dtype)
+        if COMPILED:
+            mha = torch.compile(mha)
+        mha.to(device=device, dtype=dtype)
         opt = AdamW(mha.parameters(), lr=1e-4, weight_decay=0.01, betas=(0.9, 0.999), eps=1e-8)
         forward_times = 0
         backward_times = 0
@@ -122,8 +130,8 @@ def benchmarking_naive_attention(
             
             
 def main():
-    heads_num = [32, 64]
-    d_models = [1024, 4096, 8192]
+    heads_num = [32]
+    d_models = [2560]
     print("Starting...")
 
     df = benchmarking_naive_attention(
@@ -136,7 +144,7 @@ def main():
     )
 
     # Save to csv
-    df.to_csv("./profiling_attention/benchmark_attention.csv", index=False)
+    df.to_csv(f"./profiling_attention_compile=={COMPILED}/benchmark_attention.csv", index=False)
     print("Benchmarking results saved to benchmark_attention.csv")        
 
 
