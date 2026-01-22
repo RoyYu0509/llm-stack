@@ -9,7 +9,7 @@ from cs336_basics.transfromer.scaled_dot_prod_attention import softmax
 import torch.nn as nn
 import torch.cuda.nvtx as nvtx
 import torch
-
+import torch.cuda.nvtx as nvtx
 
 
 class TransformerLM(nn.Module):
@@ -175,7 +175,7 @@ class TransformerLM(nn.Module):
         # Output Linear Block
         self.head = Linear(d_model, vocab_size, device=device, dtype=dtype)
 
-
+    
     def forward(self, x):
         """
         Input: 

@@ -19,11 +19,11 @@ parser = argparse.ArgumentParser(description="Training LLM")
 
 # Profiling Arguments
 config_df = pd.DataFrame({
-    "SIZE": ["s", "m", "l", "xl"],
-    "D_MODEL": [128, 512, 768, 1024],
-    "NUM_HEADS": [4, 8, 12, 16],      # head dim ~32–64
-    "D_FF": [512, 2048, 3072, 4096], # ≈4×d_model
-    "NUM_LAYERS": [2, 6, 12, 24],
+    "SIZE": ["xl"],
+    "D_MODEL": [1024],
+    "NUM_HEADS": [16],      # head dim ~32–64
+    "D_FF": [4096], # ≈4×d_model
+    "NUM_LAYERS": [24],
 })
 
 
@@ -177,31 +177,41 @@ for _, config in config_df.iterrows():
     forward_pass_times = []
     backward_pass_times = []
     for iter in tqdm(range(EPOCHES), desc="Training", unit="iter"):
+        # Data Loading
         inputs, targets = data_loading(train_data, TR_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
         # Reset the gradients for all learnable parameters.
         opt.zero_grad() 
-
-        #Forward
-        value = {}
-        _sync_device()
-        with nvtx.range("forward_pass"):
+        if iter > WARM_UP_ITER:
+            #Forward
+            value = {}
+            _sync_device()
             forward_start = timeit.default_timer()
-        timing_wrapper(lm_model.forward, {"x":inputs}, value)
-        _sync_device()
-        forward_pass_time = timeit.default_timer() - forward_start
-        prediction = value["value"]
-        tr_loss = cross_entropy(prediction, targets)
+            with nvtx.range("forward_pass"):
+                prediction = lm_model.forward(x=inputs)
+            _sync_device()
+            forward_pass_time = timeit.default_timer() - forward_start
+            tr_loss = cross_entropy(prediction, targets)
 
-        # Backward
-        _sync_device()
-        backward_start = timeit.default_timer()
-        with nvtx.range("backward_pass"):
+            # Backward
+            _sync_device()
+            backward_start = timeit.default_timer()
+            with nvtx.range("backward_pass"):
+                tr_loss.backward()
+            _sync_device()
+            backward_pass_time = timeit.default_timer() - backward_start
+            cliped_gra_l2 = grad_clip(lm_model.parameters(), GRAD_CLIP) # Clip gradient
+            opt.step() 
+            # After bp, all parameters' tensors have collect grad values
+            forward_pass_times.append(forward_pass_time)
+            backward_pass_times.append(backward_pass_time)
+
+        else:
+            # Warm-up iterations without timing
+            prediction = lm_model.forward(x=inputs)
+            tr_loss = cross_entropy(prediction, targets)
             tr_loss.backward()
-        _sync_device()
-        backward_pass_time = timeit.default_timer() - backward_start
-        cliped_gra_l2 = grad_clip(lm_model.parameters(), GRAD_CLIP) # Clip gradient
-        opt.step() 
-        # After bp, all parameters' tensors have collect grad values
+            cliped_gra_l2 = grad_clip(lm_model.parameters(), GRAD_CLIP) # Clip gradient
+            opt.step()
 
         # adjust learning rate
         lr = lr_scheduler(
@@ -213,10 +223,7 @@ for _, config in config_df.iterrows():
         )
         for group in opt.param_groups:
             group["lr"] = lr
-
-        if iter > WARM_UP_ITER:
-            forward_pass_times.append(forward_pass_time)
-            backward_pass_times.append(backward_pass_time)
+           
     
     # Store the profiling results
     profiling_result.loc[len(profiling_result)] = [SIZE, 
