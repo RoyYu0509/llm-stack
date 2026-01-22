@@ -5,6 +5,7 @@ import os
 import torch
 import pandas as pd
 import os
+import torch.cuda.nvtx as nvtx
 
 os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.9"
 os.environ["PYTORCH_MPS_LOW_WATERMARK_RATIO"] = "0.8"
@@ -86,8 +87,11 @@ ADAM_EPS = args.ADAM_EPS
 GRAD_CLIP = args.GRAD_CLIP
 MAX_ITERS = args.MAX_ITERS
 WARMUP_ITERS = args.WARMUP_ITERS
-
+# Add a safe fall back
 DEVICE = args.DEVICE
+if DEVICE.startswith("cuda") and not torch.cuda.is_available():
+    print("CUDA is not available; switching to CPU.")
+    DEVICE = "mps"
 DTYPE = DTYPE_DICT[args.DTYPE]
 COMPILE = args.COMPILE
 
@@ -176,24 +180,28 @@ for _, config in config_df.iterrows():
         inputs, targets = data_loading(train_data, TR_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
         # Reset the gradients for all learnable parameters.
         opt.zero_grad() 
+
         #Forward
         value = {}
         _sync_device()
-        forward_start = timeit.default_timer()
+        with nvtx.range("forward_pass"):
+            forward_start = timeit.default_timer()
         timing_wrapper(lm_model.forward, {"x":inputs}, value)
         _sync_device()
         forward_pass_time = timeit.default_timer() - forward_start
         prediction = value["value"]
         tr_loss = cross_entropy(prediction, targets)
+
         # Backward
         _sync_device()
         backward_start = timeit.default_timer()
-        tr_loss.backward()
+        with nvtx.range("backward_pass"):
+            tr_loss.backward()
         _sync_device()
         backward_pass_time = timeit.default_timer() - backward_start
         cliped_gra_l2 = grad_clip(lm_model.parameters(), GRAD_CLIP) # Clip gradient
-        opt.step() # After bp, all parameters' tensors have collect grad values
-
+        opt.step() 
+        # After bp, all parameters' tensors have collect grad values
 
         # adjust learning rate
         lr = lr_scheduler(

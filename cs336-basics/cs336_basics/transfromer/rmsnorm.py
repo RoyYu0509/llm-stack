@@ -2,6 +2,8 @@ import torch
 from einops import reduce, einsum
 from jaxtyping import Float, Int
 from einops import rearrange
+import torch.cuda.nvtx as nvtx
+
 
 class Rmsnorm(torch.nn.Module):
     def __init__(self, d_model: int, eps: float = 1e-5, device=None, dtype=None):
@@ -24,7 +26,7 @@ class Rmsnorm(torch.nn.Module):
         gain = torch.ones(d_model, dtype=self.dtype, device=self.device)
         self.gain: Float[torch.Tensor, "d_model"] = torch.nn.Parameter(gain)
     
-      
+    @nvtx.range("Rmsnorm_forward")
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Process an input tensor of shape (batch_size, sequence_length, d_model)

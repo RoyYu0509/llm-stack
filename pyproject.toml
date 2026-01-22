@@ -3,7 +3,8 @@ name = "cs336-systems"
 version = "1.0.5"
 description = "CS336 Assignment 2 - Systems"
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+requires-python = "==3.12"
+
 dependencies = [
     # local basics package
     "cs336-basics",

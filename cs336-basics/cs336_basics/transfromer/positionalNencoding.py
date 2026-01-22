@@ -3,7 +3,7 @@ from jaxtyping import Float, Array
 from torch import Tensor
 from einops import rearrange, reduce, repeat, einsum
 import torch.nn as nn
-
+import torch.cuda.nvtx as nvtx
 
 class RoPE:
     """
@@ -64,6 +64,7 @@ class PosEncod(nn.Module):
         )
         self.register_buffer("Rs", rotations.to(device=device), persistent=False)
     
+    @nvtx.range("PosEncod_forward")
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
         """
         Process an in_vecput tensor of shape (..., seq_len, d_k) and 

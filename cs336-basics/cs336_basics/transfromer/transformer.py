@@ -8,7 +8,7 @@ from cs336_basics.transfromer.positionalNencoding import PosEncod
 from cs336_basics.transfromer.rmsnorm import Rmsnorm
 import torch.nn as nn
 import torch
-
+import torch.cuda.nvtx as nvtx
 
 class PreNormTransformer(nn.Module):
     def __init__(self,
@@ -71,7 +71,7 @@ class PreNormTransformer(nn.Module):
         self.RMSN2 = Rmsnorm(d_model, eps, device, dtype)
         self.FNN = PointwiseSGLUactFFN(d_model, dim_ff, latent_exp_factor, device, dtype)
 
-
+    @nvtx.range("PreNormTransformer_forward")
     def forward(self,x:torch.Tensor, token_positions=None):
         """
         Return the output from a transformer block.

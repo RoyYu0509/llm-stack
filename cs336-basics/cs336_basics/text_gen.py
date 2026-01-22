@@ -40,7 +40,13 @@ MAX_NEW_TOKENS = args.max_new_tokens
 TEMPERATURE = args.temperature
 TOP_K = args.top_k
 TOP_P = args.top_p
+# Add a safe fall back
 DEVICE = args.device
+if DEVICE.startswith("cuda") and not torch.cuda.is_available():
+    print("CUDA is not available; switching to MPS.")
+    DEVICE = "mps"
+
+
 DTYPE = DTYPE_DICT[args.dtype]
 VOCAB_SIZE = args.vocab_size
 CONTEXT_LENGTH = args.context_length
@@ -58,7 +64,12 @@ from cs336_basics.bpe_tokenizer.tokenizer import Tokenizer
 toeknizer = Tokenizer.from_files(VOCAB_PATH, MERGES_PATH, special_tokens=["<|endoftext|>"])
 model = TransformerLM(VOCAB_SIZE, CONTEXT_LENGTH, NUM_LAYERS, D_MODEL, NUM_HEADS, D_FF, ROPE_THETA,
                          device=DEVICE, dtype=DTYPE)
-model.load_state_dict(torch.load(MODEL_CHECKPOINT)["model"])
+# Load the model checkpoint
+if DEVICE == "cuda":
+    checkpoint = torch.load(MODEL_CHECKPOINT, map_location="cuda")
+    model.load_state_dict(checkpoint["model"])
+else:
+    model.load_state_dict(torch.load(MODEL_CHECKPOINT)["model"])
 model.eval()
 
 def generate_next(model, tokenizer, input_text, temperature, top_p, device):
@@ -99,9 +110,13 @@ def generate_text(model, tokenizer, input_text, max_new_tokens, temperature, top
 
 
 def main():
-    generated_text = generate_text(model, toeknizer, INPUT_TEXT, MAX_NEW_TOKENS, TEMPERATURE, TOP_P, DEVICE)
-    print("Generated Text:")
-    print(generated_text)
+    model.eval()
+    model.to(DEVICE)
+    for i in range(5):
+        generated_text = generate_text(model, toeknizer, INPUT_TEXT, MAX_NEW_TOKENS, TEMPERATURE, TOP_P, DEVICE)
+        print(f"Generated Text {i}:")
+        print(f"============================")
+        print(generated_text)
 
 if __name__ == "__main__":
     main()
