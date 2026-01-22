@@ -8,8 +8,11 @@ from cs336_basics.transfromer.multiheads_attention import MultiHeadsAttention
 import argparse
 from cs336_basics.train.optimizer import AdamW
 import torch.cuda.nvtx as nvtx
+import os
+import tqdm
 
-
+# Create directory for profiling results
+os.makedirs("./profiling_attention", exist_ok=True)
 
 parser = argparse.ArgumentParser(description="Benchmarking Attention Mechanism")
 parser.add_argument("--DTYPE", type=str, default="float32", help="Data type for the tensors")
@@ -41,7 +44,7 @@ def benchmarking_naive_attention(
     # Record
     df = pd.DataFrame({
         "heads_num": [],
-        "context_length": [],
+        "d_model": [],
         "forward_time": [],
         "backward_time": [],
     })
@@ -49,8 +52,8 @@ def benchmarking_naive_attention(
         print(f"Benchmarking MultiHead Attention: heads={head}, d_model={d_model}")
         mha = MultiHeadsAttention(d_model, head, device=device, dtype=dtype)
         opt = AdamW(mha.parameters(), lr=1e-4, weight_decay=0.01, betas=(0.9, 0.999), eps=1e-8)
-        forward_times = []
-        backward_times = []
+        forward_times = 0
+        backward_times = 0
         
         # Warm-up
         nvtx.range_push("Warm-up")
@@ -62,7 +65,8 @@ def benchmarking_naive_attention(
 
         # Benchmarking
         nvtx.range_push("Benchmarking")
-        for _ in range(100):
+        tqdm_iter = 100
+        for _ in tqdm.tqdm(range(tqdm_iter), desc=f"heads={head}, d_model={d_model}"):
             opt.zero_grad()
             # Create random QKV matrix 
             shape = (batch_size, context_length, d_model)
@@ -75,12 +79,13 @@ def benchmarking_naive_attention(
             # forward
             _sync_device()
             start_time = timeit.default_timer()
-            y = mha._multiHead(x, token_positions=torch.arange(context_length, device=device, dtype=torch.long))
+            with nvtx.range("forward_pass"):
+                y = mha._multiHead(x, token_positions=torch.arange(context_length, device=device, dtype=torch.long))
             forward_time = timeit.default_timer() - start_time
             _sync_device()
 
             if PROFILE_FORWARD_MEMORY:
-                torch.cuda.memory._dump_snapshot(f"memory_profile_mha_forward.pickle")
+                torch.cuda.memory._dump_snapshot(f"./profiling_attention/head{head}_dmodel{d_model}_mem_f.pickle")
                 torch.cuda.memory._record_memory_history(enabled=None)
 
 
@@ -89,36 +94,35 @@ def benchmarking_naive_attention(
             # backward
             _sync_device()
             start_time = timeit.default_timer()
-            y.sum().backward()
+            with nvtx.range("backward_pass"):
+                y.sum().backward()
             backward_time = timeit.default_timer() - start_time
             _sync_device()
             if PROFILE_BACKWARD_MEMORY:
-                torch.cuda.memory._dump_snapshot(f"memory_profile_mha_backward.pickle")
+                torch.cuda.memory._dump_snapshot(f"./profiling_attention/head{head}_dmodel{d_model}_mem_b.pickle")
                 torch.cuda.memory._record_memory_history(enabled=None)
 
             # Do not update parameters
             # opt.step()
-            forward_times.append(forward_time)
-            backward_times.append(backward_time)
-
+            forward_times += forward_time
+            backward_times += backward_time
         nvtx.range_pop()
 
         # Record
         df = pd.concat([df, pd.DataFrame({
             "heads_num": [head],
             "d_model": [d_model],
-            "forward_time": [sum(forward_times)],
-            "backward_time": [sum(backward_times)],
+            "forward_time": [forward_times],
+            "backward_time": [backward_times],
         })], ignore_index=True)
         
         del mha
         torch.cuda.empty_cache()
-
     return df
             
             
 def main():
-    heads_num = [64, 128]
+    heads_num = [32, 64]
     d_models = [1024, 4096, 8192]
     print("Starting...")
 
@@ -132,7 +136,7 @@ def main():
     )
 
     # Save to csv
-    df.to_csv("benchmark_attention.csv", index=False)
+    df.to_csv("./profiling_attention/benchmark_attention.csv", index=False)
     print("Benchmarking results saved to benchmark_attention.csv")        
 
 

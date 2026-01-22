@@ -10,6 +10,9 @@ import torch.cuda.nvtx as nvtx
 os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.9"
 os.environ["PYTORCH_MPS_LOW_WATERMARK_RATIO"] = "0.8"
 
+# Create directory for profiling results
+os.makedirs("./profiling_lm", exist_ok=True)
+
 DTYPE_DICT={
     "float32": torch.float32,
     "float16": torch.float16
@@ -226,7 +229,7 @@ for _, config in config_df.iterrows():
         value = {}
         _sync_device()
         forward_start = timeit.default_timer()
-        
+
         # Record the following chunks
         with nvtx.range("forward_pass"):
             if CAST_DTYPE != torch.float32:
@@ -287,5 +290,5 @@ for _, config in config_df.iterrows():
 print(profiling_result)
 
 if MEMORY_PROFILE:
-    torch.cuda.memory._dump_snapshot(f"memory_profile_context_len{CONTEXT_LENGTH}.pickle")
+    torch.cuda.memory._dump_snapshot(f"./profiling_lm/memory_profile_context_len{CONTEXT_LENGTH}.pickle")
     torch.cuda.memory._record_memory_history(enabled=None)

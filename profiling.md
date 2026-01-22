@@ -15,13 +15,9 @@ uv run python profiling.py \
 
 
 ```
-uv run nsys profile -o result python profiling.py
-```
-
-```
 source .venv/bin/activate
 
-nsys profile -t cuda,nvtx -o my_profile_report --force-overwrite true python profiling.py \
+nsys profile -t cuda,nvtx -o ./profiling_lm/my_profile_report --force-overwrite true python profiling.py \
     --WARM_UP_ITER 10\
     --PROFILE_ITER 10\
     --TRAIN_PATH ./cs336-basics/data/tokenized/ts_train.npy \
