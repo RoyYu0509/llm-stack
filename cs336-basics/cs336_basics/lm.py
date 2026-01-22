@@ -202,9 +202,10 @@ class TransformerLM(nn.Module):
         positions = positions.to(x.device)
 
         with nvtx.range("LM Tranformer Blocks Forward Pass"):
-            _sync_device(self.device)
             for tf_block in self.tf_layers:
+                _sync_device(self.device)
                 x = tf_block.forward(x, token_positions=positions)
+                _sync_device(self.device)
 
         with nvtx.range("LM Final Norm"):
             x = self.norm.forward(x)
