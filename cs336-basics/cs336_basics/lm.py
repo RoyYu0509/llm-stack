@@ -11,10 +11,10 @@ import torch.cuda.nvtx as nvtx
 import torch
 import torch.cuda.nvtx as nvtx
 
-def _sync_device():
-    if DEVICE.startswith("cuda") and torch.cuda.is_available():
+def _sync_device(device):
+    if device.startswith("cuda") and torch.cuda.is_available():
         torch.cuda.synchronize()
-    elif DEVICE.startswith("mps") and torch.backends.mps.is_available():
+    elif device.startswith("mps") and torch.backends.mps.is_available():
         torch.mps.synchronize()
 
 
@@ -149,6 +149,7 @@ class TransformerLM(nn.Module):
             num_layers:     int | The number of Transformer blocks to use.
         """
         super().__init__()
+        self.device = device
         self.vocab_size = vocab_size
         self.context_length = context_length
         self.num_layers = num_layers
@@ -201,7 +202,7 @@ class TransformerLM(nn.Module):
         positions = positions.to(x.device)
 
         with nvtx.range("LM Tranformer Blocks Forward Pass"):
-            _sync_device()
+            _sync_device(self.device)
             for tf_block in self.tf_layers:
                 x = tf_block.forward(x, token_positions=positions)
 
