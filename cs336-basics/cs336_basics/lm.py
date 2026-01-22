@@ -8,6 +8,7 @@ from cs336_basics.transfromer.transformer import PreNormTransformer
 from cs336_basics.transfromer.scaled_dot_prod_attention import softmax
 import torch.nn as nn
 import torch.cuda.nvtx as nvtx
+import torch
 
 
 
