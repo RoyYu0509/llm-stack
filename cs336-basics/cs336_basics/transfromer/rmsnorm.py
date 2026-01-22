@@ -52,4 +52,5 @@ class Rmsnorm(torch.nn.Module):
         eps = torch.as_tensor(self.eps, device=mean_squared_sum_x.device, dtype=torch.float32)
         rms_x: Float[torch.Tensor, "batch_size, sequence_length, 1"]= torch.sqrt(mean_squared_sum_x + eps).unsqueeze(-1)
         
+
         return ((x)/rms_x * self.gain).to(x_dtype) # scale back to input dtype
