@@ -176,42 +176,48 @@ for _, config in config_df.iterrows():
     # Training Loop
     forward_pass_times = []
     backward_pass_times = []
-    for iter in tqdm(range(EPOCHES), desc="Training", unit="iter"):
+
+    # Warm-up iterations without timing
+    for iter in tqdm(range(WARM_UP_ITER), desc="Training", unit="iter"):
+        inputs, targets = data_loading(train_data, TR_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
+        # Reset the gradients for all learnable parameters.
+        opt.zero_grad() 
+        #Forward
+        prediction = lm_model.forward(x=inputs)
+        tr_loss = cross_entropy(prediction, targets)
+        tr_loss.backward()
+        cliped_gra_l2 = grad_clip(lm_model.parameters(), GRAD_CLIP) # Clip gradient
+        opt.step()
+
+    # Profiling iterations with timing
+    nvtx.range_push("training_loop")
+    for iter in tqdm(range(PROFILE_ITER), desc="Training", unit="iter"):
         # Data Loading
         inputs, targets = data_loading(train_data, TR_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
         # Reset the gradients for all learnable parameters.
         opt.zero_grad() 
-        if iter > WARM_UP_ITER:
-            #Forward
-            value = {}
-            _sync_device()
-            forward_start = timeit.default_timer()
-            with nvtx.range("forward_pass"):
-                prediction = lm_model.forward(x=inputs)
-            _sync_device()
-            forward_pass_time = timeit.default_timer() - forward_start
-            tr_loss = cross_entropy(prediction, targets)
-
-            # Backward
-            _sync_device()
-            backward_start = timeit.default_timer()
-            with nvtx.range("backward_pass"):
-                tr_loss.backward()
-            _sync_device()
-            backward_pass_time = timeit.default_timer() - backward_start
-            cliped_gra_l2 = grad_clip(lm_model.parameters(), GRAD_CLIP) # Clip gradient
-            opt.step() 
-            # After bp, all parameters' tensors have collect grad values
-            forward_pass_times.append(forward_pass_time)
-            backward_pass_times.append(backward_pass_time)
-
-        else:
-            # Warm-up iterations without timing
+        #Forward
+        value = {}
+        _sync_device()
+        forward_start = timeit.default_timer()
+        with nvtx.range("forward_pass"):
             prediction = lm_model.forward(x=inputs)
-            tr_loss = cross_entropy(prediction, targets)
+        _sync_device()
+        forward_pass_time = timeit.default_timer() - forward_start
+        tr_loss = cross_entropy(prediction, targets)
+
+        # Backward
+        _sync_device()
+        backward_start = timeit.default_timer()
+        with nvtx.range("backward_pass"):
             tr_loss.backward()
-            cliped_gra_l2 = grad_clip(lm_model.parameters(), GRAD_CLIP) # Clip gradient
-            opt.step()
+        _sync_device()
+        backward_pass_time = timeit.default_timer() - backward_start
+        cliped_gra_l2 = grad_clip(lm_model.parameters(), GRAD_CLIP) # Clip gradient
+        opt.step() 
+        # After bp, all parameters' tensors have collect grad values
+        forward_pass_times.append(forward_pass_time)
+        backward_pass_times.append(backward_pass_time)
 
         # adjust learning rate
         lr = lr_scheduler(
@@ -223,7 +229,7 @@ for _, config in config_df.iterrows():
         )
         for group in opt.param_groups:
             group["lr"] = lr
-           
+    nvtx.range_pop()  # pop the profiling range
     
     # Store the profiling results
     profiling_result.loc[len(profiling_result)] = [SIZE, 
@@ -236,7 +242,7 @@ for _, config in config_df.iterrows():
     import gc
     gc.collect()
     if torch.backends.mps.is_available():
-        torch.mps.empty_cache()
+        torch.cuda.empty_cache()
 
 # Display the profiling summary instead of calling the nonexistent DataFrame.view().
 print(profiling_result)
