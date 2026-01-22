@@ -121,9 +121,11 @@ import numpy as np
 from tqdm import tqdm
 from cs336_basics.train.optimizer import lr_scheduler    
 
-# Initialize Modules
+# Initialize Model
 lm_model = TransformerLM(VOCAB_SIZE, CONTEXT_LENGTH, NUM_LAYERS, D_MODEL, NUM_HEADS, D_FF, ROPE_THETA,
                          device=DEVICE, dtype=DTYPE)
+
+# If Compile the PyTorch Code
 if COMPILE:
     # Pick a backend based on the selected device.
     if DEVICE.startswith("cuda") and torch.cuda.is_available():
@@ -139,9 +141,12 @@ if COMPILE:
         print(f"Compiled model with backend='{backend}' for kernel fusion.")
     except Exception as compile_err:
         print(f"torch.compile failed ({compile_err}); continuing without compilation.")
+
+# Init Optimizer and Tokenizer
 opt = AdamW(lm_model.parameters(), LR, WEIGHT_DECAY, BETAS)
 toeknizer = Tokenizer.from_files(VOCAB_PATH, MERGES_PATH, special_tokens=["<|endoftext|>"])
 
+# Helper data loader
 def _load_np_tokens(path, device):
     arr = np.load(path, mmap_mode="r")
     tensor = torch.from_numpy(arr).long()

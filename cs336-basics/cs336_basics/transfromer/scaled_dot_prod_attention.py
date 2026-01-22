@@ -34,6 +34,9 @@ def scaled_dot_product_attention(query, key, value, bool_mask=None):
 
     Return:
         - attention: Float[Tensor, "... seq_q d_v"]
+    
+    Note:
+        seq_q == seq_k == seq_v == `seq_len` 
     """
     # Compute Normalized QtK & Apply Mask
     norm_qk: Float[torch.Tensor, "... seq_q, seq_k"]
