@@ -5,5 +5,5 @@ import triton.language as tl
 def flash_fwd_kernel(
     Q_ptr, K_ptr, V_ptr,
     O_ptr, L_ptr,
-    stride_
+    
 )
