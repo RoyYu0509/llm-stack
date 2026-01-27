@@ -2,6 +2,10 @@
 In this example, we compute the softmax by loading in the entire row as one tile.
 TILE_SIZE refers to the `next_power_of_2(n_cols)`
 
+- How the GPU specifics affect the SM occupancy and how program grid is chosen.
+- How to parrallelize across multiple rows by having multiple programs process different rows.
+- How to use triton.testing.perf_report to benchmark memory bandwidth and FLOPs.
+- Masking is only happened at the load and store stage. So be awared of what values you are using for `other` during computation.
 """
 
 import triton
@@ -253,7 +257,10 @@ if __name__ == "__main__":
     test_softmax_kernel(size=(1823, 781))
     # Add benchmarking flag
     import sys
+    import os
     if "--benchmark" in sys.argv:
-        benchmark.run(save_path='cs336_systems/triton_kernels', print_data=False)
+        os.makedirs("benchmarking", exist_ok=True)
+        benchmark.run(save_path='cs336_systems/triton_kernels/benchmarking', print_data=False)
     if "--benchflops" in sys.argv:
-        benchmark_flops.run(save_path='cs336_systems/triton_kernels', print_data=False)
+        os.makedirs("benchmarking", exist_ok=True)
+        benchmark_flops.run(save_path='cs336_systems/triton_kernels/benchmarking', print_data=False)

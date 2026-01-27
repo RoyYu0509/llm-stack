@@ -1,3 +1,11 @@
+"""
+Introduction to Triton: Vector Addition Example
+- Implement a vector addition kernel using Triton
+- What is a grid and how to launch a kernel with it
+- Benchmarking Triton kernel against PyTorch using the Triton built-in benchmarking utilities
+- Basic Triton programming model: program IDs, memory load/store with masking, compile-time constants
+"""
+
 import triton
 import triton.language as tl
 import torch
@@ -144,3 +152,4 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "--benchmark":
         benchmark.run(save_path='.', print_data=True)
+
