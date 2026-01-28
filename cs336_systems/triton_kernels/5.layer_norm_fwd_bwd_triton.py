@@ -12,10 +12,120 @@ import torch
 import jaxtyping
 from jaxtyping import Float
 from torch import Tensor
+from einops import rearrange
 DEVICE = torch.device(f'cuda:{torch.cuda.current_device()}')
 
-def layer_norm_triton():
-    pass
+
+@triton.jit
+def _layernorm_forward(
+    X_ptr, OUT_ptr, w_ptr, b_ptr, rstd_ptr,
+    X_N, X_D,
+    stride_N, eps,
+    BLOCK_SIZE_N: tl.constexpr,
+    BLOCK_SIZE_D: tl.constexpr
+):
+    """
+    Compute the sum in multiple TILEs.shape = [BLOCK_N, BLOCK_D]
+    """
+    # Get which BLOCK is this program processing
+    row_idx = tl.program_id(0)
+    col_idx = tl.program_id(0)
+
+    X_B_ptr = tl.make_block_ptr(
+        X_ptr, shape=(X_N, X_D),
+        strides=(stride_N, 1),
+        offsets=(row_idx,col_idx),
+        block_shape=(BLOCK_SIZE_N, BLOCK_SIZE_D),
+        order=(1,0),
+    )
+
+    OUT_B_ptr = tl.make_block_ptr(
+        OUT_ptr, shape=(X_N, X_D),
+        strides=(stride_N, 1),
+        offsets=(row_idx,col_idx),
+        block_shape=(BLOCK_SIZE_N, BLOCK_SIZE_D),
+        order=(1,0),
+    )
+
+    w_B_ptr = tl.make_block_ptr(
+        w_ptr, shape=(X_D,),
+        strides=(1,),
+        offsets=(col_idx,),
+        block_shape=(BLOCK_SIZE_D,),
+        order=(0,),
+    )
+
+    b_B_ptr = tl.make_block_ptr(
+        b_ptr, shape=(X_D,),
+        strides=(1,),
+        offsets=(col_idx,),
+        block_shape=(BLOCK_SIZE_D,),
+        order=(0,),
+    )
+
+    rstd_B_ptr = tl.make_block_ptr(
+        rstd_ptr, shape=(X_D,),
+        strides=(1,),
+        offsets=(col_idx,),
+        block_shape=(BLOCK_SIZE_D,),
+        order=(0,),
+    )
+
+    # Initialize a complete BLOCK_ROW
+    SUM = tl.zeros((BLOCK_SIZE_D,), dtype=tl.float32)
+    for i in range(tl.cdiv(N, BLOCK_SIZE_N)):
+        for j in range(tl.cdiv(D, BLOCK_SIZE_D):)
+
+    
+
+    
+
+
+class LayerNorm(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, in_X, normalized_shape, w, b, eps):
+        # Batch all leading dimensions, reshape to a 2D tensor.
+        X: Float[Tensor, "N, D"] = rearrange(in_X, "... N D -> (... N) D")
+        N, D = X.shape
+        OUT = torch.empty_like(X)
+        mean = torch.empty(normalized_shape, dtype=torch.float32, device=DEVICE)
+        rstd = torch.empty(normalized_shape, dtype=torch.float32, device=DEVICE)
+
+        MAX_FUSED_SIZE = 65536 // X.element_size() # number of element that can fits in a 64kb SRAM
+        BLOCK_SIZE_N = 1
+        BLOCK_SIZE_D = min(MAX_FUSED_SIZE, triton.next_power_of_2(BLOCK_SIZE_N*D)) # Each block shape = [BLOCK_SIZE_N, BLOCK_SIZE]
+        if N >  BLOCK_SIZE_D:
+            raise RuntimeError("Runtime slowed when one row of X (size >= 64kb) in our kernel")
+        # Some random num_wrap config
+        num_warps = min(max(BLOCK_SIZE_D//256, 1), 8)
+
+        # Define grid
+        num_TILE_N = tl.cdiv(N, BLOCK_SIZE_N)
+        num_TILE_D = tl.cdiv(D, BLOCK_SIZE_D)
+        _layernorm_fwd[(num_TILE_N,num_TILE_D)](
+            X, OUT, w, b, mean, rstd,
+            N, D,
+            X.stride(0),
+            # self-defined meta-parameters
+            BLOCK_SIZE_N = BLOCK_SIZE_N,
+            BLOCK_SIZE_D = BLOCK_SIZE, 
+            # triton official meta-parameters
+            num_warps=num_warps
+        )
+
+        # Here, ctx is to cache intermediate value for backward pass
+        ctx.save_for_backwad(X, w, b, rstd)
+        ctx.BLOCK_SIZE = BLOCK_SIZE
+        ctx.num_warps = num_warps
+        ctx.eps = eps
+
+        return OUT
+
+
+
+    @staticmethod
+    def backward():
+
 
 
 
