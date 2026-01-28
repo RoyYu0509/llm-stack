@@ -278,10 +278,9 @@ def _layernorm_backward_dLdx(
         norm_x:     Float[Tensor, "1 BLOCK_SIZE_D"] = tl.where(entries_cols < X_D, X_TILE-mean_TILE, 0.0)
 
 
-
 class LayerNorm(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, in_X, normalized_shape, W, b, eps):
+    def forward(ctx, in_X, normalized_shape, w, b, eps):
         # Batch all leading dimensions, reshape to a 2D tensor.
         X: Float[Tensor, "N, D"] = rearrange(in_X, "... N D -> (... N) D")
         N, D = X.shape
@@ -296,7 +295,7 @@ class LayerNorm(torch.autograd.Function):
         # Define grid: Parrallelized over rows
         # Each block is shape = [1, BLOCK_SIZE_D]
         _layernorm_forward[(N,)](
-            X, OUT, W, b, mean, rstd, eps,
+            X, OUT, w, b, mean, rstd, eps,
             N, D,
             X.stride(0),
             # self-defined meta-parameters
@@ -306,7 +305,7 @@ class LayerNorm(torch.autograd.Function):
         )
 
         # Here, ctx is to cache intermediate value for backward pass
-        ctx.save_for_backward(X, W, b, rstd)
+        ctx.save_for_backward(X, w, b, rstd)
         ctx.BLOCK_SIZE_D = BLOCK_SIZE_D
         ctx.num_warps = num_warps
         ctx.eps = eps
@@ -317,11 +316,11 @@ class LayerNorm(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dLdy):
-        X, W, b, mean, rstd, = ctx.saved_tensors
+        X, w, b, mean, rstd, = ctx.saved_tensors
         N, D = X.shape
 
         dLdX: Float[Tensor, "N, D"] = torch.empty_like(X)
-        dLdw: Float[Tensor, "D,D"] = torch.empty_like(X)
+        dLdw: Float[Tensor, "D,"] = torch.empty_like(X)
         dldb: Float[Tensor, "D,"] = torch.empty_like(X)
 
         # Define the intermediate reduce step size
@@ -335,14 +334,14 @@ class LayerNorm(torch.autograd.Function):
         _layernorm_backward_dLdx[(N,)](
             dLdy,
             X, dLdX, N, D, X.stride(0),
-            W, grad_w_intermediate,
+            w, grad_w_intermediate,
             b, grad_b_intermediate,
             mean, rstd, 
             grad_w_locks, grad_w_locks,
             GROUP_SIZE=GROUP_SIZE, BLOCK_SIZE_D=ctx.BLOCK_SIZE_D, num_warps=ctx.num_warps,
         )
         grid = lambda META: (triton.cdiv(D, META['BLOCK_SIZE_D']),)
-        _W_b_reduce_kernel[grid](
+        _w_b_reduce_kernel[grid](
             dLdw, grad_w_intermediate, 
             dldb, grad_b_intermediate, 
             min(GROUP_SIZE, N), D,
