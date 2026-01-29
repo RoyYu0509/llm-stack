@@ -9,8 +9,17 @@ from torch import Tensor
 from triton.language import tensor as tlTensor
 from einops import rearrange
 
-DEVICE = torch.device(f'cuda:{torch.cuda.current_device()}')
 
+# Set of configurations to try during autotuning (Hyperparameter search space)
+autotune_configs = [
+    # Small tiles
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32, }, num_stages=4, num_warps=8),
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64, }, num_stages=4, num_warps=8),
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32, }, num_stages=4, num_warps=8),
+]
+
+
+@triton.autotune(configs=autotune_configs, key=['N_QUERIES', 'N_KEYS']) # Everytime M, N, K changes, we re-autotune
 @triton.jit
 def flash_fwd_kernel(
     Q_ptr, K_ptr, V_ptr,
@@ -153,7 +162,9 @@ def flash_fwd_triton(
     K: torch.Tensor, V: torch.Tensor, 
     is_causal=False
 ):
-    assert Q.shape[-1] == K.shape[-1] & Q.shape[-1] == V.shape[-1], "Token embedding dimension inconsistent"
+    assert (Q.shape[-1] == K.shape[-1]) and (Q.shape[-1] == V.shape[-1]), "Token embedding dimension inconsistent"
+    assert Q.dim() == 4 and K.dim() == 4 and V.dim() == 4, "Input should follow the shape B H N D"
+    DEVICE = Q.device
 
     B, H, Q_N, D = Q.shape
     K_N = K.shape[-2]
@@ -164,24 +175,76 @@ def flash_fwd_triton(
     V = rearrange(V, "... K_N D -> (...) K_N D")
     
     # Create output buffers
-    OUT = torch.zeros((Q_N, D), dtype=Q.dtype, device=DEVICE)
-    L = torch.zeros((Q_N, ),  dtype=Q.dtype, device=DEVICE)
+    new_B_dim = Q.shape[0]
+    OUT = torch.zeros((new_B_dim, Q_N, D), dtype=Q.dtype, device=DEVICE)
+    L = torch.zeros((new_B_dim, Q_N, ),  dtype=Q.dtype, device=DEVICE)
 
     grid = lambda META: (triton.cdiv(Q_N, META["Q_TILE_SIZE"]),  B*H)
 
     scale = 1/D**0.5
 
     flash_fwd_kernel[grid](
-        Q, K, K,
+        Q, K, V,
         OUT, L,
-        Q.stride(0), Q.stide(1), Q.stride(2),
-        K.stride(0), K.stide(1), K.stride(2),
-        V.stride(0), V.stide(1), V.stride(2),
-        OUT.stride(0), OUT.stide(1), OUT.stride(2),
-        L.stride(0), L.stide(1),
+        Q.stride(0), Q.stride(1), Q.stride(2),
+        K.stride(0), K.stride(1), K.stride(2),
+        V.stride(0), V.stride(1), V.stride(2),
+        OUT.stride(0), OUT.stride(1), OUT.stride(2),
+        L.stride(0), L.stride(1),
         Q_N, K_N,
-        scale
+        scale, D = D
     )
+
+    # Unbatched OUT
+    OUT = rearrange(OUT, "(B H) Q_N D -> B H Q_N D", B = B, H = H)
 
     return OUT
 
+
+
+
+
+class FlashAttentionTorchFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, Q, K, V, is_causal=False):
+        """
+        Forward pass for FlashAttention using PyTorch operations.
+
+        Parameters:
+            - Q: Float[torch.Tensor, "N_q, d"] The Query matrix
+            - K: Float[torch.Tensor, "N_k, d"] The Key matrix
+            - V: Float[torch.Tensor, "N_k, d"] The Value matrix
+            - B_q: int Query TILE_ROW
+            - B_k: int Key TILE_ROW
+        """
+        B_q, B_k= 16, 16  # Example tile sizes; these can be tuned based on hardware
+        O, L = flash_fwd_triton(Q, K, V, B_q, B_k)
+        ctx.save_for_backward(L,Q,K,V,O)
+        ctx.B_q = B_q
+        ctx.B_k = B_k
+        print("Forward FlashAttention Torch done.")
+        print("O:", O.shape)
+        print("L:", L.shape)
+        return O
+
+    @staticmethod
+    def backward(ctx, grad_O):
+        """
+        Backward pass for FlashAttention using PyTorch operations.
+
+        Parameters:
+            - grad_O: Gradient of the output from the forward pass.
+        """
+        Q, K, V, O, L = ctx.saved_tensors
+        B_q = ctx.B_q
+        B_k = ctx.B_k
+
+        # Compute gradients w.r.t Q, K, V using similar tiled approach
+        # This is a placeholder; actual implementation would mirror the forward pass logic.
+        grad_Q = torch.zeros_like(Q)
+        grad_K = torch.zeros_like(K)
+        grad_V = torch.zeros_like(V)
+
+        # Implement gradient computations here...
+
+        return grad_Q, grad_K, grad_V, None, None
