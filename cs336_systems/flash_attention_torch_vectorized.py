@@ -68,4 +68,4 @@ class FlashAttentionTorchFunctionVectorized(torch.autograd.Function):
         return dLdQ, dLdK, dLdV, None
 
 
-flash_attn_torch_vectorized_fn = FlashAttentionTorchFunctionVectorized.apply
+flash_attn_torch_vectorized_fn = torch.compile(FlashAttentionTorchFunctionVectorized.apply)
