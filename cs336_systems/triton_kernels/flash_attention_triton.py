@@ -80,20 +80,30 @@ def flash_fwd_kernel(
     l_i:    Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)
     o_i:    Float[tlTensor, "Q_TILE_SIZE, D"] = tl.zeros((Q_TILE_SIZE, D), dtype = tl.float32)
     lse_i:  Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)
+
+    # ------------------------------------------------------------
+    # KV block pointer: [Bk, D] later transpose
+    # ------------------------------------------------------------
+    K_block_ptr = tl.make_block_ptr(
+        base=K_ptr + batch_index * stride_kb,  # 
+        shape=(N_KEYS, D),
+        strides=(stride_kk, stride_kd),
+        offsets=(0, 0),
+        block_shape=(K_TILE_SIZE, D),
+        order=(1, 0),
+    )
+
+    V_block_ptr = tl.make_block_ptr(
+        base=V_ptr + batc_hindex * stride_vb, 
+        shape=(K_TILE_SIZE, D),
+        strides=(stride_vk, stride_vd),
+        offsets=(0,0),
+        block_shape=(K_TILE_SIZE, D),
+        order=(1,0)
+    )
     # Compute online softmax, shifting tile block towards right side
     for key_idx in range(tl.cdiv(N_KEYS, K_TILE_SIZE)):
-        # ------------------------------------------------------------
-        # K block pointer: [Bk, D] later transpose
-        # ------------------------------------------------------------
-        K_block_ptr = tl.make_block_ptr(
-            base=K_ptr + batch_index * stride_kb,  # 
-            shape=(N_KEYS, D),
-            strides=(stride_kk, stride_kd),
-            offsets=(0, 0),
-            block_shape=(K_TILE_SIZE, D),
-            order=(1, 0),
-        )
-
+        # Compute pre-softmax
         K_j:  Float[tlTensor, "K_TILE_SIZE, D"] = tl.load(K_block_ptr, boundary_check=(0,1), padding_option="zero")
         S_ij: Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = tl.dot(Q_i, tl.trans(K_j)) / tl.sqrt(D)
 
@@ -113,16 +123,14 @@ def flash_fwd_kernel(
         l_i:  Float[tlTensor, "Q_TILE_SIZE, "] = l_i * max_correct_scale + tl.sum(P_ij, axis=1)
 
         # Update OUT
-        V_block_ptr = tl.make_block_ptr(
-            base=V_ptr + batc_hindex * stride_vb, 
-            shape=(K_TILE_SIZE, D),
-            strides=(stride_vk, stride_vd),
-            offsets=(0,0),
-            block_shape=(K_TILE_SIZE, D),
-            order=(1,0)
-        )
         V_j:    Float[tlTensor, "K_TILE_SIZE, D"] = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")
         o_i:    Float[tlTensor, "Q_TILE_SIZE, D"] = o_i * max_correct_scale[:,None] + tl.dot(P_ij, V_j)
+
+        # Advance pointers
+        K_block_ptr.advance()
+        V_block_ptr.advance()
+    # Compute the Log Sum Exp
+    o_i = o_i / l_i[:, None]
     lse_i = m_i + tl.log(l_i)
     
     # Write to OUT
