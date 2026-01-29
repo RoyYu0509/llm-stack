@@ -34,6 +34,7 @@ def flash_fwd_kernel(
     D: tl.constexpr,
     Q_TILE_SIZE: tl.constexpr,  # Bq
     K_TILE_SIZE: tl.constexpr,  # Bk
+    IS_CAUSAL: tl.constexpr = False,
 ):  
     """
     Parallelize over `Batch` and `Q_ROW`.
@@ -109,22 +110,28 @@ def flash_fwd_kernel(
     # Online Statistics
     # ------------------------------------------------------------
     # Initialize the row max tensor to -inf, because the Attention score could be negative. () 
-    m_i = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32) - 1e9    # "Q_TILE_SIZE, "
+    m_i = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32) - 1e20    # "Q_TILE_SIZE, "
     l_i = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)          # "Q_TILE_SIZE, "
     o_i = tl.zeros((Q_TILE_SIZE, D), dtype = tl.float32)        # "Q_TILE_SIZE, D"
     lse_i = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)        # "Q_TILE_SIZE, "
 
     # Compute online softmax, shifting tile block towards right side
-    for key_idx in range(0, N_KEYS, K_TILE_SIZE):
+    for start_k_B_idx in range(0, N_KEYS, K_TILE_SIZE):
         # 1. Compute pre-softmax
         K_j = tl.load(K_block_ptr, boundary_check=(0,1), padding_option="zero")  # "K_TILE_SIZE, D"
         S_ij = tl.dot(Q_i, tl.trans(K_j)) * scale                                # "Q_TILE_SIZE, K_TILE_SIZE"
-        # Mask the out of bound entries to be -inf, so that row_max & Softmax is correct
-        KT_col_mask = key_idx * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)             # ", K_TILE_SIZE" - Along the KT cols
+       
+        # 2.  Masking
+        # 2.1 Mask the out of bound entries to be -inf, so that row_max & Softmax is correct
+        KT_col_mask = start_k_B_idx + tl.arange(0, K_TILE_SIZE)             # ", K_TILE_SIZE" - Along the KT cols
         Q_row_mask = query_tile_index * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE)     # "Q_TILE_SIZE, " - Along the Q rows
-        # 2D Boundary Mask for each S_ij
-        mask = (KT_col_mask[None, :] < N_KEYS) & (Q_row_mask[:, None] < N_QUERIES)  # "Q_TILE_SIZE, K_TILE_SIZE"
-        S_ij = tl.where(mask, S_ij, -1e9)
+        boundary_mask = (KT_col_mask[None, :] < N_KEYS) & (Q_row_mask[:, None] < N_QUERIES)  # "Q_TILE_SIZE, K_TILE_SIZE"
+
+        # 2.2 Causal Mask (Avoiding If Else logics branch)
+        not_causal = tl.full(boundary_mask.shape, not IS_CAUSAL, dtype=tl.int1) # Initialize, set the dtype as bool int
+        causal_mask = (Q_row_mask[:, None] >= KT_col_mask[None, :]) | not_causal  # True when IS_CAUSAL=False, else row>=col
+        mask = boundary_mask & causal_mask
+        S_ij = tl.where(mask, S_ij, -1e20)
 
         # 2. Update max (No need Boundary Mask)
         curr_max = tl.max(S_ij, axis = 1)               # "Q_TILE_SIZE, "
@@ -148,9 +155,9 @@ def flash_fwd_kernel(
         V_block_ptr = V_block_ptr.advance((K_TILE_SIZE,0))
     # End for: Compute the Log Sum Exp
     o_i = o_i / l_i[:, None]
-    o_i.to(tl.float16)
+    o_i = o_i.to(tl.float32)
     lse_i = m_i + tl.log(l_i)
-    lse_i.to(tl.float16)
+    lse_i = lse_i.to(tl.float32)
 
     # Write to OUT
     tl.store(O_block_ptr, o_i, boundary_check=(0,1))
@@ -163,30 +170,19 @@ def flash_fwd_triton(
     is_causal=False
 ):
     assert (Q.shape[-1] == K.shape[-1]) and (Q.shape[-1] == V.shape[-1]), "Token embedding dimension inconsistent"
-    assert Q.dim() <= 4 and K.dim() <= 4 and V.dim() <= 4, f"Input should follow the shape (B H) N D, Acutal = {Q.shape}"
+    assert Q.dim() == 3 and K.dim() == 3 and V.dim() == 3, f"Input should follow the shape  B N D, Acutal = {Q.shape}"
     DEVICE = Q.device
 
-    
+    # Get shape
+    B, Q_N, D = Q.shape
+    K_N = K.shape[-2]
 
-    # Compress Batch Dim
-    if Q.dim() == 4:
-        Q = rearrange(Q, "... Q_N D -> (...) Q_N D")
-        K = rearrange(K, "... K_N D -> (...) K_N D")
-        V = rearrange(V, "... K_N D -> (...) K_N D")
-        B, H, Q_N, D = Q.shape
-        K_N = K.shape[-2]
-    elif Q.dim() == 3:
-        B, Q_N, D = Q.shape
-        K_N = K.shape[-2]
-    else:
-        raise RuntimeError("Incorrect Input Shape.")
     
     # Create output buffers
-    new_B_dim = Q.shape[0]
-    OUT = torch.zeros((new_B_dim, Q_N, D), dtype=Q.dtype, device=DEVICE)
-    L = torch.zeros((new_B_dim, Q_N, ),  dtype=Q.dtype, device=DEVICE)
+    OUT = torch.zeros((B, Q_N, D), dtype=Q.dtype, device=DEVICE, requires_grad=True)
+    L = torch.zeros((B, Q_N, ),  dtype=Q.dtype, device=DEVICE, requires_grad=True)
 
-    grid = lambda META: (triton.cdiv(Q_N, META["Q_TILE_SIZE"]),  new_B_dim)
+    grid = lambda META: (triton.cdiv(Q_N, META["Q_TILE_SIZE"]),  B)
 
     scale = 1/D**0.5
 
@@ -199,16 +195,9 @@ def flash_fwd_triton(
         OUT.stride(0), OUT.stride(1), OUT.stride(2),
         L.stride(0), L.stride(1),
         Q_N, K_N,
-        scale, D = D
+        scale, D = D, IS_CAUSAL = is_causal
     )
 
-    # Unbatched OUT
-    if Q.dim() == 4:
-        OUT = rearrange(OUT, "(B H) Q_N D -> B H Q_N D", B = B)
-        L = rearrange(L, "(B H) Q_N -> B H Q_N", B = B)
-    elif Q.dim() == 3:
-       pass
-    
     return OUT, L
 
 
@@ -230,7 +219,7 @@ class FlashAttentionTorchFunction(torch.autograd.Function):
         """
         B_q, B_k= 16, 16  # Example tile sizes; these can be tuned based on hardware
         O, L = flash_fwd_triton(Q, K, V,is_causal)
-        ctx.save_for_backward(L,Q,K,V,O)
+        ctx.save_for_backward(Q,K,V,O,L)
         ctx.B_q = B_q
         ctx.B_k = B_k
         print("Forward FlashAttention Torch done.")
