@@ -99,7 +99,8 @@ def flash_fwd_kernel(
     # ------------------------------------------------------------
     # Online Statistics
     # ------------------------------------------------------------
-    m_i:    Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)
+    # Initialize the row max tensor to -inf, because the Attention score could be negative. () 
+    m_i:    Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32) - 1e9
     l_i:    Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)
     o_i:    Float[tlTensor, "Q_TILE_SIZE, D"] = tl.zeros((Q_TILE_SIZE, D), dtype = tl.float32)
     lse_i:  Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)
@@ -110,10 +111,10 @@ def flash_fwd_kernel(
         K_j:  Float[tlTensor, "K_TILE_SIZE, D"] = tl.load(K_block_ptr, boundary_check=(0,1), padding_option="zero")
         S_ij: Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = tl.dot(Q_i, tl.trans(K_j)) * scale
         # Mask the out of bound entries to be -inf, so that row_max & Softmax is correct
-        K_row_mask = key_idx * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)  # Along the KT cols
-        Q_row_mask = query_tile_index * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE)  # Along the Q rows
+        KT_col_mask: Float[tlTensor, ", K_TILE_SIZE"] = key_idx * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)  # Along the KT cols
+        Q_row_mask:  Float[tlTensor, "Q_TILE_SIZE, "] = query_tile_index * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE)  # Along the Q rows
         # 2D Boundary Mask for each S_ij
-        mask = (K_row_mask[:, None] < N_KEYS) & (Q_row_mask[None, :] < N_QUERIES)
+        mask:        Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = (KT_col_mask[None, :] < N_KEYS) & (Q_row_mask[:, None] < N_QUERIES)
         S_ij = tl.where(mask, S_ij, -1e9)
 
         # Update max (No need Boundary Mask)
