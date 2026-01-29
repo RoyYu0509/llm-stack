@@ -68,18 +68,12 @@ def flash_fwd_kernel(
         base=L_ptr + batch_index * stride_lb,
         shape=(N_QUERIES,),
         strides=(stride_lq,),
-        offsets=(0,),
+        offsets=(query_tile_index * Q_TILE_SIZE,),
         block_shape=(Q_TILE_SIZE,),
         order=(0,)
     )
 
-    Q_i: Float[tlTensor, "Q_TILE_SIZE, D"] = tl.load(Q_block_ptr)
-
-    # Always initialize as 1D tensor
-    m_i:    Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)
-    l_i:    Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)
-    o_i:    Float[tlTensor, "Q_TILE_SIZE, D"] = tl.zeros((Q_TILE_SIZE, D), dtype = tl.float32)
-    lse_i:  Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)
+    Q_i: Float[tlTensor, "Q_TILE_SIZE, D"] = tl.load(Q_block_ptr, boundary_check=(0,1), padding_option="zero")
 
     # ------------------------------------------------------------
     # KV block pointer: [Bk, D] later transpose
@@ -94,29 +88,38 @@ def flash_fwd_kernel(
     )
 
     V_block_ptr = tl.make_block_ptr(
-        base=V_ptr + batc_hindex * stride_vb, 
-        shape=(K_TILE_SIZE, D),
+        base=V_ptr + batch_index * stride_vb, 
+        shape=(N_KEYS, D),
         strides=(stride_vk, stride_vd),
         offsets=(0,0),
         block_shape=(K_TILE_SIZE, D),
         order=(1,0)
     )
+        
+    # ------------------------------------------------------------
+    # Online Statistics
+    # ------------------------------------------------------------
+    m_i:    Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)
+    l_i:    Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)
+    o_i:    Float[tlTensor, "Q_TILE_SIZE, D"] = tl.zeros((Q_TILE_SIZE, D), dtype = tl.float32)
+    lse_i:  Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)
+
     # Compute online softmax, shifting tile block towards right side
     for key_idx in range(tl.cdiv(N_KEYS, K_TILE_SIZE)):
         # Compute pre-softmax
         K_j:  Float[tlTensor, "K_TILE_SIZE, D"] = tl.load(K_block_ptr, boundary_check=(0,1), padding_option="zero")
-        S_ij: Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = tl.dot(Q_i, tl.trans(K_j)) / tl.sqrt(D)
+        S_ij: Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = tl.dot(Q_i, tl.trans(K_j)) * scale
 
         # Update max (No need Boundary Mask)
-        curr_max:  Float[tlTensor, "Q_TILE_SIZE,"] = tl.max(S_ij, axis = 0)
+        curr_max:  Float[tlTensor, "Q_TILE_SIZE,"] = tl.max(S_ij, axis = 1)
         prev_max:  Float[tlTensor, "Q_TILE_SIZE,"] = m_i
         m_i:  Float[tlTensor, "Q_TILE_SIZE,"] = tl.where(curr_max > m_i, curr_max, m_i)
         max_correct_scale: Float[tlTensor, "Q_TILE_SIZE,"] = tl.exp(prev_max-m_i)
 
         # Compute the safe softmax (With Boundary Mask)
-        P_ij: Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = S_ij - m_i[None, :]
-        mask = K_ptr + batch_index * stride_kb + key_idx * K_TILE_SIZE * stride_kk + tl.arange(0,K_TILE_SIZE)
-        P_ij = tl.where(mask < N, P_ij, -inf)
+        P_ij: Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = S_ij - m_i[:, None]
+        row_mask = key_idx * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)
+        P_ij = tl.where(row_mask < N_KEYS, P_ij, -inf)
         P_ij = tl.exp(P_ij)
 
         # Update sum
@@ -127,8 +130,8 @@ def flash_fwd_kernel(
         o_i:    Float[tlTensor, "Q_TILE_SIZE, D"] = o_i * max_correct_scale[:,None] + tl.dot(P_ij, V_j)
 
         # Advance pointers
-        K_block_ptr.advance()
-        V_block_ptr.advance()
+        K_block_ptr = K_block_ptr.advance()
+        V_block_ptr = V_block_ptr.advance()
     # Compute the Log Sum Exp
     o_i = o_i / l_i[:, None]
     lse_i = m_i + tl.log(l_i)
