@@ -387,7 +387,6 @@ configs_intensity = tt.Benchmark(
     plot_name="matmul-arithmetic-intensity",
     args={},
 )
-
 @tt.perf_report(configs_intensity)
 def benchmark_matmul_intensity(M, N, K, provider):
     device = DEIVCE

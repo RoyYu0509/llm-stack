@@ -11,11 +11,12 @@ from einops import rearrange
 
 
 # Set of configurations to try during autotuning (Hyperparameter search space)
+# Explores different tile sizes, pipeline stages, and warp counts for optimal hardware utilization
 autotune_configs = [
-    # Small tiles
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32, }, num_stages=4, num_warps=8),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64, }, num_stages=4, num_warps=8),
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32, }, num_stages=4, num_warps=8),
+    # ============= Small tiles (low memory, good for small models) =============
+    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=2),
+    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=2),
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=2),
 ]
 
 
@@ -204,7 +205,7 @@ def flash_fwd_triton(
 
 
 
-class FlashAttentionTorchFunction(torch.autograd.Function):
+class FlashAttentionTorchFunctionTriton(torch.autograd.Function):
     @staticmethod
     def forward(ctx, Q, K, V, is_causal=False):
         """
@@ -222,29 +223,50 @@ class FlashAttentionTorchFunction(torch.autograd.Function):
         ctx.save_for_backward(Q,K,V,O,L)
         ctx.B_q = B_q
         ctx.B_k = B_k
-        print("Forward FlashAttention Torch done.")
-        print("O:", O.shape)
-        print("L:", L.shape)
+        ctx.is_causal = is_causal
+        # print("Forward FlashAttention Torch done.")
+        # print("O:", O.shape)
+        # print("L:", L.shape)
         return O
 
+    
     @staticmethod
-    def backward(ctx, grad_O):
+    def backward(ctx, dLdO):
         """
-        Backward pass for FlashAttention using PyTorch operations.
+        Backward pass for FlashAttention implemented with PyTorch. (套公式，没啥看的)
 
         Parameters:
-            - grad_O: Gradient of the output from the forward pass.
+            - dLdO: Gradient of the output from the forward pass.
         """
         Q, K, V, O, L = ctx.saved_tensors
-        B_q = ctx.B_q
-        B_k = ctx.B_k
+        L: Float[Tensor, "B Q_N"]
+        is_causal = ctx.is_causal
+        D:      Float[Tensor, "B, Q_N, 1"] = torch.sum(O*dLdO, dim=-1, keepdim=True) 
+        d = Q.shape[-1]
 
-        # Compute gradients w.r.t Q, K, V using similar tiled approach
-        # This is a placeholder; actual implementation would mirror the forward pass logic.
-        grad_Q = torch.zeros_like(Q)
-        grad_K = torch.zeros_like(K)
-        grad_V = torch.zeros_like(V)
+        # Compute S, P with L (log-sum-exp)
+        KT = rearrange(K, "B N D -> B D N")
+        S:      Float[Tensor, "B Q_N N_K"] = Q@KT / d**0.5
+        P:      Float[Tensor, "B Q_N N_K"] = torch.exp(S-L[:,:,None])
+        
+        # Apply causal mask if needed
+        if is_causal:
+            B, Q_N, K_N = S.shape
+            mask = torch.tril(torch.ones(Q_N, K_N, device=Q.device, dtype=torch.bool))
+            P = P * mask[None, :, :]
+        
+        # Compute gradients
+        PT:     Float[Tensor, "B K_N Q_N"] = rearrange(P, "B Q_N K_N -> B K_N Q_N")
+        dLdV:   Float[Tensor, "B K_N D"] = PT@dLdO
+        
+        VT:     Float[Tensor, "B D K_N"] = rearrange(V, "B K_N D -> B D K_N")
+        dLdP:   Float[Tensor, "B Q_N N_K"] = dLdO@VT
+        
+        dLdS:   Float[Tensor, "B Q_N N_K"] = P * (dLdP - D)
+        dLdQ:   Float[Tensor, "B Q_N D"] = dLdS@K / d**0.5
+        dLdST:  Float[Tensor, "B N_K Q_N"] = rearrange(dLdS, "B Q_N N_K -> B N_K Q_N")
+        dLdK:   Float[Tensor, "B N_K D"] = dLdST @ Q / d**0.5
 
-        # Implement gradient computations here...
-
-        return grad_Q, grad_K, grad_V, None, None
+        return dLdQ, dLdK, dLdV, None
+    
+flash_attn_triton_fn = FlashAttentionTorchFunctionTriton.apply

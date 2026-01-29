@@ -37,7 +37,9 @@ def flash_attention_torch_fwd(
         - B_q: int Query TILE_ROW
         - B_k: int Key TILE_ROW
     """
-    print("Q:", Q.shape)
+    device = Q.device
+    dtype = Q.dtype
+    
     # Get shapes
     BATCH_SHAPE = Q.shape[:-2]
     Q_ROW, D = Q.shape[-2:]
@@ -51,23 +53,19 @@ def flash_attention_torch_fwd(
     K_tiles = get_tiles(K, B_k)
     V_tiles = get_tiles(V, B_k)
 
-    print("Q Tile number:", len(Q_tiles))
-    print("Q Tile Shape:", Q_tiles[0].shape)
-    print("K Tile number:", len(K_tiles))
-
-    # Prepare buffer
-    O_final = torch.zeros((*BATCH_SHAPE, Q_ROW, D))
-    L_final = torch.zeros((*BATCH_SHAPE, Q_ROW, 1))
+    # Prepare buffer on correct device
+    O_final = torch.zeros((*BATCH_SHAPE, Q_ROW, D), device=device, dtype=dtype)
+    L_final = torch.zeros((*BATCH_SHAPE, Q_ROW, 1), device=device, dtype=dtype)
 
     for i in range(N_TILE_q):
         # Load Q_i && Initialize statistics
         Q_i     :Float[Tensor, "... B_q, D"]    = Q_tiles[i]
-        OUT_i   :Float[Tensor, "... B_q, D"]    = torch.zeros((*BATCH_SHAPE, B_q, D))  # row OUT_iput
-        R_SUM_i :Float[Tensor, "... B_q, 1"]    = torch.zeros((*BATCH_SHAPE, B_q, 1))    # row sum
-        R_MAX_i :Float[Tensor, "... B_q, 1"]    = torch.zeros((*BATCH_SHAPE, B_q, 1))    # row max
+        OUT_i   :Float[Tensor, "... B_q, D"]    = torch.zeros((*BATCH_SHAPE, B_q, D), device=device, dtype=dtype)  # row OUT_iput
+        R_SUM_i :Float[Tensor, "... B_q, 1"]    = torch.zeros((*BATCH_SHAPE, B_q, 1), device=device, dtype=dtype)    # row sum
+        R_MAX_i :Float[Tensor, "... B_q, 1"]    = torch.zeros((*BATCH_SHAPE, B_q, 1), device=device, dtype=dtype)    # row max
         # Loop over KV paris
         for j in range(N_TILE_k):
-            print("Go to tile:", j)
+            # print("Go to tile:", j)
             V_j: Float[Tensor, "... B_k, D"] = V_tiles[j]
             K_j: Float[Tensor, "... B_k, D"] = K_tiles[j]
             Kt_j:Float[Tensor, "... D, B_k"] = rearrange(K_j, "... B_k D -> ... D B_k")
@@ -80,10 +78,10 @@ def flash_attention_torch_fwd(
             new_OUT_i:Flaot[Tensor, "... B_q, D"]       = einsum(P_i, V_j, "... B_q B_k, ... B_k D -> ... B_q D") # Compute the new output tile
             
             # Cache the curr iter's statistics && Update the previous iter's values
-            print("new_sum:", new_sum.shape)
-            print("torch.exp(R_MAX_i - new_max):", torch.exp(R_MAX_i - new_max).shape)
-            print("new_max", new_max.shape)
-            print("R_SUM_i:", R_SUM_i.shape)
+            # print("new_sum:", new_sum.shape)
+            # print("torch.exp(R_MAX_i - new_max):", torch.exp(R_MAX_i - new_max).shape)
+            # print("new_max", new_max.shape)
+            # print("R_SUM_i:", R_SUM_i.shape)
             R_SUM_i:        Float[Tensor, "... B_q, 1"] = new_sum + R_SUM_i * torch.exp(R_MAX_i - new_max)
             correct_sacle:  Float[Tensor, "... B_q, 1"] = torch.exp(R_MAX_i - new_max)
             OUT_i:          Float[Tensor, "... B_q, D"] = new_OUT_i + OUT_i * correct_sacle
@@ -100,7 +98,9 @@ def flash_attention_torch_fwd(
 
     return O_final, L_final.squeeze(-1)
 
-class FlashAttentionTorchFunction(torch.autograd.Function):
+    
+
+class FlashAttentionTorchFunctionTorch(torch.autograd.Function):
     @staticmethod
     def forward(ctx, Q, K, V, is_causal=False):
         """
@@ -115,32 +115,50 @@ class FlashAttentionTorchFunction(torch.autograd.Function):
         """
         B_q, B_k= 16, 16  # Example tile sizes; these can be tuned based on hardware
         O, L = flash_attention_torch_fwd(Q, K, V, B_q, B_k)
-        ctx.save_for_backward(L,Q,K,V,O)
+        ctx.save_for_backward(Q,K,V,O,L)
+        ctx.is_causal = is_causal
         ctx.B_q = B_q
         ctx.B_k = B_k
-        print("Forward FlashAttention Torch done.")
-        print("O:", O.shape)
-        print("L:", L.shape)
         return O
 
     @staticmethod
-    def backward(ctx, grad_O):
+    def backward(ctx, dLdO):
         """
-        Backward pass for FlashAttention using PyTorch operations.
+        Backward pass for FlashAttention implemented with PyTorch. (套公式，没啥看的)
 
         Parameters:
-            - grad_O: Gradient of the output from the forward pass.
+            - dLdO: Gradient of the output from the forward pass.
         """
         Q, K, V, O, L = ctx.saved_tensors
-        B_q = ctx.B_q
-        B_k = ctx.B_k
+        L: Float[Tensor, "B Q_N"]
+        is_causal = ctx.is_causal
+        D:      Float[Tensor, "B, Q_N, 1"] = torch.sum(O*dLdO, dim=-1, keepdim=True) 
+        d = Q.shape[-1]
 
-        # Compute gradients w.r.t Q, K, V using similar tiled approach
-        # This is a placeholder; actual implementation would mirror the forward pass logic.
-        grad_Q = torch.zeros_like(Q)
-        grad_K = torch.zeros_like(K)
-        grad_V = torch.zeros_like(V)
+        # Compute S, P with L (log-sum-exp)
+        KT = rearrange(K, "B N D -> B D N")
+        S:      Float[Tensor, "B Q_N N_K"] = Q@KT / d**0.5
+        P:      Float[Tensor, "B Q_N N_K"] = torch.exp(S-L[:,:,None])
+        
+        # Apply causal mask if needed
+        if is_causal:
+            B, Q_N, K_N = S.shape
+            mask = torch.tril(torch.ones(Q_N, K_N, device=Q.device, dtype=torch.bool))
+            P = P * mask[None, :, :]
+        
+        # Compute gradients
+        PT:     Float[Tensor, "B K_N Q_N"] = rearrange(P, "B Q_N K_N -> B K_N Q_N")
+        dLdV:   Float[Tensor, "B K_N D"] = PT@dLdO
+        
+        VT:     Float[Tensor, "B D K_N"] = rearrange(V, "B K_N D -> B D K_N")
+        dLdP:   Float[Tensor, "B Q_N N_K"] = dLdO@VT
+        
+        dLdS:   Float[Tensor, "B Q_N N_K"] = P * (dLdP - D)
+        dLdQ:   Float[Tensor, "B Q_N D"] = dLdS@K / d**0.5
+        dLdST:  Float[Tensor, "B N_K Q_N"] = rearrange(dLdS, "B Q_N N_K -> B N_K Q_N")
+        dLdK:   Float[Tensor, "B N_K D"] = dLdST @ Q / d**0.5
 
-        # Implement gradient computations here...
+        return dLdQ, dLdK, dLdV, None
+    
 
-        return grad_Q, grad_K, grad_V, None, None
+flash_attn_torch_fn = FlashAttentionTorchFunctionTorch.apply
