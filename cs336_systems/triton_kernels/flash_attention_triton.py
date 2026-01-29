@@ -109,6 +109,9 @@ def flash_fwd_kernel(
         # Compute pre-softmax
         K_j:  Float[tlTensor, "K_TILE_SIZE, D"] = tl.load(K_block_ptr, boundary_check=(0,1), padding_option="zero")
         S_ij: Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = tl.dot(Q_i, tl.trans(K_j)) * scale
+        # Mask the out of bound entries to be -inf, so that row_max & Softmax is correct
+        row_mask = key_idx * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)
+        S_ij = tl.where(row_mask < N_KEYS, S_ij, -1e9)
 
         # Update max (No need Boundary Mask)
         curr_max:  Float[tlTensor, "Q_TILE_SIZE,"] = tl.max(S_ij, axis = 1)
@@ -118,8 +121,6 @@ def flash_fwd_kernel(
 
         # Compute the safe softmax (With Boundary Mask)
         P_ij: Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = S_ij - m_i[:, None]
-        row_mask = key_idx * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)
-        P_ij = tl.where(row_mask < N_KEYS, P_ij, -inf)
         P_ij = tl.exp(P_ij)
 
         # Update sum
@@ -130,8 +131,8 @@ def flash_fwd_kernel(
         o_i:    Float[tlTensor, "Q_TILE_SIZE, D"] = o_i * max_correct_scale[:,None] + tl.dot(P_ij, V_j)
 
         # Advance pointers
-        K_block_ptr = K_block_ptr.advance()
-        V_block_ptr = V_block_ptr.advance()
+        K_block_ptr = K_block_ptr.advance((K_TILE_SIZE,0))
+        V_block_ptr = V_block_ptr.advance((K_TILE_SIZE,0))
     # Compute the Log Sum Exp
     o_i = o_i / l_i[:, None]
     lse_i = m_i + tl.log(l_i)
