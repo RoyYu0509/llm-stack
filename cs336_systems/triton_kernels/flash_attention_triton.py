@@ -106,43 +106,82 @@ def flash_fwd_kernel(
     lse_i:  Float[tlTensor, "Q_TILE_SIZE, "] = tl.zeros((Q_TILE_SIZE,), dtype = tl.float32)
 
     # Compute online softmax, shifting tile block towards right side
-    for key_idx in range(tl.cdiv(N_KEYS, K_TILE_SIZE)):
-        # Compute pre-softmax
+    for key_idx in range(0, N_KEYS, K_TILE_SIZE):
+        # 1. Compute pre-softmax
         K_j:  Float[tlTensor, "K_TILE_SIZE, D"] = tl.load(K_block_ptr, boundary_check=(0,1), padding_option="zero")
         S_ij: Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = tl.dot(Q_i, tl.trans(K_j)) * scale
         # Mask the out of bound entries to be -inf, so that row_max & Softmax is correct
-        KT_col_mask: Float[tlTensor, ", K_TILE_SIZE"] = key_idx * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)  # Along the KT cols
-        Q_row_mask:  Float[tlTensor, "Q_TILE_SIZE, "] = query_tile_index * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE)  # Along the Q rows
+        KT_col_mask: bool[tlTensor, ", K_TILE_SIZE"] = key_idx * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)  # Along the KT cols
+        Q_row_mask:  bool[tlTensor, "Q_TILE_SIZE, "] = query_tile_index * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE)  # Along the Q rows
         # 2D Boundary Mask for each S_ij
-        mask:        Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = (KT_col_mask[None, :] < N_KEYS) & (Q_row_mask[:, None] < N_QUERIES)
+        mask:        bool[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = (KT_col_mask[None, :] < N_KEYS) & (Q_row_mask[:, None] < N_QUERIES)
         S_ij = tl.where(mask, S_ij, -1e9)
 
-        # Update max (No need Boundary Mask)
+        # 2. Update max (No need Boundary Mask)
         curr_max:  Float[tlTensor, "Q_TILE_SIZE,"] = tl.max(S_ij, axis = 1)
         prev_max:  Float[tlTensor, "Q_TILE_SIZE,"] = m_i
         m_i:  Float[tlTensor, "Q_TILE_SIZE,"] = tl.where(curr_max > m_i, curr_max, m_i)
         max_correct_scale: Float[tlTensor, "Q_TILE_SIZE,"] = tl.exp(prev_max-m_i)
 
-        # Compute the safe softmax (With Boundary Mask)
+        # 3. Compute the safe softmax (With Boundary Mask)
         P_ij: Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = S_ij - m_i[:, None]
         P_ij = tl.exp(P_ij)
 
-        # Update sum
+        # 4. Update sum
         l_i:  Float[tlTensor, "Q_TILE_SIZE, "] = l_i * max_correct_scale + tl.sum(P_ij, axis=1)
 
-        # Update OUT
+        # 5. Update OUT
         V_j:    Float[tlTensor, "K_TILE_SIZE, D"] = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")
         o_i:    Float[tlTensor, "Q_TILE_SIZE, D"] = o_i * max_correct_scale[:,None] + tl.dot(P_ij, V_j)
 
         # Advance pointers
         K_block_ptr = K_block_ptr.advance((K_TILE_SIZE,0))
         V_block_ptr = V_block_ptr.advance((K_TILE_SIZE,0))
-    # Compute the Log Sum Exp
+    # End for: Compute the Log Sum Exp
     o_i = o_i / l_i[:, None]
+    o_i.to(tl.float16)
     lse_i = m_i + tl.log(l_i)
-    
+    lse_i.to(tl.float16)
+
     # Write to OUT
     tl.store(O_block_ptr, o_i, boundary_check=(0,1))
     tl.store(L_block_ptr, lse_i, boundary_check=(0,))
 
+
+def flash_fwd_triton(
+    Q: torch.Tensor, 
+    K: torch.Tensor, V: torch.Tensor, 
+    is_causal=False
+):
+    assert Q.shape[-1] == K.shape[-1] & Q.shape[-1] == V.shape[-1], "Token embedding dimension inconsistent"
+
+    B, H, Q_N, D = Q.shape
+    K_N = K.shape[-2]
+
+    # Compress Batch Dim
+    Q = rearrange(Q, "... Q_N D -> (...) Q_N D")
+    K = rearrange(K, "... K_N D -> (...) K_N D")
+    V = rearrange(V, "... K_N D -> (...) K_N D")
+    
+    # Create output buffers
+    OUT = torch.zeros((Q_N, D), dtype=Q.dtype, device=DEVICE)
+    L = torch.zeros((Q_N, ),  dtype=Q.dtype, device=DEVICE)
+
+    grid = lambda META: (triton.cdiv(Q_N, META["Q_TILE_SIZE"]),  B*H)
+
+    scale = 1/D**0.5
+
+    flash_fwd_kernel[grid](
+        Q, K, K,
+        OUT, L,
+        Q.stride(0), Q.stide(1), Q.stride(2),
+        K.stride(0), K.stide(1), K.stride(2),
+        V.stride(0), V.stide(1), V.stride(2),
+        OUT.stride(0), OUT.stide(1), OUT.stride(2),
+        L.stride(0), L.stide(1),
+        Q_N, K_N,
+        scale
+    )
+
+    return OUT
 
