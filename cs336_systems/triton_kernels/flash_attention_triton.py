@@ -110,8 +110,11 @@ def flash_fwd_kernel(
         K_j:  Float[tlTensor, "K_TILE_SIZE, D"] = tl.load(K_block_ptr, boundary_check=(0,1), padding_option="zero")
         S_ij: Float[tlTensor, "Q_TILE_SIZE, K_TILE_SIZE"] = tl.dot(Q_i, tl.trans(K_j)) * scale
         # Mask the out of bound entries to be -inf, so that row_max & Softmax is correct
-        row_mask = key_idx * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)
-        S_ij = tl.where(row_mask < N_KEYS, S_ij, -1e9)
+        K_row_mask = key_idx * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)  # Along the KT cols
+        Q_row_mask = query_tile_index * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE)  # Along the Q rows
+        # 2D Boundary Mask for each S_ij
+        mask = (K_row_mask[:, None] < N_KEYS) & (Q_row_mask[None, :] < N_QUERIES)
+        S_ij = tl.where(mask, S_ij, -1e9)
 
         # Update max (No need Boundary Mask)
         curr_max:  Float[tlTensor, "Q_TILE_SIZE,"] = tl.max(S_ij, axis = 1)
