@@ -75,7 +75,7 @@ def flash_attention_torch_fwd(
             new_max:  Float[Tensor, "... B_q, 1"]       = S_ij.max(dim=-1, keepdim=True).values   # Update row max
             P_i:      Float[Tensor, "... B_q, B_k"]     = torch.exp(S_ij - new_max)  # safe softmax
             new_sum:  Float[Tensor, "... B_q, 1"]       =  P_i.sum(dim=-1, keepdim=True) # Update & Correcting row sum  
-            new_OUT_i:Flaot[Tensor, "... B_q, D"]       = einsum(P_i, V_j, "... B_q B_k, ... B_k D -> ... B_q D") # Compute the new output tile
+            new_OUT_i:Float[Tensor, "... B_q, D"]       = einsum(P_i, V_j, "... B_q B_k, ... B_k D -> ... B_q D") # Compute the new output tile
             
             # Cache the curr iter's statistics && Update the previous iter's values
             # print("new_sum:", new_sum.shape)
