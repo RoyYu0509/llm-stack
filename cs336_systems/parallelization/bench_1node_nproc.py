@@ -33,6 +33,8 @@ def time_tensor_all_reduce(
         input_size: int, 
         warm_up_iter: int, timed_iter: int
     ) -> None:
+    if rank == 0:
+        print(f"Start {world_size}-process all-reduce benchmark with tensor size {input_size/256/1024} MB")
     """1. Setting up process group"""
     set_dist_env(rank, world_size)
     DEVICE = f"cuda:{rank}" if BACKEND == "nccl" else "cpu"
