@@ -15,20 +15,16 @@ TENSOR_DIM = args.tensor_mb * 256 * 1024  # 4 bytes * 256 * 1024 = 1 MB
 N_PROC = args.nproc
 
 
-def setup(rank: int, world_size: int) -> None:
-    """ Initialize the distributed environment. """
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "29500"
-    dist.init_process_group(backend=BACKEND, rank=rank, world_size=world_size)
-
-
 def time_tensor_all_reduce(
         rank: int, world_size: int, 
         input_size: int, 
         warm_up_iter: int, timed_iter: int
     ) -> None:
     # Initialize the distributed environment.
-    setup(rank, world_size)
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "29500"
+    torch.distributed.init_process_group(backend=BACKEND, rank=rank, world_size=world_size)
+
     
     # Initialize random data tensor on each process.
     DEVICE = f"cuda:{rank}" if BACKEND == "nccl" else "cpu"
@@ -37,7 +33,7 @@ def time_tensor_all_reduce(
 
     # Warm-up iterations
     for _ in range(warm_up_iter):
-        dist.all_reduce(data, async_op=False)
+        torch.distributed.all_reduce(data, async_op=False)
         print(f"rank {rank} data (after all-reduce): {data}")
 
     print(f"=========== Rank {rank} completed warm-up. ===========")
@@ -49,7 +45,7 @@ def time_tensor_all_reduce(
     time_results = []
     for _ in range(timed_iter):
         start_time = time.perf_counter()
-        dist.all_reduce(data, async_op=False)
+        torch.distributed.all_reduce(data, async_op=False)
         # Sync
         if DEVICE == f"cuda:{rank}":
             torch.cuda.synchronize()
@@ -61,10 +57,11 @@ def time_tensor_all_reduce(
     
     # All-reduce the timing results across all processes
     time_tensor = torch.tensor(time_results, device=DEVICE)
-    dist.all_reduce(time_tensor, async_op=False)
+    torch.distributed.all_reduce(time_tensor, async_op=False)
     if rank == 0:
         avg_time = sum(time_tensor.cpu().tolist())/ (world_size * timed_iter)
         print(f"Size {input_size/256/1024} MB -> Average times: {avg_time}")
+
 
 
 if __name__ == "__main__":
@@ -75,5 +72,4 @@ if __name__ == "__main__":
         nprocs=N_PROC,
         join=True,
     )
-    # All-reduce the timing results across all processes
 
