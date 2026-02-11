@@ -2,7 +2,7 @@
 ```
 uv run python profiling.py \
     --WARM_UP_ITER 10\
-    --PROFILE_ITER 10\
+    --PROFILE_ITER 100\
     --TRAIN_PATH ./cs336-basics/data/tokenized/ts_train.npy \
     --VAL_PATH ./cs336-basics/data/tokenized/ts_valid.npy \
     --VOCAB_PATH ./cs336-basics/cs336_basics/bpe_tokenizer/vocab_id2b_dict.pkl \

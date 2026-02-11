@@ -3,45 +3,55 @@ import time
 from typing import List
 import torch
 import torch.distributed as dist
+from torch.distributed import init_process_group, destroy_process_group
 import torch.multiprocessing as mp
 import argparse
 parser = argparse.ArgumentParser()
-parser.add_argument('--nproc', type=int, default=4, help='number of processes to spawn')
 parser.add_argument('--GPU', action='store_true', help='use GPU if available')
 parser.add_argument('--tensor_mb', type=int, help='number of MB of a data tensor', default=3)
+parser.add_argument('--cpu_nproc', type=int, help='number of CPU processes to spawn', default=1)
 args = parser.parse_args()
-BACKEND = "nccl" if args.GPU and torch.cuda.is_available() else "gloo"
-TENSOR_DIM = args.tensor_mb * 256 * 1024  # 4 bytes * 256 * 1024 = 1 MB
-N_PROC = args.nproc
 
+data_mb = 5
+BACKEND = "nccl" if args.GPU and torch.cuda.is_available() else "gloo"
+TENSOR_DIM = data_mb * 256 * 1024  # 4 bytes * 256 * 1024 = 1 MB
+CPU_NPROC = args.cpu_nproc
+
+def set_dist_env(rank, world_size):
+    # Set the master node address and port
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
+    # Initialize the the proc - `rank` into the group
+    init_process_group(
+        backend=BACKEND, 
+        rank=rank, 
+        world_size=world_size
+    )
 
 def time_tensor_all_reduce(
-        rank: int, world_size: int, 
+        rank: int, world_size: int, device: str,
         input_size: int, 
         warm_up_iter: int, timed_iter: int
     ) -> None:
-    # Initialize the distributed environment.
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "29500"
-    torch.distributed.init_process_group(backend=BACKEND, rank=rank, world_size=world_size)
-
-    
-    # Initialize random data tensor on each process.
+    """1. Setting up process group"""
+    set_dist_env(rank, world_size)
     DEVICE = f"cuda:{rank}" if BACKEND == "nccl" else "cpu"
+
+    """2. Start benchmarking"""
+    #   Initialize random data tensor on each process.
     input_tensor = torch.randint(0, 10, (input_size,), device=DEVICE, dtype=torch.float32)
     data = input_tensor.clone()
 
-    # Warm-up iterations
+    #   Warm-up iterations
     for _ in range(warm_up_iter):
         torch.distributed.all_reduce(data, async_op=False)
-        print(f"rank {rank} data (after all-reduce): {data}")
 
-    print(f"=========== Rank {rank} completed warm-up. ===========")
+    print(f"==========      Rank {rank} completed warmup.     ===========")
     if DEVICE == f"cuda:{rank}":
             torch.cuda.synchronize()
     
     print(f"=========== Rank {rank} starting timed iterations ===========")
-    # Timed iterations
+    #   Timed iterations
     time_results = []
     for _ in range(timed_iter):
         start_time = time.perf_counter()
@@ -55,21 +65,36 @@ def time_tensor_all_reduce(
             print(f"{rank} first 5: {[int(i) for i in data[:5].to('cpu').tolist()]}")
         time_results.append(end_time - start_time)
     
-    # All-reduce the timing results across all processes
+    #   All-reduce the timing results across all processes
     time_tensor = torch.tensor(time_results, device=DEVICE)
     torch.distributed.all_reduce(time_tensor, async_op=False)
     if rank == 0:
         avg_time = sum(time_tensor.cpu().tolist())/ (world_size * timed_iter)
         print(f"Size {input_size/256/1024} MB -> Average times: {avg_time}")
 
+    """3. Clean up process group"""
+    destroy_process_group()
+
 
 
 if __name__ == "__main__":
     time_results = []
+    N_PROC = (
+        torch.cuda.device_count() if BACKEND == "nccl" # Return the number of GPUs available
+        else args.cpu_nproc # Use the custom CPU proc number
+    )
+    DEVICE = "cuda" if BACKEND == "nccl" else "cpu"
+    # Spawn Processes
+    """
+    Initialize `nprocs` processes, rank is assigned automatically by `mp.spawn`.
+
+        - All proc running: `fn=time_tensor_all_reduce`.
+        - proc's RANK is pass automatically by `mp.spawn` to `fn` as the first argument.
+        - Inside the `time_tensor_all_reduce` method, we initialize the distributed env using the enforced passed `RANK` and `args`
+    """
     mp.spawn(
         fn=time_tensor_all_reduce,
-        args=(N_PROC, TENSOR_DIM, 5, 10),
-        nprocs=N_PROC,
+        args=(N_PROC, DEVICE, TENSOR_DIM, 5, 10),
+        nprocs=N_PROC, # Number of processes to spawn
         join=True,
     )
-
