@@ -65,12 +65,12 @@ def scaled_dot_product_attention(query, key, value, is_causal: bool = False):
 # Add Different FlashAttention Kernels 
 ####################################################################
 
-from cs336_systems.FlashAttention.FlashAttention.flash_attention_torch_vectorized import flash_attn_torch_vectorized_fn
+from cs336_systems.FlashAttention.flash_attention_torch_vectorized import flash_attn_torch_vectorized_fn
 @nvtx.range("Attention-FlashAttention-Torch")
 def flash_attention_torch(query, key, value, is_causal: bool = False):
     return flash_attn_torch_vectorized_fn(query, key, value, is_causal)  # Positional args only
 
-from cs336_systems.FlashAttention.FlashAttention.flash_attention_triton import flash_attn_triton_fn
+from cs336_systems.FlashAttention.flash_attention_triton import flash_attn_triton_fn
 @nvtx.range("Attention-FlashAttention-MyTriton")
 def flash_attention_my_triton(query, key, value, is_causal: bool = False):
     return flash_attn_triton_fn(query, key, value, is_causal)  # Positional args only
