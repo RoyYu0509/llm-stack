@@ -5,7 +5,7 @@ from cs336_basics.transfromer.pointwise_ffn import PointwiseSGLUactFFN
 from cs336_basics.transfromer.positionalNencoding import PosEncod
 from cs336_basics.transfromer.rmsnorm import Rmsnorm
 from cs336_basics.transfromer.transformer import PreNormTransformer
-from cs336_basics.transfromer.scaled_dot_prod_attention import softmax
+from cs336_basics.transfromer.scaled_dot_prod_attention import scaled_dot_product_attention, softmax
 import torch.nn as nn
 import torch.cuda.nvtx as nvtx
 import torch
@@ -135,6 +135,7 @@ class TransformerLM(nn.Module):
                  eps: float = 1e-5, # rmsnorm kwargs
                  latent_exp_factor = 8/3, # FNN kwargs
                  device=None, dtype=torch.float32,  # general kwargs
+                 attention_fn: callable = scaled_dot_product_attention
     ):
         """
         A transformer block.
@@ -172,7 +173,8 @@ class TransformerLM(nn.Module):
                 d_ff,
                 pos_encod=self.pos_encoder, token_positions=None,
                 latent_exp_factor=latent_exp_factor,
-                device = device, dtype=dtype
+                device = device, dtype=dtype,
+                attention_fn=attention_fn
             ) for _ in range(num_layers)
         ])
 

@@ -3,7 +3,7 @@ from jaxtyping import Float, Array
 from torch import Tensor
 from einops import rearrange, reduce, repeat, einsum
 from cs336_basics.transfromer.para_init import trunct_normal_para_init
-from cs336_basics.transfromer.scaled_dot_prod_attention import softmax, scaled_dot_product_attention
+from cs336_basics.transfromer.scaled_dot_prod_attention import softmax, scaled_dot_product_attention, flash_attention_full_triton, flash_attention_my_triton, flash_attention_torch
 import torch.cuda.nvtx as nvtx
 
 
@@ -74,7 +74,7 @@ class MultiHeadsAttention(torch.nn.Module):
         self.token_positions = token_positions  # optional fallback
 
     @nvtx.range("MultiHeadsAttention computation")
-    def _multiHead(self, x, token_positions=None):
+    def _multiHead(self, x, token_positions=None, attention_fn=scaled_dot_product_attention):
         """
         Return the result of MultiHead(W_Q, W_K, W_V, x) 
 
@@ -101,33 +101,19 @@ class MultiHeadsAttention(torch.nn.Module):
             Q = self.pos_encod.forward(Q, positions)
             K = self.pos_encod.forward(K, positions)
 
-        bool_mask = self._build_mask(x)
+        is_causal = True
 
         multi_head: Float[Tensor, f"... h seq d_v"]
-        multi_head = scaled_dot_product_attention(Q, K, V, bool_mask)
-        
+        multi_head = attention_fn(Q, K, V, is_causal)
         return multi_head
     
-    def _build_mask(self, x):
-        """
-        Return a bool mask for the batch x, True -> Attend To.
-
-        Parameters:
-            - x: Float[Tensor, "... seq d_model"]
-
-        Return:
-            - mask: Bool[Tensor, "... seq, seq"]
-        """
-        seq_len = x.shape[-2]
-        return ~torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to(device=x.device)  
-    
     @nvtx.range("MultiHeadsAttention_forward")
-    def forward(self, x, token_positions=None):
+    def forward(self, x, token_positions=None, attention_fn=scaled_dot_product_attention):
         """
         Return tensor: W_O @ MultiHead(W_Q, W_K, W_V, x) 
         """
         multi_head_attention: Float[Tensor, "... h seq_q d_v"]
-        multi_head_attention = self._multiHead(x, token_positions)
+        multi_head_attention = self._multiHead(x, token_positions, attention_fn=attention_fn)
 
         multi_head_attention = rearrange(multi_head_attention, "... h seq d_v -> ... seq (h d_v)")
         self.W_O: Float[Tensor, "d_model (h_d_v)"]

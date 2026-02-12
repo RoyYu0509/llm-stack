@@ -25,14 +25,14 @@ def softmax(input: torch.Tensor, axis: int = -1):
     return softmax_output
 
 @nvtx.range("scaled dot product attention")
-def scaled_dot_product_attention(query, key, value, bool_mask=None):
+def scaled_dot_product_attention(query, key, value, is_causal: bool = False):
     """
     Return an output with the shape (batch_size,..., d_v)
 
     key:        (... n,d_k) = (batch_size, ..., seq_len, d_k) 
     query:      (... n,d_k) = (batch_size, ..., seq_len, d_k)
     value:      (... n,d_v) = (batch_size, ..., seq_len, d_v)
-    bool_mask:  (seq_len, seq_len)
+    is_causal:  bool
 
     Return:
         - attention: Float[Tensor, "... seq_q d_v"]
@@ -40,12 +40,16 @@ def scaled_dot_product_attention(query, key, value, bool_mask=None):
     Note:
         seq_q == seq_k == seq_v == `seq_len` 
     """
-    # Compute Normalized QtK & Apply Mask
+    # Compute Normalized QtK & Apply causal mask
     with nvtx.range("Compute QK^t"):
         norm_qk: Float[torch.Tensor, "... seq_q, seq_k"]
         norm_qk = einsum(key, query, "... seq_k d_k, ... seq_q d_k -> ... seq_q seq_k") / torch.sqrt(torch.tensor(key.shape[-1], device=query.device))
-        if bool_mask is not None:
-            norm_qk = norm_qk.masked_fill(~bool_mask, -1e9) # ~ is to invert F -> T, since F meaning we should masked them
+        # Triangular Causal Mask
+        if is_causal:
+            seq_q = query.shape[-2]
+            seq_k = key.shape[-2]
+            causal_mask = torch.tril(torch.ones(seq_q, seq_k, device=query.device, dtype=torch.bool))
+            norm_qk = norm_qk.masked_fill(~causal_mask, -1e9)
     
     # Softmax
     with nvtx.range("Computing softmax"):
@@ -58,3 +62,22 @@ def scaled_dot_product_attention(query, key, value, bool_mask=None):
         attention = einsum(softmax_qk, value, "... seq_q seq_k, ... seq_k d_v -> ... seq_q d_v")
 
     return attention
+
+####################################################################
+# Add Different FlashAttention Kernels 
+####################################################################
+
+from cs336_systems.FlashAttention.FlashAttention.flash_attention_torch_vectorized import flash_attn_torch_vectorized_fn
+@nvtx.range("Attention-FlashAttention-Torch")
+def flash_attention_torch(query, key, value, is_causal: bool = False):
+    return flash_attn_torch_vectorized_fn(query, key, value, is_causal=is_causal)
+
+from cs336_systems.FlashAttention.FlashAttention.flash_attention_triton import flash_attn_packed_sdpa_fn
+@nvtx.range("Attention-FlashAttention-FullTriton")
+def flash_attention_full_triton(query, key, value, is_causal: bool = False):
+    return flash_attn_packed_sdpa_fn(query, key, value, is_causal=is_causal)
+
+from cs336_systems.FlashAttention.FlashAttention.flash_attention_triton import flash_attn_triton_fn
+@nvtx.range("Attention-FlashAttention-MyTriton")
+def flash_attention_my_triton(query, key, value, is_causal: bool = False):
+    return flash_attn_triton_fn(query, key, value, is_causal)

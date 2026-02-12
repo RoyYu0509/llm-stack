@@ -3,11 +3,18 @@ import triton.language as tl
 import triton
 import triton.language as tl
 import torch
+import torch.nn.functional as F
 import jaxtyping
 from jaxtyping import Float
 from torch import Tensor
 from triton.language import tensor as tlTensor
 from einops import rearrange
+
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+except Exception:
+    SDPBackend = None
+    sdpa_kernel = None
 
 
 # Set of configurations to try during autotuning (Hyperparameter search space)
@@ -202,12 +209,37 @@ def flash_fwd_triton(
     return OUT, L
 
 
+def flash_attention_packed_sdpa(
+    Q: torch.Tensor,
+    K: torch.Tensor,
+    V: torch.Tensor,
+    is_causal: bool = False,
+):
+    """
+    Ready-to-use packed attention path powered by PyTorch SDPA.
+    Uses fused flash/efficient/math kernels and relies on PyTorch's native backward.
 
+    Inputs are expected in shape [B, N, D].
+    """
+    assert (Q.shape[-1] == K.shape[-1]) and (Q.shape[-1] == V.shape[-1]), "Token embedding dimension inconsistent"
+    assert Q.dim() == 3 and K.dim() == 3 and V.dim() == 3, f"Input should follow the shape B N D, Actual = {Q.shape}"
+
+    q = Q.unsqueeze(1)
+    k = K.unsqueeze(1)
+    v = V.unsqueeze(1)
+
+    if sdpa_kernel is not None and SDPBackend is not None:
+        with sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]):
+            out = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=is_causal)
+    else:
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=is_causal)
+
+    return out.squeeze(1)
 
 
 class FlashAttentionTorchFunctionTriton(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, Q, K, V, is_causal=False):
+    def forward(ctx, Q, K, V, is_causal: bool = False):
         """
         Forward pass for FlashAttention using PyTorch operations.
 
@@ -215,14 +247,9 @@ class FlashAttentionTorchFunctionTriton(torch.autograd.Function):
             - Q: Float[torch.Tensor, "N_q, d"] The Query matrix
             - K: Float[torch.Tensor, "N_k, d"] The Key matrix
             - V: Float[torch.Tensor, "N_k, d"] The Value matrix
-            - B_q: int Query TILE_ROW
-            - B_k: int Key TILE_ROW
         """
-        B_q, B_k= 16, 16  # Example tile sizes; these can be tuned based on hardware
         O, L = flash_fwd_triton(Q, K, V,is_causal)
         ctx.save_for_backward(Q,K,V,O,L)
-        ctx.B_q = B_q
-        ctx.B_k = B_k
         ctx.is_causal = is_causal
         # print("Forward FlashAttention Torch done.")
         # print("O:", O.shape)
@@ -270,3 +297,4 @@ class FlashAttentionTorchFunctionTriton(torch.autograd.Function):
         return dLdQ, dLdK, dLdV, None
     
 flash_attn_triton_fn = FlashAttentionTorchFunctionTriton.apply
+flash_attn_packed_sdpa_fn = flash_attention_packed_sdpa
