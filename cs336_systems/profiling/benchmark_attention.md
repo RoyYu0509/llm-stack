@@ -20,6 +20,9 @@ nsys profile -t cuda,nvtx -o ./profiling_attention_compile==False/my_profile_rep
 # Baseline (default)
 python cs336_systems/profiling/benchmark_attention.py
 
+# Baseline Compiled
+python cs336_systems/profiling/benchmark_attention.py --COMPILED
+
 # My Triton implementation, compiled
 python cs336_systems/profiling/benchmark_attention.py --MyTritonAttn 
 
