@@ -10,7 +10,8 @@ from cs336_basics.train.optimizer import AdamW
 import torch.cuda.nvtx as nvtx
 import os
 import tqdm
-
+import matplotlib.pyplot as plt
+from cs336_basics.transfromer.scaled_dot_prod_attention import softmax, scaled_dot_product_attention, flash_attention_full_triton, flash_attention_my_triton, flash_attention_torch
 
 
 parser = argparse.ArgumentParser(description="Benchmarking Attention Mechanism")
@@ -18,6 +19,9 @@ parser.add_argument("--DTYPE", type=str, default="float32", help="Data type for 
 parser.add_argument("--PROFILE_FORWARD_MEMORY", type=bool, default=False, help="Whether to perform memory profiling during forward pass.")
 parser.add_argument("--PROFILE_BACKWARD_MEMORY", type=bool, default=False, help="Whether to perform memory profiling during backward pass.")
 parser.add_argument("--COMPILED", action="store_true", help="Whether to use compiled attention module")
+parser.add_argument("--MyTritonAttn", action="store_true", help="Whether to use MyTriton attention module")
+parser.add_argument("--RefTritonAttn", action="store_true", help="Whether to use Reference Triton module")
+parser.add_argument("--VecTorchAttn", action="store_true", help="Whether to use Vectorized Torch attention module")
 
 args = parser.parse_args()
 DTYPE = getattr(torch, args.DTYPE)
@@ -25,9 +29,9 @@ PROFILE_FORWARD_MEMORY = args.PROFILE_FORWARD_MEMORY
 PROFILE_BACKWARD_MEMORY = args.PROFILE_BACKWARD_MEMORY
 COMPILED = args.COMPILED
 COMPILED_STR = "True" if COMPILED else "False"
-
-# Create directory for profiling results
-os.makedirs(f"./profiling_attention_compile=={COMPILED_STR}", exist_ok=True)
+MyTritonAttn = args.MyTritonAttn
+RefTritonAttn = args.RefTritonAttn
+VecTorchAttn = args.VecTorchAttn
 
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
@@ -37,11 +41,24 @@ def _sync_device():
     elif device.startswith("mps") and torch.backends.mps.is_available():
         torch.mps.synchronize()
 
+def attn_kernel_selector():
+    """Select attention function based on command-line arguments."""
+    if MyTritonAttn:
+        return flash_attention_my_triton, "MyTriton"
+    elif RefTritonAttn:
+        return flash_attention_full_triton, "RefTriton"
+    elif VecTorchAttn:
+        return flash_attention_torch, "VecTorch"
+    else:
+        return scaled_dot_product_attention, "Baseline"
+
 
 def benchmarking_naive_attention(
+        atten_fn:callable,
         heads_num:list, d_models:list, 
+        profiling_dir:str,
         context_length:int=256, batch_size:int=16, 
-        device:torch.device=torch.device("cuda"), dtype:torch.dtype=DTYPE
+        device:torch.device=torch.device("cuda"), dtype:torch.dtype=DTYPE,
     ):
     """
     Benchmarking the attention mechanism.
@@ -55,7 +72,7 @@ def benchmarking_naive_attention(
     })
     for head, d_model in itertools.product(heads_num, d_models):
         print(f"Benchmarking MultiHead Attention: heads={head}, d_model={d_model}")
-        mha = MultiHeadsAttention(d_model, head, device=device, dtype=dtype)
+        mha = MultiHeadsAttention(d_model, head, device=device, dtype=dtype, attention_fn=atten_fn)
         if COMPILED:
             mha = torch.compile(mha)
         mha.to(device=device, dtype=dtype)
@@ -89,11 +106,11 @@ def benchmarking_naive_attention(
             start_time = timeit.default_timer()
             with nvtx.range("forward_pass"):
                 y = mha._multiHead(x, token_positions=torch.arange(context_length, device=device, dtype=torch.long))
+            _sync_device()  # Sync BEFORE stopping timer to wait for GPU
             forward_time = timeit.default_timer() - start_time
-            _sync_device()
 
             if PROFILE_FORWARD_MEMORY:
-                torch.cuda.memory._dump_snapshot(f"./profiling_attention/head{head}_dmodel{d_model}_mem_f.pickle")
+                torch.cuda.memory._dump_snapshot(os.path.join(profiling_dir, f"head{head}_dmodel{d_model}_mem_f.pickle"))
                 torch.cuda.memory._record_memory_history(enabled=None)
 
 
@@ -104,10 +121,10 @@ def benchmarking_naive_attention(
             start_time = timeit.default_timer()
             with nvtx.range("backward_pass"):
                 y.sum().backward()
+            _sync_device()  # Sync BEFORE stopping timer to wait for GPU
             backward_time = timeit.default_timer() - start_time
-            _sync_device()
             if PROFILE_BACKWARD_MEMORY:
-                torch.cuda.memory._dump_snapshot(f"./profiling_attention/head{head}_dmodel{d_model}_mem_b.pickle")
+                torch.cuda.memory._dump_snapshot(os.path.join(profiling_dir, f"head{head}_dmodel{d_model}_mem_b.pickle"))
                 torch.cuda.memory._record_memory_history(enabled=None)
 
             # Do not update parameters
@@ -130,22 +147,60 @@ def benchmarking_naive_attention(
             
             
 def main():
-    heads_num = [32]
-    d_models = [2560]
-    print("Starting...")
+    heads_num = [16, 24, 32, 64, 128]
+    d_models = [768, 1024, 1280, 1536, 2048]
+    
+    # Select attention function
+    atten_fn, attn_name = attn_kernel_selector()
+    print(f"Starting benchmarking with {attn_name} attention (compiled={COMPILED})...")
+    
+    # Create directory for profiling results relative to this script
+    _here = os.path.dirname(os.path.abspath(__file__))
+    global _profiling_dir
+    _profiling_dir = os.path.join(_here, f"profile_{attn_name}_compiled_{COMPILED_STR}")
+    os.makedirs(_profiling_dir, exist_ok=True)
 
     df = benchmarking_naive_attention(
+        atten_fn=atten_fn,
         heads_num=heads_num,
         d_models=d_models,
         context_length=256,
         batch_size=64,
         device=device,
-        dtype=DTYPE
+        dtype=DTYPE,
+        profiling_dir=_profiling_dir
     )
 
-    # Save to csv
-    df.to_csv(f"./profiling_attention_compile=={COMPILED}/benchmark_attention.csv", index=False)
-    print("Benchmarking results saved to benchmark_attention.csv")        
+    # Plot 1: heads_num vs runtime (averaged over d_models)
+    heads_avg = df.groupby("heads_num")[["forward_time", "backward_time"]].mean().reset_index()
+    plt.figure(figsize=(10, 6))
+    plt.plot(heads_avg["heads_num"], heads_avg["forward_time"], marker='o', label="Forward Time (avg)")
+    plt.plot(heads_avg["heads_num"], heads_avg["backward_time"], marker='s', label="Backward Time (avg)")
+    plt.xlabel("Number of Heads")
+    plt.ylabel("Time (seconds)")
+    plt.title(f"Runtime vs Number of Heads ({attn_name}, compiled={COMPILED})")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(_profiling_dir, "heads_num_vs_runtime.png"), dpi=150, bbox_inches='tight')
+    plt.close()
+
+    # Plot 2: d_models vs runtime (averaged over heads_num)
+    dmodel_avg = df.groupby("d_model")[["forward_time", "backward_time"]].mean().reset_index()
+    plt.figure(figsize=(10, 6))
+    plt.plot(dmodel_avg["d_model"], dmodel_avg["forward_time"], marker='o', label="Forward Time (avg)")
+    plt.plot(dmodel_avg["d_model"], dmodel_avg["backward_time"], marker='s', label="Backward Time (avg)")
+    plt.xlabel("d_model")
+    plt.ylabel("Time (seconds)")
+    plt.title(f"Runtime vs d_model ({attn_name}, compiled={COMPILED})")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(_profiling_dir, "dmodel_vs_runtime.png"), dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    # Save results to CSV
+    df.to_csv(os.path.join(_profiling_dir, "benchmark_results.csv"), index=False)
+    
+    print(f"Results saved to {_profiling_dir}")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# Train the tokenizer
+# 1. Train the tokenizer
 uv run python ./cs336-basics/cs336_basics/build_tokenizer.py \
     --input ./cs336-basics/data/ts.txt \
     --vocab-size 10000 \
@@ -7,7 +7,7 @@ uv run python ./cs336-basics/cs336_basics/build_tokenizer.py \
     --vocab-output ./cs336-basics/cs336_basics/bpe_tokenizer/vocab_id2b_dict.pkl \
     --merges-output ./cs336-basics/cs336_basics/bpe_tokenizer/merges_seq.pkl
 
-# Build the NumPy data from the raw text (train + valid)
+# 2. Build the NumPy data from the raw text (train + valid)
 ```
 uv run python ./cs336-basics/cs336_basics/build_dataset.py \
     --text-path  ./cs336-basics/data/ts.txt \
@@ -31,7 +31,7 @@ uv run python ./cs336-basics/cs336_basics/build_dataset.py \
     --num-workers 10
 ```
 
-# Train the LM using the NumPy Data
+# 3. Train the LM using the NumPy Data
 ```
 uv run python ./cs336-basics/cs336_basics/trainer.py \
     --TRAIN_PATH  ./cs336-basics/data/tokenized/ts_train.npy \
@@ -60,7 +60,7 @@ uv run python ./cs336-basics/cs336_basics/trainer.py \
 ```
 
 
-# Text Generation
+# 4. Text Generation
 ```
 uv run python ./cs336-basics/cs336_basics/text_gen.py \
     --model-checkpoint ./cs336-basics/artifacts/iter_4999-loss_10.660388946533203.pt \

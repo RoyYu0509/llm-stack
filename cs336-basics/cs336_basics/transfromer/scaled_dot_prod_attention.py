@@ -27,18 +27,16 @@ def softmax(input: torch.Tensor, axis: int = -1):
 @nvtx.range("scaled dot product attention")
 def scaled_dot_product_attention(query, key, value, is_causal: bool = False):
     """
-    Return an output with the shape (batch_size,..., d_v)
+    Return an output with the shape (batch_size, seq_len, d_model)
 
-    key:        (... n,d_k) = (batch_size, ..., seq_len, d_k) 
-    query:      (... n,d_k) = (batch_size, ..., seq_len, d_k)
-    value:      (... n,d_v) = (batch_size, ..., seq_len, d_v)
+    Accepts 3D packed format:
+    key:        (batch, seq_k, d_model)
+    query:      (batch, seq_q, d_model)
+    value:      (batch, seq_v, d_model)
     is_causal:  bool
 
     Return:
-        - attention: Float[Tensor, "... seq_q d_v"]
-    
-    Note:
-        seq_q == seq_k == seq_v == `seq_len` 
+        - attention: Float[Tensor, "batch seq_q d_model"]
     """
     # Compute Normalized QtK & Apply causal mask
     with nvtx.range("Compute QK^t"):

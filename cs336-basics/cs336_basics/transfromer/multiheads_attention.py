@@ -8,7 +8,13 @@ import torch.cuda.nvtx as nvtx
 
 
 class MultiHeadsAttention(torch.nn.Module):
-    def __init__(self,d_model: int, heads_num: int, pos_encod=None, token_positions=None, device=None, dtype=torch.float16):
+    def __init__(
+        self,d_model: int, heads_num: int, 
+        pos_encod=None, token_positions=None, 
+        is_causal: bool = True,
+        attention_fn=scaled_dot_product_attention, 
+        device=None, dtype=torch.float16
+        ):
         """
         A Multi-Heads Attention Module
 
@@ -72,15 +78,17 @@ class MultiHeadsAttention(torch.nn.Module):
         # Add Positional Encoding
         self.pos_encod = pos_encod 
         self.token_positions = token_positions  # optional fallback
+        self.attention_fn = attention_fn
+        self.is_causal = is_causal
 
     @nvtx.range("MultiHeadsAttention computation")
-    def _multiHead(self, x, token_positions=None, attention_fn=scaled_dot_product_attention):
+    def _multiHead(self, x, token_positions=None):
         """
         Return the result of MultiHead(W_Q, W_K, W_V, x) 
 
         Return:
             - multi_head: Float[Tensor, f"... h seq d_v"]
-        """
+        """ 
         x: Float[Tensor, f"... seq d_model"]  
         
         Q: Float[Tensor, f"... seq h d_k d_model"]
@@ -101,19 +109,28 @@ class MultiHeadsAttention(torch.nn.Module):
             Q = self.pos_encod.forward(Q, positions)
             K = self.pos_encod.forward(K, positions)
 
-        is_causal = True
+        # Reshape to 3D ((Batch, Heads), Seq, D)
+        Q_packed = rearrange(Q, "... h seq d_k -> ... seq (h d_k)")
+        K_packed = rearrange(K, "... h seq d_k -> ... seq (h d_k)")
+        V_packed = rearrange(V, "... h seq d_v -> ... seq (h d_v)")
 
+        # Call attention with 3D packed format
+        multi_head_packed: Float[Tensor, f"... seq (h d_v)"]
+        multi_head_packed = self.attention_fn(Q_packed, K_packed, V_packed, is_causal=self.is_causal)
+        
+        # Reshape Back to (B, H, Seq, D)
         multi_head: Float[Tensor, f"... h seq d_v"]
-        multi_head = attention_fn(Q, K, V, is_causal)
+        multi_head = rearrange(multi_head_packed, "... seq (h d_v) -> ... h seq d_v", h=self.heads_num, d_v=self.d_v)
+        
         return multi_head
     
     @nvtx.range("MultiHeadsAttention_forward")
-    def forward(self, x, token_positions=None, attention_fn=scaled_dot_product_attention):
+    def forward(self, x, token_positions=None, atten_fn=None):
         """
         Return tensor: W_O @ MultiHead(W_Q, W_K, W_V, x) 
         """
         multi_head_attention: Float[Tensor, "... h seq_q d_v"]
-        multi_head_attention = self._multiHead(x, token_positions, attention_fn=attention_fn)
+        multi_head_attention = self._multiHead(x, token_positions, atten_fn=atten_fn)
 
         multi_head_attention = rearrange(multi_head_attention, "... h seq d_v -> ... seq (h d_v)")
         self.W_O: Float[Tensor, "d_model (h_d_v)"]
