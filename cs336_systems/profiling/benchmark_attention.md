@@ -13,3 +13,16 @@ nsys profile -t cuda,nvtx -o ./profiling_attention_compile==False/my_profile_rep
     --PROFILE_FORWARD_MEMORY True \
     --PROFILE_BACKWARD_MEMORY True \
 ```
+
+
+# Benchmarking Attention Kernels
+```
+# Baseline (default)
+python cs336_systems/profiling/benchmark_attention.py
+
+# My Triton implementation, compiled
+python cs336_systems/profiling/benchmark_attention.py --MyTritonAttn 
+
+# Vectorized Torch implementation
+python cs336_systems/profiling/benchmark_attention.py --VecTorchAttn
+```

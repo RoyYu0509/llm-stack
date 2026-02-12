@@ -1,7 +1,6 @@
 import pandas as pd
 import torch
 import cs336_basics
-import itertools
 from cs336_basics.transfromer.scaled_dot_prod_attention import scaled_dot_product_attention
 import timeit
 from cs336_basics.transfromer.multiheads_attention import MultiHeadsAttention
@@ -11,7 +10,7 @@ import torch.cuda.nvtx as nvtx
 import os
 import tqdm
 import matplotlib.pyplot as plt
-from cs336_basics.transfromer.scaled_dot_prod_attention import softmax, scaled_dot_product_attention, flash_attention_full_triton, flash_attention_my_triton, flash_attention_torch
+from cs336_basics.transfromer.scaled_dot_prod_attention import softmax, scaled_dot_product_attention, flash_attention_my_triton, flash_attention_torch
 
 
 parser = argparse.ArgumentParser(description="Benchmarking Attention Mechanism")
@@ -45,8 +44,6 @@ def attn_kernel_selector():
     """Select attention function based on command-line arguments."""
     if MyTritonAttn:
         return flash_attention_my_triton, "MyTriton"
-    elif RefTritonAttn:
-        return flash_attention_full_triton, "RefTriton"
     elif VecTorchAttn:
         return flash_attention_torch, "VecTorch"
     else:
@@ -55,9 +52,9 @@ def attn_kernel_selector():
 
 def benchmarking_naive_attention(
         atten_fn:callable,
-        heads_num:list, d_models:list, 
+        configs:list,  # List of (heads, d_model) tuples
         profiling_dir:str,
-        context_length:int=256, batch_size:int=16, 
+        context_length:int=128, batch_size:int=16, 
         device:torch.device=torch.device("cuda"), dtype:torch.dtype=DTYPE,
     ):
     """
@@ -70,7 +67,7 @@ def benchmarking_naive_attention(
         "forward_time": [],
         "backward_time": [],
     })
-    for head, d_model in itertools.product(heads_num, d_models):
+    for head, d_model in configs:
         print(f"Benchmarking MultiHead Attention: heads={head}, d_model={d_model}")
         mha = MultiHeadsAttention(d_model, head, device=device, dtype=dtype, attention_fn=atten_fn)
         if COMPILED:
@@ -83,9 +80,12 @@ def benchmarking_naive_attention(
         # Warm-up
         nvtx.range_push("Warm-up")
         for _ in range(10):  # Warm-up
+            opt.zero_grad()  # Clear gradients to prevent accumulation
             x = torch.randn((batch_size, context_length, d_model), device=device, dtype=dtype, requires_grad=True)
             y = mha._multiHead(x, token_positions=torch.arange(context_length, device=device, dtype=torch.long))
             y.sum().backward()
+        opt.zero_grad()  # Clear warmup gradients before benchmarking
+        torch.cuda.empty_cache()  # Free warmup memory
         nvtx.range_pop()
 
         # Benchmarking
@@ -131,6 +131,11 @@ def benchmarking_naive_attention(
             # opt.step()
             forward_times += forward_time
             backward_times += backward_time
+            
+            # Clean up to prevent memory accumulation
+            del x, y
+            if _ % 10 == 0:  # Periodic cleanup every 10 iterations
+                torch.cuda.empty_cache()
         nvtx.range_pop()
 
         # Record
@@ -147,8 +152,16 @@ def benchmarking_naive_attention(
             
             
 def main():
-    heads_num = [16, 24, 32, 64, 128]
-    d_models = [768, 1024, 1280, 1536, 2048]
+    configs = [
+        (8, 512),   # d_head=64
+        (8, 1024),  # d_head=128
+        (8, 2048),  # d_head=256
+        (16, 512),  # d_head=32
+        (16, 1024), # d_head=64
+        (16, 2048), # d_head=128
+        (32, 1024), # d_head=32
+        (32, 2048), # d_head=64
+    ]
     
     # Select attention function
     atten_fn, attn_name = attn_kernel_selector()
@@ -162,10 +175,9 @@ def main():
 
     df = benchmarking_naive_attention(
         atten_fn=atten_fn,
-        heads_num=heads_num,
-        d_models=d_models,
+        configs=configs,
         context_length=256,
-        batch_size=64,
+        batch_size=16,
         device=device,
         dtype=DTYPE,
         profiling_dir=_profiling_dir

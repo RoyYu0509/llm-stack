@@ -21,9 +21,7 @@ except Exception:
 # Explores different tile sizes, pipeline stages, and warp counts for optimal hardware utilization
 autotune_configs = [
     # ============= Small tiles (low memory, good for small models) =============
-    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=2),
-    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=2),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=2),
+    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=1, num_warps=1),
 ]
 
 
@@ -209,34 +207,6 @@ def flash_fwd_triton(
     return OUT, L
 
 
-def flash_attention_packed_sdpa(
-    Q: torch.Tensor,
-    K: torch.Tensor,
-    V: torch.Tensor,
-    is_causal: bool = False,
-):
-    """
-    Ready-to-use packed attention path powered by PyTorch SDPA.
-    Uses fused flash/efficient/math kernels and relies on PyTorch's native backward.
-
-    Inputs are expected in shape [B, N, D].
-    """
-    assert (Q.shape[-1] == K.shape[-1]) and (Q.shape[-1] == V.shape[-1]), "Token embedding dimension inconsistent"
-    assert Q.dim() == 3 and K.dim() == 3 and V.dim() == 3, f"Input should follow the shape B N D, Actual = {Q.shape}"
-
-    q = Q.unsqueeze(1)
-    k = K.unsqueeze(1)
-    v = V.unsqueeze(1)
-
-    if sdpa_kernel is not None and SDPBackend is not None:
-        with sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]):
-            out = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=is_causal)
-    else:
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=is_causal)
-
-    return out.squeeze(1)
-
-
 class FlashAttentionTorchFunctionTriton(torch.autograd.Function):
     @staticmethod
     def forward(ctx, Q, K, V, is_causal: bool = False):
@@ -297,4 +267,3 @@ class FlashAttentionTorchFunctionTriton(torch.autograd.Function):
         return dLdQ, dLdK, dLdV, None
     
 flash_attn_triton_fn = FlashAttentionTorchFunctionTriton.apply
-flash_attn_packed_sdpa_fn = flash_attention_packed_sdpa
