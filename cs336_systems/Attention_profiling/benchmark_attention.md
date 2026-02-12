@@ -17,15 +17,16 @@ nsys profile -t cuda,nvtx -o ./profiling_attention_compile==False/my_profile_rep
 
 # Benchmarking Attention Kernels
 ```
-# Baseline (default)
-python cs336_systems/profiling/benchmark_attention.py
+python /Users/yifanyu/Desktop/llm_proj/SystemLM/cs336_systems/Attention_profiling/benchmark_attention.py \
+  --DEVICE cpu \
+  --DTYPE float32 \
+  --BATCH_SIZE 8 \
+  --NUM_HEADS 32 \
+  --SEQ_LEN 512 \
+  --HEAD_DIM 256 \
+  --WARMUP_ITER 10 \
+  --PROFILE_ITER 10 \
+  --IS_CAUSAL \
+  --SEED 0
 
-# Baseline Compiled
-python cs336_systems/profiling/benchmark_attention.py --COMPILED
-
-# My Triton implementation, compiled
-python cs336_systems/profiling/benchmark_attention.py --MyTritonAttn 
-
-# Vectorized Torch implementation
-python cs336_systems/profiling/benchmark_attention.py --VecTorchAttn
 ```

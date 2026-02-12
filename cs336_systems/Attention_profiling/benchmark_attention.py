@@ -42,7 +42,7 @@ def _make_qkv(
     device: str,
     dtype: torch.dtype,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    shape = (batch_size, num_heads, seq_len, head_dim)
+    shape = (batch_size * num_heads, seq_len, head_dim)
     q = torch.randn(shape, device=device, dtype=dtype, requires_grad=True)
     k = torch.randn(shape, device=device, dtype=dtype, requires_grad=True)
     v = torch.randn(shape, device=device, dtype=dtype, requires_grad=True)
@@ -61,6 +61,11 @@ def _run_one_step(
     return output, loss
 
 
+def _update_progress(label: str, step: int, total: int) -> None:
+    end_char = "\n" if step >= total else "\r"
+    print(f"{label} {step}/{total}", end=end_char, flush=True)
+
+
 def _benchmark_kernel(
     kernel_name: str,
     attention_fn: Callable,
@@ -74,19 +79,23 @@ def _benchmark_kernel(
     dtype: torch.dtype,
     is_causal: bool,
 ) -> dict:
+    """
+    Benchmark the `attention_fn` kernel under the defined configuration.
+    """
     q, k, v = _make_qkv(batch_size, num_heads, seq_len, head_dim, device, dtype)
 
-    for _ in range(warmup_iter):
+    for step in range(1, warmup_iter + 1):
         _, loss = _run_one_step(attention_fn, q, k, v, is_causal)
         loss.backward()
         q.grad = None
         k.grad = None
         v.grad = None
+        _update_progress(f"[{kernel_name}] Warmup", step, warmup_iter)
 
     forward_times = []
     backward_times = []
 
-    for _ in range(profile_iter):
+    for step in range(1, profile_iter + 1):
         _sync_device(device)
         t0 = timeit.default_timer()
         _, loss = _run_one_step(attention_fn, q, k, v, is_causal)
@@ -105,6 +114,7 @@ def _benchmark_kernel(
 
         forward_times.append(t1 - t0)
         backward_times.append(t3 - t2)
+        _update_progress(f"[{kernel_name}] Benchmark", step, profile_iter)
 
     return {
         "kernel": kernel_name,
@@ -162,7 +172,6 @@ def main() -> None:
     parser.add_argument("--WARMUP_ITER", type=int, default=20)
     parser.add_argument("--PROFILE_ITER", type=int, default=100)
     parser.add_argument("--IS_CAUSAL", action="store_true")
-    parser.add_argument("--PROFILE_KERNEL", type=str, default="MyTriton", choices=list(KERNELS.keys()))
     parser.add_argument("--OUTPUT_DIR", type=str, default="")
     parser.add_argument("--SEED", type=int, default=0)
     args = parser.parse_args()
@@ -183,32 +192,45 @@ def main() -> None:
     )
     os.makedirs(output_dir, exist_ok=True)
 
+    # Iterate over configurations
     results = []
-    for kernel_name, kernel_fn in KERNELS.items():
-        try:
-            row = _benchmark_kernel(
-                kernel_name=kernel_name,
-                attention_fn=kernel_fn,
-                warmup_iter=args.WARMUP_ITER,
-                profile_iter=args.PROFILE_ITER,
-                batch_size=args.BATCH_SIZE,
-                num_heads=args.NUM_HEADS,
-                seq_len=args.SEQ_LEN,
-                head_dim=args.HEAD_DIM,
-                device=args.DEVICE,
-                dtype=dtype,
-                is_causal=args.IS_CAUSAL,
-            )
-            row["status"] = "ok"
-        except Exception as exc:
-            row = {
-                "kernel": kernel_name,
-                "forward_ms": float("nan"),
-                "backward_ms": float("nan"),
-                "total_ms": float("nan"),
-                "status": f"failed: {exc}",
-            }
+    kernel_items = list(KERNELS.items())
+    for idx, (kernel_name, kernel_fn) in enumerate(kernel_items, start=1):
+        print(f"\nRunning kernel {idx}/{len(kernel_items)}: {kernel_name}")
+        row = _benchmark_kernel(
+            kernel_name=kernel_name,
+            attention_fn=kernel_fn,
+            warmup_iter=args.WARMUP_ITER,
+            profile_iter=args.PROFILE_ITER,
+            batch_size=args.BATCH_SIZE,
+            num_heads=args.NUM_HEADS,
+            seq_len=args.SEQ_LEN,
+            head_dim=args.HEAD_DIM,
+            device=args.DEVICE,
+            dtype=dtype,
+            is_causal=args.IS_CAUSAL,
+        )
+        row["status"] = "ok"
         results.append(row)
+
+        _profile_kernel_once(
+            kernel_name=kernel_name,
+            attention_fn=kernel_fn,
+            batch_size=args.BATCH_SIZE,
+            num_heads=args.NUM_HEADS,
+            seq_len=args.SEQ_LEN,
+            head_dim=args.HEAD_DIM,
+            device=args.DEVICE,
+            dtype=dtype,
+            is_causal=args.IS_CAUSAL,
+            output_dir=output_dir,
+        )
+        profile_kernel_file = kernel_name.replace(" ", "_")
+        print(
+            f"Saved one-shot profile for {kernel_name} to "
+            f"{os.path.join(output_dir, f'profile_{profile_kernel_file}.txt')} and "
+            f"{os.path.join(output_dir, f'trace_{profile_kernel_file}.json')}"
+        )
 
     df = pd.DataFrame(results)
     csv_path = os.path.join(output_dir, "benchmark_results.csv")
@@ -216,25 +238,6 @@ def main() -> None:
     print(df)
     print(f"Saved runtime benchmark to {csv_path}")
 
-    profile_kernel_name = args.PROFILE_KERNEL
-    profile_kernel_fn = KERNELS[profile_kernel_name]
-    _profile_kernel_once(
-        kernel_name=profile_kernel_name,
-        attention_fn=profile_kernel_fn,
-        batch_size=args.BATCH_SIZE,
-        num_heads=args.NUM_HEADS,
-        seq_len=args.SEQ_LEN,
-        head_dim=args.HEAD_DIM,
-        device=args.DEVICE,
-        dtype=dtype,
-        is_causal=args.IS_CAUSAL,
-        output_dir=output_dir,
-    )
-    print(
-        f"Saved one-shot profile for {profile_kernel_name} to "
-        f"{os.path.join(output_dir, f'profile_{profile_kernel_name.replace(' ', '_')}.txt')} and "
-        f"{os.path.join(output_dir, f'trace_{profile_kernel_name.replace(' ', '_')}.json')}"
-    )
 
 
 if __name__ == "__main__":

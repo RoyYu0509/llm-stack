@@ -206,6 +206,34 @@ def flash_fwd_triton(
 
     return OUT, L
 
+@torch.compile  # or torch.compile(mode="max-autotune") depending on your setup
+def attn_bwd_torch(Q, K, V, O, L, dLdO, is_causal: bool):
+    D = torch.sum(O * dLdO, dim=-1, keepdim=True)
+    d = Q.shape[-1]
+
+    KT = rearrange(K, "B N D -> B D N")
+    S  = Q @ KT / (d ** 0.5)
+    P  = torch.exp(S - L[:, :, None])
+
+    if is_causal:
+        B, Q_N, K_N = S.shape
+        mask = torch.tril(torch.ones(Q_N, K_N, device=Q.device, dtype=torch.bool))
+        P = P * mask[None, :, :]
+
+    PT   = rearrange(P, "B Q_N K_N -> B K_N Q_N")
+    dLdV = PT @ dLdO
+
+    VT   = rearrange(V, "B K_N D -> B D K_N")
+    dLdP = dLdO @ VT
+
+    dLdS = P * (dLdP - D)
+    dLdQ = dLdS @ K / (d ** 0.5)
+
+    dLdST = rearrange(dLdS, "B Q_N K_N -> B K_N Q_N")
+    dLdK  = dLdST @ Q / (d ** 0.5)
+    return dLdQ, dLdK, dLdV
+
+
 
 class FlashAttentionTorchFunctionTriton(torch.autograd.Function):
     @staticmethod
@@ -226,44 +254,10 @@ class FlashAttentionTorchFunctionTriton(torch.autograd.Function):
         # print("L:", L.shape)
         return O
 
-    
     @staticmethod
     def backward(ctx, dLdO):
-        """
-        Backward pass for FlashAttention implemented with PyTorch. (套公式，没啥看的)
-
-        Parameters:
-            - dLdO: Gradient of the output from the forward pass.
-        """
         Q, K, V, O, L = ctx.saved_tensors
-        L: Float[Tensor, "B Q_N"]
-        is_causal = ctx.is_causal
-        D:      Float[Tensor, "B, Q_N, 1"] = torch.sum(O*dLdO, dim=-1, keepdim=True) 
-        d = Q.shape[-1]
-
-        # Compute S, P with L (log-sum-exp)
-        KT = rearrange(K, "B N D -> B D N")
-        S:      Float[Tensor, "B Q_N N_K"] = Q@KT / d**0.5
-        P:      Float[Tensor, "B Q_N N_K"] = torch.exp(S-L[:,:,None])
-        
-        # Apply causal mask if needed
-        if is_causal:
-            B, Q_N, K_N = S.shape
-            mask = torch.tril(torch.ones(Q_N, K_N, device=Q.device, dtype=torch.bool))
-            P = P * mask[None, :, :]
-        
-        # Compute gradients
-        PT:     Float[Tensor, "B K_N Q_N"] = rearrange(P, "B Q_N K_N -> B K_N Q_N")
-        dLdV:   Float[Tensor, "B K_N D"] = PT@dLdO
-        
-        VT:     Float[Tensor, "B D K_N"] = rearrange(V, "B K_N D -> B D K_N")
-        dLdP:   Float[Tensor, "B Q_N N_K"] = dLdO@VT
-        
-        dLdS:   Float[Tensor, "B Q_N N_K"] = P * (dLdP - D)
-        dLdQ:   Float[Tensor, "B Q_N D"] = dLdS@K / d**0.5
-        dLdST:  Float[Tensor, "B N_K Q_N"] = rearrange(dLdS, "B Q_N N_K -> B N_K Q_N")
-        dLdK:   Float[Tensor, "B N_K D"] = dLdST @ Q / d**0.5
-
+        dLdQ, dLdK, dLdV = attn_bwd_torch(Q, K, V, O, L, dLdO, ctx.is_causal)
         return dLdQ, dLdK, dLdV, None
     
 flash_attn_triton_fn = FlashAttentionTorchFunctionTriton.apply
