@@ -3,7 +3,7 @@ from jaxtyping import Float, Array
 from torch import Tensor
 from einops import rearrange, reduce, repeat, einsum
 from cs336_basics.transfromer.para_init import trunct_normal_para_init
-from cs336_basics.transfromer.scaled_dot_prod_attention import softmax, scaled_dot_product_attention, flash_attention_full_triton, flash_attention_my_triton, flash_attention_torch
+from cs336_basics.transfromer.scaled_dot_prod_attention import softmax, scaled_dot_product_attention, flash_attention_my_triton, flash_attention_torch
 import torch.cuda.nvtx as nvtx
 
 

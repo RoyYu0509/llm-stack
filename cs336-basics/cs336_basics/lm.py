@@ -135,7 +135,8 @@ class TransformerLM(nn.Module):
                  eps: float = 1e-5, # rmsnorm kwargs
                  latent_exp_factor = 8/3, # FNN kwargs
                  device=None, dtype=torch.float32,  # general kwargs
-                 attention_fn: callable = scaled_dot_product_attention
+                 attention_fn: callable = scaled_dot_product_attention,
+                 is_causal: bool = True,
     ):
         """
         A transformer block.
@@ -174,7 +175,8 @@ class TransformerLM(nn.Module):
                 pos_encod=self.pos_encoder, token_positions=None,
                 latent_exp_factor=latent_exp_factor,
                 device = device, dtype=dtype,
-                attention_fn=attention_fn
+                attention_fn=attention_fn,
+                is_causal=is_causal,
             ) for _ in range(num_layers)
         ])
 

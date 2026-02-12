@@ -70,11 +70,6 @@ from cs336_systems.FlashAttention.FlashAttention.flash_attention_torch_vectorize
 def flash_attention_torch(query, key, value, is_causal: bool = False):
     return flash_attn_torch_vectorized_fn(query, key, value, is_causal=is_causal)
 
-from cs336_systems.FlashAttention.FlashAttention.flash_attention_triton import flash_attn_packed_sdpa_fn
-@nvtx.range("Attention-FlashAttention-FullTriton")
-def flash_attention_full_triton(query, key, value, is_causal: bool = False):
-    return flash_attn_packed_sdpa_fn(query, key, value, is_causal=is_causal)
-
 from cs336_systems.FlashAttention.FlashAttention.flash_attention_triton import flash_attn_triton_fn
 @nvtx.range("Attention-FlashAttention-MyTriton")
 def flash_attention_my_triton(query, key, value, is_causal: bool = False):

@@ -185,8 +185,8 @@ def flash_fwd_triton(
 
     
     # Create output buffers
-    OUT = torch.zeros((B, Q_N, D), dtype=Q.dtype, device=DEVICE, requires_grad=True)
-    L = torch.zeros((B, Q_N, ),  dtype=Q.dtype, device=DEVICE, requires_grad=True)
+    OUT = torch.zeros((B, Q_N, D), dtype=Q.dtype, device=DEVICE)
+    L = torch.zeros((B, Q_N, ),  dtype=Q.dtype, device=DEVICE)
 
     grid = lambda META: (triton.cdiv(Q_N, META["Q_TILE_SIZE"]),  B)
 
