@@ -97,69 +97,71 @@ def profile_lm_with_kernel(
     backward_times = []
 
     # Warm-up iterations
-    for _ in tqdm(range(args.WARM_UP_ITER), desc=f"Warmup [{kernel_name}]", unit="iter"):
-        inputs, targets = data_loading(
-            train_data,
-            args.TR_BAT_SIZE,
-            args.CONTEXT_LENGTH,
-            args.DEVICE,
-            offsets,
-        )
-        optimizer.zero_grad()
-        with torch.autocast(device_type=args.DEVICE, dtype=torch.float16):
-            logits = forward_fn(x=inputs)
-        loss = cross_entropy(logits, targets)
-        loss.backward()
-        grad_clip(param_list, args.GRAD_CLIP)
-        optimizer.step()
-
-    # Benchmarking iterations
-    for step in tqdm(range(args.PROFILE_ITER), desc=f"Profile [{kernel_name}]", unit="iter"):
-        # Load data
-        inputs, targets = data_loading(
-            train_data,
-            args.TR_BAT_SIZE,
-            args.CONTEXT_LENGTH,
-            args.DEVICE,
-            offsets,
-        )
-        optimizer.zero_grad()
-
-        # Forward pass
-        _sync_device(args.DEVICE)
-        with nvtx.range(f"{kernel_name}:forward"):
-            t0 = timeit.default_timer()
+    with nvtx.range(f"Warm-up [{kernel_name}]"):
+        for _ in tqdm(range(args.WARM_UP_ITER), desc=f"Warmup [{kernel_name}]", unit="iter"):
+            inputs, targets = data_loading(
+                train_data,
+                args.TR_BAT_SIZE,
+                args.CONTEXT_LENGTH,
+                args.DEVICE,
+                offsets,
+            )
+            optimizer.zero_grad()
             with torch.autocast(device_type=args.DEVICE, dtype=torch.float16):
                 logits = forward_fn(x=inputs)
-            _sync_device(args.DEVICE)
-            t1 = timeit.default_timer()
-
-        loss = cross_entropy(logits, targets)
-        
-        # Backward pass
-        _sync_device(args.DEVICE)
-        with nvtx.range(f"{kernel_name}:backward"):
-            t2 = timeit.default_timer()
+            loss = cross_entropy(logits, targets)
             loss.backward()
+            grad_clip(param_list, args.GRAD_CLIP)
+            optimizer.step()
+
+    # Benchmarking iterations
+    with nvtx.range(f"Profile [{kernel_name}]"):
+        for step in tqdm(range(args.PROFILE_ITER), desc=f"Profile [{kernel_name}]", unit="iter"):
+            # Load data
+            inputs, targets = data_loading(
+                train_data,
+                args.TR_BAT_SIZE,
+                args.CONTEXT_LENGTH,
+                args.DEVICE,
+                offsets,
+            )
+            optimizer.zero_grad()
+
+            # Forward pass
             _sync_device(args.DEVICE)
-            t3 = timeit.default_timer()
-        
-        # Gradient clipping and optimizer step
-        grad_clip(param_list, args.GRAD_CLIP)
-        optimizer.step()
+            with nvtx.range(f"{kernel_name}:forward"):
+                t0 = timeit.default_timer()
+                with torch.autocast(device_type=args.DEVICE, dtype=torch.float16):
+                    logits = forward_fn(x=inputs)
+                _sync_device(args.DEVICE)
+                t1 = timeit.default_timer()
 
-        lr = lr_scheduler(
-            it=step,
-            max_learning_rate=args.LR,
-            min_learning_rate=args.LR * 0.2,
-            warmup_iters=args.WARMUP_ITERS,
-            cosine_cycle_aiters=args.MAX_ITERS,
-        )
-        for group in optimizer.param_groups:
-            group["lr"] = lr
+            loss = cross_entropy(logits, targets)
+            
+            # Backward pass
+            _sync_device(args.DEVICE)
+            with nvtx.range(f"{kernel_name}:backward"):
+                t2 = timeit.default_timer()
+                loss.backward()
+                _sync_device(args.DEVICE)
+                t3 = timeit.default_timer()
+            
+            # Gradient clipping and optimizer step
+            grad_clip(param_list, args.GRAD_CLIP)
+            optimizer.step()
 
-        forward_times.append(t1 - t0)
-        backward_times.append(t3 - t2)
+            lr = lr_scheduler(
+                it=step,
+                max_learning_rate=args.LR,
+                min_learning_rate=args.LR * 0.2,
+                warmup_iters=args.WARMUP_ITERS,
+                cosine_cycle_aiters=args.MAX_ITERS,
+            )
+            for group in optimizer.param_groups:
+                group["lr"] = lr
+
+            forward_times.append(t1 - t0)
+            backward_times.append(t3 - t2)
 
     # Record the average times from the profiling iterations
     result = {
