@@ -28,49 +28,47 @@ DTYPE_DICT = {
     "float16": torch.float16,
     "bfloat16": torch.bfloat16,
 }
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+from cs336_basics.train.data_loader import data_loading
 
-
-class LazyTokenDataset(torch.utils.data.Dataset):
-    """
-    Lazy-loading dataset that loads data from disk on-demand.
-    Each process only loads the data it needs, when it needs it.
-    """
-    def __init__(self, data_path: str, context_length: int, device: str = "cpu"):
-        self.data_path = data_path
-        self.context_length = context_length
-        self.device = device
-        
-        # Load just the metadata (file size) without loading actual data
-        self.tokens = np.load(data_path, mmap_mode='r')  # Memory-mapped, doesn't load into RAM
-        self.total_tokens = len(self.tokens)
-        
-        # Calculate number of valid samples
-        # Each sample needs context_length + 1 tokens (input + target)
-        self.num_samples = max(0, self.total_tokens - context_length)
-        
+# Helper data loader
+class TokenStreamDataset(Dataset):
+    def __init__(self, path, context_len):
+        self.tokens_stream = self._load_np_tokens(path)   # create the lazy data stream
+        self.context_len = context_len  # per-sample length defined
+        self.N = self.tokens_stream.shape[0]
+    
     def __len__(self):
-        return self.num_samples
+        """
+        Return the total number of tokens in the dataset
+        The last sample starts at N - context_len - 1.
+        """
+        return self.N - self.context_len - 1
+
+    def _load_np_tokens(self, path):
+        """Create the lazy data stream"""
+        arr = np.load(path, mmap_mode="r")
+        tensor = torch.from_numpy(arr).long()
+        return tensor
     
     def __getitem__(self, idx):
-        """
-        Load only the specific tokens needed for this sample.
-        This is called on-demand by the DataLoader.
-        """
-        # Load only context_length + 1 tokens from disk
-        start_idx = idx
-        end_idx = idx + self.context_length + 1
+        """Get the idx-th sample"""
+        # Safe check for max context length < data stream length
+        max_start = self.N - self.context_len - 1
+        if max_start < 0:
+            raise RuntimeError("context_length is too large for the provided data.")
+        # Indexing
+        x = self.tokens_stream[idx : idx + self.context_len]
+        y = self.tokens_stream[idx + 1 : idx + 1 + self.context_len]
+        # Data type conversion
+        if x.dtype != torch.long:
+            x = x.long().contiguous()
+            y = y.long().contiguous()
+        return x, y
+
         
-        # Memory-mapped array allows efficient slicing without loading full file
-        chunk = self.tokens[start_idx:end_idx]
-        
-        # Convert to tensor
-        chunk_tensor = torch.from_numpy(np.array(chunk)).long()
-        
-        # Split into input and target
-        inputs = chunk_tensor[:-1]  # First context_length tokens
-        targets = chunk_tensor[1:]  # Next context_length tokens (shifted by 1)
-        
-        return inputs, targets[:-1]  # Return (context_length,) for both
 
 ATTN_KERNELS = [
     ("CompTorch", vectorized_attn_torch_fn),
@@ -90,35 +88,36 @@ def set_dist_env(rank, world_size, backend="gloo"):
     )
 
 
-
-def naive_DDP(
+def naive_LLM_DDP(
         rank: int, world_size: int, 
         data_path: str,
         context_length: int,
-        model: nn.Module, 
+        model_args: dict,
+        optimizer_args: dict,
         loss_fn: nn.Module,
-        lr: float, epochs: int,
+        epochs: int,
         batch_size: int,
         backend: str
     ):
     """DDP training with lazy data loading - each GPU only loads its portion"""
     set_dist_env(rank, world_size, backend=backend)
+    torch.cuda.set_device(rank)
     DEVICE = f"cuda:{rank}" if backend == "nccl" else "cpu"
 
     # Create lazy-loading dataset (doesn't load data into memory yet)
     # All processes reference the same file, but DistributedSampler ensures
     # each process only loads different samples
-    dataset = LazyTokenDataset(data_path, context_length, device=DEVICE)
+    dataset = TokenStreamDataset(data_path, context_length)
     
     # Use DistributedSampler to partition data across ranks
-    # Each rank will get different indices, and LazyTokenDataset will only
+    # Each rank will get different indices, and TokenStreamDataset will only
     # load those specific samples from disk when __getitem__ is called
     sampler = DistributedSampler(
         dataset,
         num_replicas=world_size,
         rank=rank,
-        shuffle=True,  # Shuffle within each epoch
-        drop_last=False
+        shuffle=True,
+        drop_last=True
     )
     
     # Create DataLoader with the sampler
@@ -128,65 +127,72 @@ def naive_DDP(
         dataset,
         batch_size=batch_size,
         sampler=sampler,
-        num_workers=0,  # Can increase for parallel data loading
-        pin_memory=(backend == "nccl")
+        shuffle=False,
+        num_workers=2,
+        persistent_workers=True
     )
     print(f"Rank {rank} will process {len(sampler)} samples (lazy-loaded from disk)")
-
-    # Training Loop
-    optim = torch.optim.AdamW(model.parameters(), lr = lr)
+    
+    # Create model and optimizer
+    model = TransformerLM(**model_args)
+    # Boardcast model parameters from rank 0 to all other ranks
+    for p in model.parameters():
+        dist.broadcast(p.data, src=0)
     model.to(DEVICE)
+    optimizer = AdamW(model.parameters(), **optimizer_args)
+    
+    # Training Loop
     model.train()
     for epoch in range(epochs):
-        # Set epoch for sampler to ensure different shuffling each epoch
-        sampler.set_epoch(epoch)
-        
+        sampler.set_epoch(epoch)  # Shuffle data differently each epoch
+        acc_loss = 0.0
         for bat_X, bat_y_ref in loc_loader:
-            # Data is lazy-loaded here - only these specific batches are read from disk!
-            # Move data to device (if not already there)
-            bat_X = bat_X.to(DEVICE, non_blocking=True)
-            bat_y_ref = bat_y_ref.to(DEVICE, non_blocking=True)
+            bat_X = bat_X.to(DEVICE)
+            bat_y_ref = bat_y_ref.to(DEVICE)
+            # Clear last gradients
+            optimizer.zero_grad()
             # Forward
             bat_y_pred = model(bat_X)
             # Compute
             loss = loss_fn(bat_y_pred, bat_y_ref)
-
             # Backward
-            optim.zero_grad()
             loss.backward()
 
-            # Perform All-reduce on the gradients, equivalently reduce() + broadcast() / all_reduce(.)
+            # Parallelism: Perform All-reduce on the gradients on each parameter
             for para in model.parameters():
+                # Continue if no need to update
+                if para.grad is None: 
+                    continue
                 # Reduce -> Rank 0
                 dist.reduce(para.grad, dst=0, op=dist.ReduceOp.SUM)
                 if rank == 0:
                     para.grad /= world_size
-
                 # Broadcast -> All ranks
                 dist.broadcast(para.grad, src = 0)
-                
-            # Step the optimizer
-            optim.step()
+            
+            # Accumulate loss for monitoring
+            acc_loss += loss.item()
+
+            # Step optimizer
+            optimizer.step()
 
         # Inspect parameters
-        print(f" Epoch: {epoch} | Rank {rank} | parameters: {list(model.parameters())[0]}")
+        print(f" Epoch: {epoch} | Rank {rank} | parameters: {list(model.parameters())[0]} | Training Loss: {acc_loss:.4f}")
     dist.barrier()
     destroy_process_group()
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Profile LM with different attention kernels")
 
-    # DDP parameters
-    parser.add_argument('--GPU', action='store_true', help='use GPU if available')
-    parser.add_argument('--cpu_nproc', type=int, help='number of CPU processes to spawn', default=1)
+def main():
+    parser = argparse.ArgumentParser(description="Training TransformerLM with FlashAttn, CUDA DDP, and lazy data loading")
+
+    # Enforce CUDA availability
+    assert torch.cuda.is_available(), "CUDA is required for this script."
 
     # User-defined profiling parameters
-    parser.add_argument("--WARM_UP_ITER", type=int, required=True)
-    parser.add_argument("--PROFILE_ITER", type=int, required=True)
+    parser.add_argument("--EPOCHES", type=int, default=3)
     parser.add_argument("--TRAIN_PATH", type=str, required=True)
     parser.add_argument("--VAL_PATH", type=str, required=True)
-    parser.add_argument("--DEVICE", type=str, default="cpu")
     parser.add_argument("--DTYPE", type=str, default="float32", choices=list(DTYPE_DICT.keys()))
     parser.add_argument("--ATTN_KERNEL", type=str, default="Naive Attention", choices=[name for name, _ in ATTN_KERNELS])
     parser.add_argument("--TORCH_MEM_PROF", action="store_true")
@@ -214,49 +220,39 @@ def main():
     args = parser.parse_args()
     args.DTYPE = DTYPE_DICT[args.DTYPE]
     attention_fn = dict(ATTN_KERNELS)[args.ATTN_KERNEL]
-    backend = "nccl" if args.GPU and torch.cuda.is_available() else "gloo"
-    world_size = args.cpu_nproc if backend == "gloo" else torch.cuda.device_count()
+    backend = "nccl"
+    world_size = torch.cuda.device_count()
 
-    # Create the Transformer LM model
-    model = TransformerLM(
-        args.VOCAB_SIZE,
-        args.CONTEXT_LENGTH,
-        args.NUM_LAYERS,
-        args.D_MODEL,
-        args.NUM_HEADS,
-        args.D_FF,
-        args.ROPE_THETA,
-        device=args.DEVICE,
+    # Initialize model and optimizer args
+    model_kwargs = dict(
+        vocab_size=args.VOCAB_SIZE,
+        context_length=args.CONTEXT_LENGTH,
+        num_layers=args.NUM_LAYERS,
+        d_model=args.D_MODEL,
+        num_heads=args.NUM_HEADS,
+        d_ff=args.D_FF,
+        rope_theta=args.ROPE_THETA,
+        device="cpu",     # Moved to CUDA after DDP init on each rank   
         dtype=args.DTYPE,
         attention_fn=attention_fn,
     )
 
-    # Don't load training data here - let each process load lazily!
-    # Just pass the path to the data file
-    
-    # Define training parameters
+    optim_kwargs = dict(
+        lr=args.LR,
+        weight_decay=args.WEIGHT_DECAY,
+        betas=(args.BETA1, args.BETA2),
+        eps=args.ADAM_EPS,
+    )
+
     loss_fn = cross_entropy
-    lr = args.LR
-    epochs = args.WARM_UP_ITER + args.PROFILE_ITER  # Or however many epochs you want
     batch_size = args.TR_BAT_SIZE
     
     # Train LM using DDP with lazy data loading
     # Each GPU process will load only its portion of data from args.TRAIN_PATH
     mp.spawn(
-        fn = naive_DDP,
-        args = (
-            world_size, 
-            args.TRAIN_PATH,  # Pass file path, not loaded data
-            args.CONTEXT_LENGTH,
-            model, 
-            loss_fn, 
-            lr, 
-            epochs, 
-            batch_size, 
-            backend
-        ),
-        nprocs = world_size,
-        join = True
+        fn=naive_LLM_DDP,
+        args=(world_size, args.TRAIN_PATH, args.CONTEXT_LENGTH, model_kwargs, optim_kwargs, loss_fn, args.EPOCHES, batch_size, backend),
+        nprocs=world_size,
+        join=True,
     )
-
 
