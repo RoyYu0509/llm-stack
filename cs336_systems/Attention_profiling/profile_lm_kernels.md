@@ -24,4 +24,6 @@ uv run nsys profile --wait primary -o cs336_systems/Attention_profiling/profilin
   --DTYPE float32 \
   --ALL_KERNEL \
   --TORCH_MEM_PROF
+nsys export -t sqlite -f cs336_systems/Attention_profiling/profiling_lm/result.qdstrm -o result.qdrep
+
 ```
