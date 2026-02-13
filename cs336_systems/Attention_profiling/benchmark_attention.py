@@ -206,7 +206,7 @@ def main() -> None:
             num_heads=args.NUM_HEADS,
             seq_len=args.SEQ_LEN,
             head_dim=args.HEAD_DIM,
-            device=args.DEVICE,
+            device=args.DEVICE, #
             dtype=dtype,
             is_causal=args.IS_CAUSAL,
         )

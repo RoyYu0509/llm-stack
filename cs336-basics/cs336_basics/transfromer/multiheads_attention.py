@@ -125,12 +125,12 @@ class MultiHeadsAttention(torch.nn.Module):
         return multi_head
     
     @nvtx.range("MultiHeadsAttention_forward")
-    def forward(self, x, token_positions=None, atten_fn=None):
+    def forward(self, x, token_positions=None):
         """
         Return tensor: W_O @ MultiHead(W_Q, W_K, W_V, x) 
         """
         multi_head_attention: Float[Tensor, "... h seq_q d_v"]
-        multi_head_attention = self._multiHead(x, token_positions, atten_fn=atten_fn)
+        multi_head_attention = self._multiHead(x, token_positions)
 
         multi_head_attention = rearrange(multi_head_attention, "... h seq d_v -> ... seq (h d_v)")
         self.W_O: Float[Tensor, "d_model (h_d_v)"]

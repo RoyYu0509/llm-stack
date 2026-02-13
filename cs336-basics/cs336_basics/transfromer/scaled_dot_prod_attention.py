@@ -47,7 +47,7 @@ def scaled_dot_product_attention(query, key, value, is_causal: bool = False):
             seq_q = query.shape[-2]
             seq_k = key.shape[-2]
             causal_mask = torch.tril(torch.ones(seq_q, seq_k, device=query.device, dtype=torch.bool))
-            norm_qk = norm_qk.masked_fill(~causal_mask, -1e9)
+            norm_qk = norm_qk.masked_fill(~causal_mask, torch.finfo(norm_qk.dtype).min)
     
     # Softmax
     with nvtx.range("Computing softmax"):
@@ -65,10 +65,10 @@ def scaled_dot_product_attention(query, key, value, is_causal: bool = False):
 # Add Different FlashAttention Kernels 
 ####################################################################
 
-from cs336_systems.FlashAttention.flash_attention_torch_vectorized import flash_attn_torch_vectorized_fn
+from cs336_systems.FlashAttention.flash_attention_torch_vectorized import vectorized_attn_torch_fn
 @nvtx.range("Attention-FlashAttention-Torch")
 def flash_attention_torch(query, key, value, is_causal: bool = False):
-    return flash_attn_torch_vectorized_fn(query, key, value, is_causal)  # Positional args only
+    return vectorized_attn_torch_fn(query, key, value, is_causal)  # Positional args only
 
 from cs336_systems.FlashAttention.flash_attention_triton import flash_attn_triton_fn
 @nvtx.range("Attention-FlashAttention-MyTriton")

@@ -177,3 +177,5 @@ wandb-debug.log
 
 *.json
 *.npz
+
+*.qdstrm
