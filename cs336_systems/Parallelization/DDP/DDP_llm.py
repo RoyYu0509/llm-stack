@@ -34,22 +34,5 @@ ATTN_KERNELS = [
 
 
 
-def main(backend: str):
-    DEVICE = "cuda" if backend == "nccl" else "cpu"
-    DTYPE = torch.float32
-
-    epochs = 10
-
-
-
-    lr = 0.00001
-    loss_fn = nn.MSELoss()
-
-    world_size = args.cpu_nproc if backend == "gloo" else torch.cuda.device_count()
-
-    mp.spawn(
-        fn = naive_DDP,
-        args = (world_size, data, model, loss_fn, lr, epochs, backend),
-        nprocs = world_size,
-        join = True
-    )
+def DDP_lm_trainer():
+    """Training TransofrmerLM with DDP and different attention kernels"""

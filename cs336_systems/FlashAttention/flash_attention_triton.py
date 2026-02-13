@@ -17,15 +17,63 @@ except Exception:
     sdpa_kernel = None
 
 
-# Set of configurations to try during autotuning (Hyperparameter search space)
-# Explores different tile sizes, pipeline stages, and warp counts for optimal hardware utilization
 autotune_configs = [
-    # ============= Small tiles (low memory, good for small models) =============
+
+    # =========================
+    # 16x16 (latency focused)
+    # =========================
     triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=1, num_warps=1),
+    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=1),
+    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=1, num_warps=2),
+    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=2),
+    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=4),
+
+    # =========================
+    # 32x32 (balanced)
+    # =========================
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=1, num_warps=2),
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=2),
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=3, num_warps=4),
+
+    # =========================
+    # 64x32 (good for head_dim=256)
+    # =========================
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=1, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=8),
+
+    # =========================
+    # 32x64
+    # =========================
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
+
+    # =========================
+    # 64x64 (throughput focused)
+    # =========================
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=3, num_warps=8),
+
+    # =========================
+    # 128x64 (aggressive, may fail)
+    # =========================
+    triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=8),
+    triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
+
+    # =========================
+    # 128x128 (very aggressive)
+    # =========================
+    triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 128}, num_stages=1, num_warps=8),
 ]
 
 
-@triton.autotune(configs=autotune_configs, key=['N_QUERIES', 'N_KEYS']) # Everytime M, N, K changes, we re-autotune
+# We need to include N_Q, N_K in the key since they affect control flow (masking)
+# RULE: If changing the parameter affects the tile sizes, include them in the key as well
+@triton.autotune(configs=autotune_configs, key=['N_QUERIES', 'N_KEYS', 'D'])
 @triton.jit
 def flash_fwd_kernel(
     Q_ptr, K_ptr, V_ptr,
@@ -37,7 +85,7 @@ def flash_fwd_kernel(
     stride_lb, stride_lq,
     N_QUERIES, N_KEYS,
     scale,
-    D: tl.constexpr,
+    D: tl.constexpr,  # This Feature Dim will be fixed at compile time; (Note: We are not tiling over D)
     Q_TILE_SIZE: tl.constexpr,  # Bq
     K_TILE_SIZE: tl.constexpr,  # Bk
     OUTPUT_DTYPE: tl.constexpr,  # Output dtype for compile-time specialization

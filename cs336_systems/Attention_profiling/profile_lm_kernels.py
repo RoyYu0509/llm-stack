@@ -199,7 +199,7 @@ def main() -> None:
     parser.add_argument("--VOCAB_SIZE", type=int, default=10000)
     parser.add_argument("--ROPE_THETA", type=float, default=10_000.0)
     parser.add_argument("--NUM_LAYERS", type=int, default=18)
-    parser.add_argument("--D_MODEL", type=int, default=64)
+    parser.add_argument("--D_MODEL", type=int, default=256)
     parser.add_argument("--NUM_HEADS", type=int, default=64)
     parser.add_argument("--D_FF", type=int, default=3072)
 

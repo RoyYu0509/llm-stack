@@ -16,17 +16,17 @@ nsys profile -t cuda,nvtx -o ./profiling_attention_compile==False/my_profile_rep
 
 
 # Benchmarking Attention Kernels
+** HEAD_DIM /  NUM_HEADS must be power of 2**
 ```
-python /Users/yifanyu/Desktop/llm_proj/SystemLM/cs336_systems/Attention_profiling/benchmark_attention.py \
-  --DEVICE cpu \
+python cs336_systems/Attention_profiling/benchmark_attention.py \
+  --DEVICE cuda \
   --DTYPE float32 \
-  --BATCH_SIZE 8 \
-  --NUM_HEADS 32 \
-  --SEQ_LEN 512 \
-  --HEAD_DIM 256 \
-  --WARMUP_ITER 10 \
+  --BATCH_SIZE 2 \
+  --NUM_HEADS 256 \
+  --SEQ_LEN 518 \
+  --HEAD_DIM 756 \
+  --WARMUP_ITER 20 \
   --PROFILE_ITER 10 \
   --IS_CAUSAL \
   --SEED 0
-
 ```
