@@ -19,7 +19,7 @@ from cs336_basics.train.optimizer import AdamW
 from cs336_basics.transfromer.scaled_dot_prod_attention import (
     flash_attention_my_triton,
     scaled_dot_product_attention,
-    vectorized_attn_torch_fn,
+    vectorized_attention_torch,
 )
 
 DTYPE_DICT = {
@@ -29,7 +29,7 @@ DTYPE_DICT = {
 }
 
 ATTN_KERNELS = [
-    ("CompTorch", vectorized_attn_torch_fn),
+    ("CompTorch", vectorized_attention_torch),
     ("Naive Attention", scaled_dot_product_attention),
     ("MyTriton", flash_attention_my_triton),
 ]
@@ -154,7 +154,7 @@ def naive_LLM_DDP(
             acc_loss += loss.item()
 
             i += 1
-            if i == 300:  # Only do detailed timing for the first 10 batches to reduce overhead.
+            if i == 100:  # Only do detailed timing for the first 10 batches to reduce overhead.
                 break
 
         _synchronize_if_cuda(device)
@@ -171,10 +171,11 @@ def naive_LLM_DDP(
         total_avg_comm_time += avg_comm_epoch
         total_avg_epoch_time += avg_epoch_time
 
-        if rank == 0 and ((epoch + 1) % print_every == 0 or epoch == 0):
+        if ((epoch + 1) % print_every == 0 or epoch == 0):
             print(
+                f"Rank {rank} | "
                 f"Epoch {epoch + 1:04d} | Avg comm: {avg_comm_epoch:.4f}s | "
-                f"Avg total: {avg_epoch_time:.4f}s | Local loss sum (rank0): {acc_loss:.4f}"
+                f"Avg total: {avg_epoch_time:.4f}s | Local loss sum: {acc_loss:.4f}"
             )
 
             print(
@@ -210,10 +211,10 @@ def main():
     parser.add_argument("--PRINT_EVERY", type=int, default=1)
     parser.add_argument("--VOCAB_SIZE", type=int, default=10000)
     parser.add_argument("--ROPE_THETA", type=float, default=10_000.0)
-    parser.add_argument("--NUM_LAYERS", type=int, default=5)
-    parser.add_argument("--D_MODEL", type=int, default=758)
-    parser.add_argument("--NUM_HEADS", type=int, default=16)
-    parser.add_argument("--D_FF", type=int, default=758*4)
+    parser.add_argument("--NUM_LAYERS", type=int, default=16)
+    parser.add_argument("--D_MODEL", type=int, default=256)
+    parser.add_argument("--NUM_HEADS", type=int, default=8)
+    parser.add_argument("--D_FF", type=int, default=256*4)
 
     parser.add_argument("--LR", type=float, default=3e-4)
     parser.add_argument("--WEIGHT_DECAY", type=float, default=0.01)
