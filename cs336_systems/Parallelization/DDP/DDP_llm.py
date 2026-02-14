@@ -11,6 +11,8 @@ from torch.distributed import destroy_process_group, init_process_group
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 
+import tqdm
+
 from cs336_basics.lm import TransformerLM
 from cs336_basics.train.loss import cross_entropy
 from cs336_basics.train.optimizer import AdamW
@@ -87,6 +89,7 @@ def naive_LLM_DDP(
     else:
         device = torch.device("cpu")
 
+    print(f"Rank {rank} initializing dataset and dataloader...")
     dataset = TokenStreamDataset(data_path, context_length)
     sampler = DistributedSampler(
         dataset,
@@ -101,15 +104,13 @@ def naive_LLM_DDP(
         sampler=sampler,
         shuffle=False,
         num_workers=2,
-        persistent_workers=True,
     )
 
-    if rank == 0:
-        print(f"Each rank processes {len(sampler)} samples per epoch (lazy mmap reads)")
-
+    print(f"Rank {rank} initializing model and optimizer...")
     model = TransformerLM(**model_args).to(device)
 
     # Ensure all ranks start from identical weights.
+    print(f"Rank {rank} broadcasting initial model parameters...")
     for p in model.parameters():
         dist.broadcast(p.data, src=0)
 
@@ -120,6 +121,7 @@ def naive_LLM_DDP(
 
     model.train()
     for epoch in range(epochs):
+        print(f"Rank {rank} starting epoch {epoch + 1}/{epochs}")
         sampler.set_epoch(epoch)
         acc_loss = 0.0
         comm_time_epoch = 0.0
@@ -127,7 +129,8 @@ def naive_LLM_DDP(
         _synchronize_if_cuda(device)
         t0 = time.perf_counter()
 
-        for bat_X, bat_y_ref in loc_loader:
+        i = 0
+        for bat_X, bat_y_ref in tqdm.tqdm(loc_loader, desc=f"Rank {rank} Epoch {epoch + 1}", unit="batch"):
             bat_X = bat_X.to(device, non_blocking=True)
             bat_y_ref = bat_y_ref.to(device, non_blocking=True)
 
@@ -150,6 +153,10 @@ def naive_LLM_DDP(
             optimizer.step()
             acc_loss += loss.item()
 
+            i += 1
+            if i == 300:  # Only do detailed timing for the first 10 batches to reduce overhead.
+                break
+
         _synchronize_if_cuda(device)
         t3 = time.perf_counter()
         epoch_time = t3 - t0
@@ -170,6 +177,10 @@ def naive_LLM_DDP(
                 f"Avg total: {avg_epoch_time:.4f}s | Local loss sum (rank0): {acc_loss:.4f}"
             )
 
+            print(
+                f"Parameters sample (rank {rank}): {model.parameters().__next__()[0, :5].tolist()}"
+            )
+
     if rank == 0:
         print("\n=== Final Timing Results (avg across ranks) ===")
         print(f"Average communication time per epoch: {total_avg_comm_time / epochs:.4f} seconds")
@@ -185,25 +196,24 @@ def main():
     )
 
     assert torch.cuda.is_available(), "CUDA is required for this script."
-
+    parser.add_argument("--TR_BAT_SIZE", type=int, default=8)
     parser.add_argument("--EPOCHES", type=int, default=3)
-    parser.add_argument("--PRINT_EVERY", type=int, default=10)
     parser.add_argument("--TRAIN_PATH", type=str, required=True)
-    parser.add_argument("--VAL_PATH", type=str, required=False)
     parser.add_argument("--DTYPE", type=str, default="float32", choices=list(DTYPE_DICT.keys()))
     parser.add_argument( "--ATTN_KERNEL", type=str, default="Naive Attention",
         choices=[name for name, _ in ATTN_KERNELS],
     )
 
-    parser.add_argument("--TR_BAT_SIZE", type=int, default=8)
-    parser.add_argument("--CONTEXT_LENGTH", type=int, default=518)
-
+    
+    parser.add_argument("--CONTEXT_LENGTH", type=int, default=256)
+    
+    parser.add_argument("--PRINT_EVERY", type=int, default=1)
     parser.add_argument("--VOCAB_SIZE", type=int, default=10000)
     parser.add_argument("--ROPE_THETA", type=float, default=10_000.0)
-    parser.add_argument("--NUM_LAYERS", type=int, default=18)
-    parser.add_argument("--D_MODEL", type=int, default=256)
-    parser.add_argument("--NUM_HEADS", type=int, default=64)
-    parser.add_argument("--D_FF", type=int, default=3072)
+    parser.add_argument("--NUM_LAYERS", type=int, default=5)
+    parser.add_argument("--D_MODEL", type=int, default=758)
+    parser.add_argument("--NUM_HEADS", type=int, default=16)
+    parser.add_argument("--D_FF", type=int, default=758*4)
 
     parser.add_argument("--LR", type=float, default=3e-4)
     parser.add_argument("--WEIGHT_DECAY", type=float, default=0.01)
@@ -223,9 +233,9 @@ def main():
         context_length=args.CONTEXT_LENGTH,
         num_layers=args.NUM_LAYERS,
         d_model=args.D_MODEL,
-        num_heads=args.NUM_HEADS,
+        heads_num=args.NUM_HEADS,
         d_ff=args.D_FF,
-        rope_theta=args.ROPE_THETA,
+        theta=args.ROPE_THETA,
         device="cpu",
         dtype=dtype,
         attention_fn=attention_fn,
