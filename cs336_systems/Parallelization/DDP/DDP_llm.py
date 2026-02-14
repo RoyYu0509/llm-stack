@@ -1,74 +1,30 @@
-from DDP_batch import naive_DDP
+import argparse
+import os
+import time
+from typing import Callable
+
+import numpy as np
+import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.distributed import destroy_process_group, init_process_group
+from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
+
 from cs336_basics.lm import TransformerLM
-from cs336_basics.train.data_loader import data_loading
 from cs336_basics.train.loss import cross_entropy
-from cs336_basics.train.optimizer import AdamW, grad_clip, lr_scheduler
+from cs336_basics.train.optimizer import AdamW
 from cs336_basics.transfromer.scaled_dot_prod_attention import (
     flash_attention_my_triton,
-    vectorized_attn_torch_fn,
     scaled_dot_product_attention,
+    vectorized_attn_torch_fn,
 )
-import time
-from typing import List
-import torch
-import torch.nn as nn
-import torch.distributed as dist
-from torch.distributed import init_process_group, destroy_process_group
-import torch.multiprocessing as mp
-from torch.utils.data import TensorDataset, DataLoader
-from torch.utils.data.distributed import DistributedSampler
-import os
-import argparse
-
-from cs336_systems.Attention_profiling.profile_lm_kernels import _load_np_tokens
-import numpy as np
 
 DTYPE_DICT = {
     "float32": torch.float32,
     "float16": torch.float16,
     "bfloat16": torch.bfloat16,
 }
-import numpy as np
-import torch
-from torch.utils.data import Dataset
-from cs336_basics.train.data_loader import data_loading
-
-# Helper data loader
-class TokenStreamDataset(Dataset):
-    def __init__(self, path, context_len):
-        self.tokens_stream = self._load_np_tokens(path)   # create the lazy data stream
-        self.context_len = context_len  # per-sample length defined
-        self.N = self.tokens_stream.shape[0]
-    
-    def __len__(self):
-        """
-        Return the total number of tokens in the dataset
-        The last sample starts at N - context_len - 1.
-        """
-        return self.N - self.context_len - 1
-
-    def _load_np_tokens(self, path):
-        """Create the lazy data stream"""
-        arr = np.load(path, mmap_mode="r")
-        tensor = torch.from_numpy(arr).long()
-        return tensor
-    
-    def __getitem__(self, idx):
-        """Get the idx-th sample"""
-        # Safe check for max context length < data stream length
-        max_start = self.N - self.context_len - 1
-        if max_start < 0:
-            raise RuntimeError("context_length is too large for the provided data.")
-        # Indexing
-        x = self.tokens_stream[idx : idx + self.context_len]
-        y = self.tokens_stream[idx + 1 : idx + 1 + self.context_len]
-        # Data type conversion
-        if x.dtype != torch.long:
-            x = x.long().contiguous()
-            y = y.long().contiguous()
-        return x, y
-
-        
 
 ATTN_KERNELS = [
     ("CompTorch", vectorized_attn_torch_fn),
@@ -76,130 +32,171 @@ ATTN_KERNELS = [
     ("MyTriton", flash_attention_my_triton),
 ]
 
-def set_dist_env(rank, world_size, backend="gloo"):
-    # Set the master node address and port
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12355"
-    # Initialize the the proc - `rank` into the group
-    init_process_group(
-        backend=backend, 
-        rank=rank, 
-        world_size=world_size
-    )
+
+class TokenStreamDataset(Dataset):
+    def __init__(self, path: str, context_len: int):
+        self.tokens_stream = np.load(path, mmap_mode="r")
+        self.context_len = context_len
+        self.N = self.tokens_stream.shape[0]
+
+        if self.N <= self.context_len:
+            raise RuntimeError("context_length is too large for the provided data.")
+
+    def __len__(self) -> int:
+        return self.N - self.context_len - 1
+
+    def __getitem__(self, idx: int):
+        x_np = self.tokens_stream[idx : idx + self.context_len]
+        y_np = self.tokens_stream[idx + 1 : idx + 1 + self.context_len]
+
+        # Convert only this sample to int64 for embedding lookup.
+        x = torch.tensor(x_np, dtype=torch.long)
+        y = torch.tensor(y_np, dtype=torch.long)
+        return x, y
+
+
+def set_dist_env(rank: int, world_size: int, backend: str = "gloo") -> None:
+    os.environ.setdefault("MASTER_ADDR", "localhost")
+    os.environ.setdefault("MASTER_PORT", "12355")
+    init_process_group(backend=backend, rank=rank, world_size=world_size)
+
+
+def _synchronize_if_cuda(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
 
 
 def naive_LLM_DDP(
-        rank: int, world_size: int, 
-        data_path: str,
-        context_length: int,
-        model_args: dict,
-        optimizer_args: dict,
-        loss_fn: nn.Module,
-        epochs: int,
-        batch_size: int,
-        backend: str
-    ):
-    """DDP training with lazy data loading - each GPU only loads its portion"""
+    rank: int,
+    world_size: int,
+    data_path: str,
+    context_length: int,
+    model_args: dict,
+    optimizer_args: dict,
+    loss_fn: Callable,
+    epochs: int,
+    batch_size: int,
+    backend: str,
+    print_every: int = 10,
+):
     set_dist_env(rank, world_size, backend=backend)
-    torch.cuda.set_device(rank)
-    DEVICE = f"cuda:{rank}" if backend == "nccl" else "cpu"
 
-    # Create lazy-loading dataset (doesn't load data into memory yet)
-    # All processes reference the same file, but DistributedSampler ensures
-    # each process only loads different samples
+    if backend == "nccl":
+        torch.cuda.set_device(rank)
+        device = torch.device(f"cuda:{rank}")
+    else:
+        device = torch.device("cpu")
+
     dataset = TokenStreamDataset(data_path, context_length)
-    
-    # Use DistributedSampler to partition data across ranks
-    # Each rank will get different indices, and TokenStreamDataset will only
-    # load those specific samples from disk when __getitem__ is called
     sampler = DistributedSampler(
         dataset,
         num_replicas=world_size,
         rank=rank,
         shuffle=True,
-        drop_last=True
+        drop_last=True,
     )
-    
-    # Create DataLoader with the sampler
-    # Data is loaded lazily: only when batches are requested during training
-    # NOTE: Don't use shuffle=True in DataLoader when using DistributedSampler
     loc_loader = DataLoader(
         dataset,
         batch_size=batch_size,
         sampler=sampler,
         shuffle=False,
         num_workers=2,
-        persistent_workers=True
+        persistent_workers=True,
     )
-    print(f"Rank {rank} will process {len(sampler)} samples (lazy-loaded from disk)")
-    
-    # Create model and optimizer
-    model = TransformerLM(**model_args)
-    # Boardcast model parameters from rank 0 to all other ranks
+
+    if rank == 0:
+        print(f"Each rank processes {len(sampler)} samples per epoch (lazy mmap reads)")
+
+    model = TransformerLM(**model_args).to(device)
+
+    # Ensure all ranks start from identical weights.
     for p in model.parameters():
         dist.broadcast(p.data, src=0)
-    model.to(DEVICE)
+
     optimizer = AdamW(model.parameters(), **optimizer_args)
-    
-    # Training Loop
+
+    total_avg_comm_time = 0.0
+    total_avg_epoch_time = 0.0
+
     model.train()
     for epoch in range(epochs):
-        sampler.set_epoch(epoch)  # Shuffle data differently each epoch
+        sampler.set_epoch(epoch)
         acc_loss = 0.0
+        comm_time_epoch = 0.0
+
+        _synchronize_if_cuda(device)
+        t0 = time.perf_counter()
+
         for bat_X, bat_y_ref in loc_loader:
-            bat_X = bat_X.to(DEVICE)
-            bat_y_ref = bat_y_ref.to(DEVICE)
-            # Clear last gradients
+            bat_X = bat_X.to(device, non_blocking=True)
+            bat_y_ref = bat_y_ref.to(device, non_blocking=True)
+
             optimizer.zero_grad()
-            # Forward
             bat_y_pred = model(bat_X)
-            # Compute
             loss = loss_fn(bat_y_pred, bat_y_ref)
-            # Backward
             loss.backward()
 
-            # Parallelism: Perform All-reduce on the gradients on each parameter
+            _synchronize_if_cuda(device)
+            t1 = time.perf_counter()
             for para in model.parameters():
-                # Continue if no need to update
-                if para.grad is None: 
+                if para.grad is None:
                     continue
-                # Reduce -> Rank 0
-                dist.reduce(para.grad, dst=0, op=dist.ReduceOp.SUM)
-                if rank == 0:
-                    para.grad /= world_size
-                # Broadcast -> All ranks
-                dist.broadcast(para.grad, src = 0)
-            
-            # Accumulate loss for monitoring
+                dist.all_reduce(para.grad, op=dist.ReduceOp.SUM)
+                para.grad /= world_size
+            _synchronize_if_cuda(device)
+            t2 = time.perf_counter()
+            comm_time_epoch += t2 - t1
+
+            optimizer.step()
             acc_loss += loss.item()
 
-            # Step optimizer
-            optimizer.step()
+        _synchronize_if_cuda(device)
+        t3 = time.perf_counter()
+        epoch_time = t3 - t0
 
-        # Inspect parameters
-        print(f" Epoch: {epoch} | Rank {rank} | parameters: {list(model.parameters())[0]} | Training Loss: {acc_loss:.4f}")
+        timing = torch.tensor([comm_time_epoch, epoch_time], device=device)
+        dist.all_reduce(timing, op=dist.ReduceOp.SUM)
+        timing /= world_size
+
+        avg_comm_epoch = timing[0].item()
+        avg_epoch_time = timing[1].item()
+
+        total_avg_comm_time += avg_comm_epoch
+        total_avg_epoch_time += avg_epoch_time
+
+        if rank == 0 and ((epoch + 1) % print_every == 0 or epoch == 0):
+            print(
+                f"Epoch {epoch + 1:04d} | Avg comm: {avg_comm_epoch:.4f}s | "
+                f"Avg total: {avg_epoch_time:.4f}s | Local loss sum (rank0): {acc_loss:.4f}"
+            )
+
+    if rank == 0:
+        print("\n=== Final Timing Results (avg across ranks) ===")
+        print(f"Average communication time per epoch: {total_avg_comm_time / epochs:.4f} seconds")
+        print(f"Average total time per epoch: {total_avg_epoch_time / epochs:.4f} seconds")
+
     dist.barrier()
     destroy_process_group()
 
 
-
 def main():
-    parser = argparse.ArgumentParser(description="Training TransformerLM with FlashAttn, CUDA DDP, and lazy data loading")
+    parser = argparse.ArgumentParser(
+        description="Training TransformerLM with manual DDP-style gradient sync and lazy data loading"
+    )
 
-    # Enforce CUDA availability
     assert torch.cuda.is_available(), "CUDA is required for this script."
 
-    # User-defined profiling parameters
     parser.add_argument("--EPOCHES", type=int, default=3)
+    parser.add_argument("--PRINT_EVERY", type=int, default=10)
     parser.add_argument("--TRAIN_PATH", type=str, required=True)
-    parser.add_argument("--VAL_PATH", type=str, required=True)
+    parser.add_argument("--VAL_PATH", type=str, required=False)
     parser.add_argument("--DTYPE", type=str, default="float32", choices=list(DTYPE_DICT.keys()))
-    parser.add_argument("--ATTN_KERNEL", type=str, default="Naive Attention", choices=[name for name, _ in ATTN_KERNELS])
-    parser.add_argument("--TORCH_MEM_PROF", action="store_true")
+    parser.add_argument( "--ATTN_KERNEL", type=str, default="Naive Attention",
+        choices=[name for name, _ in ATTN_KERNELS],
+    )
 
-    # DEFAULTs for LM training
     parser.add_argument("--TR_BAT_SIZE", type=int, default=8)
-    parser.add_argument("--CONTEXT_LENGTH", type=int, default=518) 
+    parser.add_argument("--CONTEXT_LENGTH", type=int, default=518)
 
     parser.add_argument("--VOCAB_SIZE", type=int, default=10000)
     parser.add_argument("--ROPE_THETA", type=float, default=10_000.0)
@@ -213,17 +210,14 @@ def main():
     parser.add_argument("--BETA1", type=float, default=0.9)
     parser.add_argument("--BETA2", type=float, default=0.999)
     parser.add_argument("--ADAM_EPS", type=float, default=1e-8)
-    parser.add_argument("--GRAD_CLIP", type=float, default=1.0)
-    parser.add_argument("--MAX_ITERS", type=int, default=10_000)
-    parser.add_argument("--WARMUP_ITERS", type=int, default=2_000)
 
     args = parser.parse_args()
-    args.DTYPE = DTYPE_DICT[args.DTYPE]
+
+    dtype = DTYPE_DICT[args.DTYPE]
     attention_fn = dict(ATTN_KERNELS)[args.ATTN_KERNEL]
     backend = "nccl"
     world_size = torch.cuda.device_count()
 
-    # Initialize model and optimizer args
     model_kwargs = dict(
         vocab_size=args.VOCAB_SIZE,
         context_length=args.CONTEXT_LENGTH,
@@ -232,8 +226,8 @@ def main():
         num_heads=args.NUM_HEADS,
         d_ff=args.D_FF,
         rope_theta=args.ROPE_THETA,
-        device="cpu",     # Moved to CUDA after DDP init on each rank   
-        dtype=args.DTYPE,
+        device="cpu",
+        dtype=dtype,
         attention_fn=attention_fn,
     )
 
@@ -244,15 +238,24 @@ def main():
         eps=args.ADAM_EPS,
     )
 
-    loss_fn = cross_entropy
-    batch_size = args.TR_BAT_SIZE
-    
-    # Train LM using DDP with lazy data loading
-    # Each GPU process will load only its portion of data from args.TRAIN_PATH
     mp.spawn(
         fn=naive_LLM_DDP,
-        args=(world_size, args.TRAIN_PATH, args.CONTEXT_LENGTH, model_kwargs, optim_kwargs, loss_fn, args.EPOCHES, batch_size, backend),
+        args=(
+            world_size,
+            args.TRAIN_PATH,
+            args.CONTEXT_LENGTH,
+            model_kwargs,
+            optim_kwargs,
+            cross_entropy,
+            args.EPOCHES,
+            args.TR_BAT_SIZE,
+            backend,
+            args.PRINT_EVERY,
+        ),
         nprocs=world_size,
         join=True,
     )
 
+
+if __name__ == "__main__":
+    main()
