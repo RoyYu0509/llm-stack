@@ -37,7 +37,7 @@ def flash_attention_torch_fwd_vectorized(
     return O, L
 
 
-class FlashAttentionTorchFunctionVectorized(torch.autograd.Function):
+class VectorizedAttentionTorchFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, Q, K, V, is_causal: bool = False):
         O, L = flash_attention_torch_fwd_vectorized(Q, K, V, is_causal=is_causal)
@@ -68,4 +68,14 @@ class FlashAttentionTorchFunctionVectorized(torch.autograd.Function):
         return dLdQ, dLdK, dLdV, None
 
 
-flash_attn_torch_vectorized_fn = torch.compile(FlashAttentionTorchFunctionVectorized.apply)
+def _vectorized_attn_torch_apply(
+    Q: Float[Tensor, "... N_q D"],
+    K: Float[Tensor, "... N_k D"],
+    V: Float[Tensor, "... N_k D"],
+    is_causal: bool = False,
+):
+    """Function wrapper to match calling API"""
+    return VectorizedAttentionTorchFunction.apply(Q, K, V, is_causal)
+
+
+vectorized_attn_torch_fn = torch.compile(_vectorized_attn_torch_apply)

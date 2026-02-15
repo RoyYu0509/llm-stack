@@ -9,16 +9,19 @@ from cs336_basics.transfromer.rmsnorm import Rmsnorm
 import torch.nn as nn
 import torch
 import torch.cuda.nvtx as nvtx
+from cs336_basics.transfromer.scaled_dot_prod_attention import scaled_dot_product_attention
 
 class PreNormTransformer(nn.Module):
     def __init__(self,
-                 d_model: int, heads_num: int, # Multi-Head Attention args
-                 dim_ff: int, # FNN args
-                 pos_encod=None, token_positions=None, # Multi-Head Attention kwargs
-                 eps: float = 1e-5, # rmsnorm kwargs
-                 latent_exp_factor = 8/3, # FNN kwargs
-                 device=None, dtype=torch.float16  # general kwargs
-                 ):
+                d_model: int, heads_num: int, # Multi-Head Attention args
+                dim_ff: int, # FNN args
+                pos_encod=None, token_positions=None, # Multi-Head Attention kwargs
+                eps: float = 1e-5, # rmsnorm kwargs
+                latent_exp_factor = 8/3, # FNN kwargs
+                device=None, dtype=torch.float16,  # general kwargs
+                attention_fn=scaled_dot_product_attention,
+                is_causal: bool = True,
+    ):
         """
         Components:
 
@@ -67,7 +70,7 @@ class PreNormTransformer(nn.Module):
         self.d_model = d_model
         self.heads_num = heads_num
         self.RMSN1 = Rmsnorm(d_model, eps, device, dtype)
-        self.MHA = MultiHeadsAttention(d_model, heads_num, pos_encod, token_positions, device, dtype)
+        self.MHA = MultiHeadsAttention(d_model, heads_num, pos_encod, token_positions, is_causal=is_causal, attention_fn=attention_fn,device=device, dtype=dtype)
         self.RMSN2 = Rmsnorm(d_model, eps, device, dtype)
         self.FNN = PointwiseSGLUactFFN(d_model, dim_ff, latent_exp_factor, device, dtype)
 
@@ -80,7 +83,10 @@ class PreNormTransformer(nn.Module):
         Parameter:
             x: (batch, seq, d_model)
         """
-        x = x + self.MHA.forward(self.RMSN1.forward(x), token_positions=token_positions)
+        x = x + self.MHA.forward(
+            self.RMSN1.forward(x),
+            token_positions=token_positions,
+        )
         x = x + self.FNN.forward(self.RMSN2.forward(x))
         return x
 

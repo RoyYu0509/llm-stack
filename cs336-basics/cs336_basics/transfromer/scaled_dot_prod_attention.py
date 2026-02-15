@@ -25,27 +25,29 @@ def softmax(input: torch.Tensor, axis: int = -1):
     return softmax_output
 
 @nvtx.range("scaled dot product attention")
-def scaled_dot_product_attention(query, key, value, bool_mask=None):
+def scaled_dot_product_attention(query, key, value, is_causal: bool = False):
     """
-    Return an output with the shape (batch_size,..., d_v)
+    Return an output with the shape (batch_size, seq_len, d_model)
 
-    key:        (... n,d_k) = (batch_size, ..., seq_len, d_k) 
-    query:      (... n,d_k) = (batch_size, ..., seq_len, d_k)
-    value:      (... n,d_v) = (batch_size, ..., seq_len, d_v)
-    bool_mask:  (seq_len, seq_len)
+    Accepts 3D packed format:
+    key:        (batch, seq_k, d_model)
+    query:      (batch, seq_q, d_model)
+    value:      (batch, seq_v, d_model)
+    is_causal:  bool
 
     Return:
-        - attention: Float[Tensor, "... seq_q d_v"]
-    
-    Note:
-        seq_q == seq_k == seq_v == `seq_len` 
+        - attention: Float[Tensor, "batch seq_q d_model"]
     """
-    # Compute Normalized QtK & Apply Mask
+    # Compute Normalized QtK & Apply causal mask
     with nvtx.range("Compute QK^t"):
         norm_qk: Float[torch.Tensor, "... seq_q, seq_k"]
         norm_qk = einsum(key, query, "... seq_k d_k, ... seq_q d_k -> ... seq_q seq_k") / torch.sqrt(torch.tensor(key.shape[-1], device=query.device))
-        if bool_mask is not None:
-            norm_qk = norm_qk.masked_fill(~bool_mask, -1e9) # ~ is to invert F -> T, since F meaning we should masked them
+        # Triangular Causal Mask
+        if is_causal:
+            seq_q = query.shape[-2]
+            seq_k = key.shape[-2]
+            causal_mask = torch.tril(torch.ones(seq_q, seq_k, device=query.device, dtype=torch.bool))
+            norm_qk = norm_qk.masked_fill(~causal_mask, torch.finfo(norm_qk.dtype).min)
     
     # Softmax
     with nvtx.range("Computing softmax"):
@@ -58,3 +60,17 @@ def scaled_dot_product_attention(query, key, value, bool_mask=None):
         attention = einsum(softmax_qk, value, "... seq_q seq_k, ... seq_k d_v -> ... seq_q d_v")
 
     return attention
+
+####################################################################
+# Add Different FlashAttention Kernels 
+####################################################################
+
+from cs336_systems.FlashAttention.flash_attention_torch_vectorized import vectorized_attn_torch_fn
+@nvtx.range("Vectorized-Attention-Torch")
+def vectorized_attention_torch(query, key, value, is_causal: bool = False):
+    return vectorized_attn_torch_fn(query, key, value, is_causal)  # Positional args only
+
+from cs336_systems.FlashAttention.flash_attention_triton import flash_attn_triton_fn
+@nvtx.range("FlashAttention-MyTriton")
+def flash_attention_my_triton(query, key, value, is_causal: bool = False):
+    return flash_attn_triton_fn(query, key, value, is_causal)  # Positional args only

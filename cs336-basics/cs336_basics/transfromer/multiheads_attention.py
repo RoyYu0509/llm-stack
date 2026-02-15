@@ -3,12 +3,18 @@ from jaxtyping import Float, Array
 from torch import Tensor
 from einops import rearrange, reduce, repeat, einsum
 from cs336_basics.transfromer.para_init import trunct_normal_para_init
-from cs336_basics.transfromer.scaled_dot_prod_attention import softmax, scaled_dot_product_attention
+from cs336_basics.transfromer.scaled_dot_prod_attention import softmax, scaled_dot_product_attention, flash_attention_my_triton, vectorized_attention_torch
 import torch.cuda.nvtx as nvtx
 
 
 class MultiHeadsAttention(torch.nn.Module):
-    def __init__(self,d_model: int, heads_num: int, pos_encod=None, token_positions=None, device=None, dtype=torch.float16):
+    def __init__(
+        self,d_model: int, heads_num: int, 
+        pos_encod=None, token_positions=None, 
+        is_causal: bool = True,
+        attention_fn=scaled_dot_product_attention, 
+        device=None, dtype=torch.float16
+        ):
         """
         A Multi-Heads Attention Module
 
@@ -72,6 +78,8 @@ class MultiHeadsAttention(torch.nn.Module):
         # Add Positional Encoding
         self.pos_encod = pos_encod 
         self.token_positions = token_positions  # optional fallback
+        self.attention_fn = attention_fn
+        self.is_causal = is_causal
 
     @nvtx.range("MultiHeadsAttention computation")
     def _multiHead(self, x, token_positions=None):
@@ -80,7 +88,7 @@ class MultiHeadsAttention(torch.nn.Module):
 
         Return:
             - multi_head: Float[Tensor, f"... h seq d_v"]
-        """
+        """ 
         x: Float[Tensor, f"... seq d_model"]  
         
         Q: Float[Tensor, f"... seq h d_k d_model"]
@@ -101,25 +109,20 @@ class MultiHeadsAttention(torch.nn.Module):
             Q = self.pos_encod.forward(Q, positions)
             K = self.pos_encod.forward(K, positions)
 
-        bool_mask = self._build_mask(x)
+        # Reshape to 3D ((Batch, Heads), Seq, D)
+        Q_packed = rearrange(Q, "... h seq d_k -> ... seq (h d_k)")
+        K_packed = rearrange(K, "... h seq d_k -> ... seq (h d_k)")
+        V_packed = rearrange(V, "... h seq d_v -> ... seq (h d_v)")
 
+        # Call attention with 3D packed format
+        multi_head_packed: Float[Tensor, f"... seq (h d_v)"]
+        multi_head_packed = self.attention_fn(Q_packed, K_packed, V_packed, is_causal=self.is_causal)
+        
+        # Reshape Back to (B, H, Seq, D)
         multi_head: Float[Tensor, f"... h seq d_v"]
-        multi_head = scaled_dot_product_attention(Q, K, V, bool_mask)
+        multi_head = rearrange(multi_head_packed, "... seq (h d_v) -> ... h seq d_v", h=self.heads_num, d_v=self.d_v)
         
         return multi_head
-    
-    def _build_mask(self, x):
-        """
-        Return a bool mask for the batch x, True -> Attend To.
-
-        Parameters:
-            - x: Float[Tensor, "... seq d_model"]
-
-        Return:
-            - mask: Bool[Tensor, "... seq, seq"]
-        """
-        seq_len = x.shape[-2]
-        return ~torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to(device=x.device)  
     
     @nvtx.range("MultiHeadsAttention_forward")
     def forward(self, x, token_positions=None):

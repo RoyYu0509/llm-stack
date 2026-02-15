@@ -142,9 +142,12 @@ if COMPILE:
     except Exception as compile_err:
         print(f"torch.compile failed ({compile_err}); continuing without compilation.")
 
-# Init Optimizer and Tokenizer
+# Init Optimizer
 opt = AdamW(lm_model.parameters(), LR, WEIGHT_DECAY, BETAS)
-toeknizer = Tokenizer.from_files(VOCAB_PATH, MERGES_PATH, special_tokens=["<|endoftext|>"])
+
+# Use load the tokenizer if the data is raw text, 
+# But here we directly load the tokenized data, so we can skip this step.
+# toeknizer = Tokenizer.from_files(VOCAB_PATH, MERGES_PATH, special_tokens=["<|endoftext|>"])
 
 # Helper data loader
 def _load_np_tokens(path, device):
@@ -163,7 +166,8 @@ offsets = torch.arange(CONTEXT_LENGTH, dtype=torch.long, device=train_data.devic
 checkpoint_num = 1
 # Training Loop
 for iter in tqdm(range(EPOCHES), desc="Training", unit="iter"):
-    inputs, targets = data_loading(train_data, TR_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
+    # Randomly sample batch from the training data
+    inputs, targets = data_loading(train_data, batch_size=TR_BAT_SIZE, context_length=CONTEXT_LENGTH, device=DEVICE, offsets=offsets)
     # Reset the gradients for all learnable parameters.
     opt.zero_grad() 
     
@@ -189,7 +193,8 @@ for iter in tqdm(range(EPOCHES), desc="Training", unit="iter"):
             # Compute the Validation Loss (Perplexity)
             val_loss = 0
             for sample in range(VAL_SAMP_SIZE):
-                inputs, targets = data_loading(valid_data, VAL_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
+                # Randomly sample batch from the validation data
+                inputs, targets = data_loading(valid_data, batch_size=VAL_BAT_SIZE, context_length=CONTEXT_LENGTH, device=DEVICE, offsets=offsets)
                 prediction = lm_model.forward(inputs)
                 val_loss += perplexity(prediction, targets)
             print(f"Iter:{iter} | Training Loss: {tr_loss} | Validation Loss: {val_loss/VAL_SAMP_SIZE}")
@@ -205,7 +210,8 @@ for iter in tqdm(range(EPOCHES), desc="Training", unit="iter"):
         # Compute the Validation Loss (Perplexity)
             val_loss = 0
             for sample in range(VAL_SAMP_SIZE):
-                inputs, targets = data_loading(valid_data, VAL_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
+                # Sample validation batch
+                inputs, targets = data_loading(valid_data, batch_size=VAL_BAT_SIZE, context_length=CONTEXT_LENGTH, device=DEVICE, offsets=offsets)
                 prediction = lm_model.forward(inputs)
                 val_loss += perplexity(prediction, targets)
             print(f"Saving Checkpoint....")
