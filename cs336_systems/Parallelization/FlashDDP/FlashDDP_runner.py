@@ -28,7 +28,7 @@ ATTN_KERNELS = [
     ("MyTriton", flash_attention_my_triton),
 ]
 
-from cs336_systems.Parallelization.DDP.naiveDDP import naive_LLM_DDP
+from cs336_systems.Parallelization.FlashDDP.FlashDDP import parallel_train, flashDDPModule
 from cs336_systems.Parallelization.DDP.stream_dataset import TokenStreamDataset
 
 
@@ -108,8 +108,9 @@ if __name__ == "__main__":
 
     # Load the same model to all ranks and start DDP training
     mp.spawn(
-        fn=naive_LLM_DDP,
+        fn=parallel_train,
         args=(
+            flashDDPModule,
             world_size,
             tr_dataset,
             val_dataset,

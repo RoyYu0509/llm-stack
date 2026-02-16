@@ -2,6 +2,7 @@ import argparse
 import os
 import time
 from typing import Callable
+from xml.parsers.expat import model
 
 import numpy as np
 import torch
@@ -48,8 +49,10 @@ def _synchronize_if_cuda(device: torch.device) -> None:
         torch.cuda.synchronize(device)
 
 
-def naive_LLM_DDP(
+
+def parallel_train(
     rank: int,
+    parallel_wrapper: torch.nn.Module,
     world_size: int,
     trDataset: Dataset,
     valDataset: Dataset,
@@ -62,13 +65,12 @@ def naive_LLM_DDP(
     val_batch_size: int,
     backend: str,
     print_every = None,
+    time_warmup_ep = None,
 ):
     """
     Training TransformerLM with with same `model_args` using DDP-style gradient sync and lazy data loading.
     
     Important: Only supports GPU training with NCCL backend for now.
-
-    Optimization 1: Reduce Communications by Bucketing Tensors
     
     Args:
         - rank: the rank of the current process (0 to world_size-1)
@@ -87,12 +89,13 @@ def naive_LLM_DDP(
     """
     set_dist_env(rank, world_size, backend=backend)
 
-    assert backend == "nccl" and torch.cuda.is_available(), "Only support GPU training with NCCL backend."
+    if backend == "nccl":
+        torch.cuda.set_device(rank)
+        device = torch.device(f"cuda:{rank}")
+    else:
+        raise NotImplementedError("This function is only implemented for GPU training with NCCL backend.")
 
-    torch.cuda.set_device(rank)
-    device = torch.device(f"cuda:{rank}")
-
-    print(f"Rank {rank} initializing...")
+    print(f"Rank {rank} initializing dataset and dataloader...")
     
     # Training Data Loader & DDP Sampler
     tr_sampler = DistributedSampler(
@@ -126,30 +129,32 @@ def naive_LLM_DDP(
         num_workers=2,
     )
 
-    # Move model to device (cuda:rank)
-    # print(f"Rank {rank} initializing model and optimizer...")
+    # Boardcast the initial model parameters from rank 0 to other ranks
     model = model.to(device)
+    print(f"Rank {rank} broadcasting initial model parameters...")
+    for p in model.parameters():
+        dist.broadcast(p.data, src=0)
+    model.train()
+    model = parallel_wrapper(model, rank, world_size)
+    model.add_grad_allredu_hook()
 
-    # Optimization 1: Reduce Communications by Bucketing Tensors
-    flatten_vec = parameters_to_vector(model.parameters())
-    dist.broadcast(flatten_vec, src=0)
-    vector_to_parameters(flatten_vec, model.parameters())
-
-    # Init optimizer
-    optimizer = AdamW(model.parameters(), **optimizer_args)
+    
 
     # Timing logs
     total_avg_comm_time = 0.0
     total_avg_epoch_time = 0.0
 
-    model.train()
+    # Move model to device (cuda:rank)
+    print(f"Rank {rank} initializing optimizer...")
+
+    # Init optimizer
+    optimizer = AdamW(model.parameters(), **optimizer_args)
     for epoch in range(epochs):
         # Set up DDP sampler, ensuring no data leaks across ranks
         print(f"Rank {rank} starting epoch {epoch + 1}/{epochs}")
         tr_sampler.set_epoch(epoch)
         val_sampler.set_epoch(epoch)
         acc_loss = 0.0
-        comm_time_epoch = 0.0
 
         # Start timing
         _synchronize_if_cuda(device)
@@ -168,23 +173,8 @@ def naive_LLM_DDP(
             loss = loss_fn(bat_y_pred, bat_y_ref)
             loss.backward()
             
-            # All-reduce gradients sync, summing + avg
-            _synchronize_if_cuda(device)
-            t1 = time.perf_counter()
-
-            # Optimization 1: Reduce Communications by Bucketing Tensors
-            # Create a Iterable of model parameters gradients: [p0.grad, p1.grad, ...]
-            grad_tensor = [p.grad for p in model.parameters() if p.grad is not None]
-            # Flatten into one Tensor 
-            packed_grads_tensor = parameters_to_vector(grad_tensor)
-            # All-reduce the Flattened gradien Tensor
-            dist.all_reduce(packed_grads_tensor, op=dist.ReduceOp.AVG)
-            # Unflatten and write back to original tensors in the Iterable: [p0.grad, p1.grad, ...] 
-            vector_to_parameters(packed_grads_tensor, grad_tensor)
-
-            _synchronize_if_cuda(device)
-            t2 = time.perf_counter()
-            comm_time_epoch += t2 - t1
+            # wait for grad tensor sync
+            model.wait_on_queue()
 
             # Step optimizer after gradient sync
             optimizer.step()    
@@ -199,15 +189,14 @@ def naive_LLM_DDP(
         t3 = time.perf_counter()
         epoch_time = t3 - t0
 
-        timing = torch.tensor([comm_time_epoch, epoch_time], device=device)
-        dist.all_reduce(timing, op=dist.ReduceOp.SUM)
-        timing /= world_size
+        if time_warmup_ep is not None and epoch < time_warmup_ep:
+            timing = torch.tensor([epoch_time], device=device)
+            dist.all_reduce(timing, op=dist.ReduceOp.SUM)
+            timing /= world_size
 
-        avg_comm_epoch = timing[0].item()
-        avg_epoch_time = timing[1].item()
+            avg_epoch_time = timing[0].item()
 
-        total_avg_comm_time += avg_comm_epoch
-        total_avg_epoch_time += avg_epoch_time
+            total_avg_epoch_time += avg_epoch_time
 
         # Debugging logs
         if print_every is not None and i < 100:
@@ -216,10 +205,11 @@ def naive_LLM_DDP(
         
         # Evaluation on validation set every eval_interval epochs
         if eval_interval > 0 and (epoch + 1) % eval_interval == 0:
+            print(f"Rank {rank} starting evaluation on validation set...")
             model.eval()
             val_loss = 0.0
             with torch.no_grad():
-                for val_bat_X, val_bat_y_ref in val_loader:
+                for val_bat_X, val_bat_y_ref in tqdm.tqdm(val_loader, desc=f"Rank {rank} Evaluating Epoch {epoch + 1}", unit="batch"):
                     val_bat_X = val_bat_X.to(device, non_blocking=True)
                     val_bat_y_ref = val_bat_y_ref.to(device, non_blocking=True)
                     val_bat_y_pred = model(val_bat_X)
@@ -232,7 +222,7 @@ def naive_LLM_DDP(
             # Print eval info
             print(
                 f"Rank {rank} | "
-                f"Epoch {epoch + 1:04d} | Avg comm: {avg_comm_epoch:.4f}s | "
+                f"Epoch {epoch + 1:04d}"
                 f"Avg total: {avg_epoch_time:.4f}s | Local loss sum: {acc_loss:.4f} | Val loss: {avg_val_loss:.4f}"
             )
             print(f"Inspect parameters sample (rank {rank}): {model.parameters().__next__()[0, :5].tolist()}")
@@ -251,11 +241,12 @@ def naive_LLM_DDP(
 
 
 
-class DDP_optimized:
+
+class flashDDPModule(torch.nn.Module):
     """
     An optimized DDP with Bucketing and Overlapping Communication and Computation.
     """
-    def __init__(self, module: torch.nn.Module):
+    def __init__(self, module: torch.nn.Module, buket_size: int):
         """
         Given an instantiated PyTorch nn.Module to be parallelized, 
         construct a DDP container that will handle gradient synchronization across ranks.
@@ -265,6 +256,9 @@ class DDP_optimized:
         """
         super().__init__()
         self.module = module
+        self.hooks = []
+        self.comm_work_handles = []
+        self.bucket_size = buket_size
     
     def forward(self, *inputs, **kwargs):
         """
@@ -272,10 +266,56 @@ class DDP_optimized:
 
         TODO: Implement parallelized forward. (Tensor parallelism, pipeline parallelism, etc.)
         """
-        return 
+        return self.module(*inputs, **kwargs)
 
-    def _finished_tensor_sync_hook(self):
+    def _board_cast_params(self):
+        for p in self.module.parameters():
+            dist.broadcast(p.data, src=0)
+
+    def _to(self, device):
+        """Move all parameters and buffers to the specified device."""
+        self.module.to(device)
+        
+    def call_and_register_handle(self, collective_fn, tensor):
         """
-        When called, wait for asynchronous communication calls to be queued on GPU.
+        Perform the collective_fn AND register the collective handle
         """
-        pass
+        handle = collective_fn(tensor)
+        self.comm_work_handles.append(handle)
+        return handle
+
+    def count_finshed_grad(self):
+        """
+        Count the number of parameters that finished local grad computation.
+        """
+        count = 0
+        
+    def add_grad_allredu_hook(self):
+        """
+        Add a post-accumulate hook to each parameter's gradient tensor, 
+        so that after the local gradient is computed in each backward pass, 
+        it will automatically trigger an all-reduce communication to sync gradients across ranks.
+        """
+        # Check model device
+        assert next(self.module.parameters()).device == torch.device(f"cuda:{self.rank}"), "Model parameters must be on CUDA."
+        # Iterate and add post-hooks
+
+        temp_bucket_size = 0
+        for para in self.module.parameters():
+            if para.requires_grad:
+                def post_hook_fn(grad_tensor):
+                    work = dist.all_reduce(grad_tensor, op=dist.ReduceOp.AVG, async_op=True)
+                    self.comm_work_handles.append(work)
+                    return grad_tensor
+
+                hook = para.register_post_accumulate_grad_hook(post_hook_fn)
+                self.hooks.append(hook)
+
+    def wait_on_queue(self):
+        """
+        Wait for all communications to finish. Mainly used for timing the communication time.
+        """
+        for handle in self.comm_work_handles:
+            handle.wait()
+
+        self.comm_work_handles.clear()
