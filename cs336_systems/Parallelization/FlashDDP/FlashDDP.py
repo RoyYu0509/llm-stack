@@ -272,6 +272,7 @@ class DDP_optimized:
 
         TODO: Implement parallelized forward. (Tensor parallelism, pipeline parallelism, etc.)
         """
+        return 
 
     def _finished_tensor_sync_hook(self):
         """

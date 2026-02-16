@@ -36,7 +36,7 @@ ATTN_KERNELS = [
 
 
 
-def set_dist_env(rank: int, world_size: int, backend: str = "gloo") -> None:
+def set_dist_env(rank: int, world_size: int, backend: str = "nccl") -> None:
     os.environ.setdefault("MASTER_ADDR", "localhost")
     os.environ.setdefault("MASTER_PORT", "12355")
     init_process_group(backend=backend, rank=rank, world_size=world_size)
@@ -61,6 +61,7 @@ def naive_LLM_DDP(
     val_batch_size: int,
     backend: str,
     print_every = None,
+    time_warmup_ep = None,
 ):
     """
     Training TransformerLM with with same `model_args` using DDP-style gradient sync and lazy data loading.
@@ -191,15 +192,16 @@ def naive_LLM_DDP(
         t3 = time.perf_counter()
         epoch_time = t3 - t0
 
-        timing = torch.tensor([comm_time_epoch, epoch_time], device=device)
-        dist.all_reduce(timing, op=dist.ReduceOp.SUM)
-        timing /= world_size
+        if time_warmup_ep is not None and epoch < time_warmup_ep:
+            timing = torch.tensor([comm_time_epoch, epoch_time], device=device)
+            dist.all_reduce(timing, op=dist.ReduceOp.SUM)
+            timing /= world_size
 
-        avg_comm_epoch = timing[0].item()
-        avg_epoch_time = timing[1].item()
+            avg_comm_epoch = timing[0].item()
+            avg_epoch_time = timing[1].item()
 
-        total_avg_comm_time += avg_comm_epoch
-        total_avg_epoch_time += avg_epoch_time
+            total_avg_comm_time += avg_comm_epoch
+            total_avg_epoch_time += avg_epoch_time
 
         # Debugging logs
         if print_every is not None and i < 100:
@@ -208,10 +210,11 @@ def naive_LLM_DDP(
         
         # Evaluation on validation set every eval_interval epochs
         if eval_interval > 0 and (epoch + 1) % eval_interval == 0:
+            print(f"Rank {rank} starting evaluation on validation set...")
             model.eval()
             val_loss = 0.0
             with torch.no_grad():
-                for val_bat_X, val_bat_y_ref in val_loader:
+                for val_bat_X, val_bat_y_ref in tqdm.tqdm(val_loader, desc=f"Rank {rank} Evaluating Epoch {epoch + 1}", unit="batch"):
                     val_bat_X = val_bat_X.to(device, non_blocking=True)
                     val_bat_y_ref = val_bat_y_ref.to(device, non_blocking=True)
                     val_bat_y_pred = model(val_bat_X)

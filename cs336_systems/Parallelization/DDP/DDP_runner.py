@@ -41,7 +41,9 @@ if __name__ == "__main__":
     assert torch.cuda.is_available(), "CUDA is required for this script."
 
     # Data and Training Hyperparameters
-    parser.add_argument("--EPOCHES", type=int, default=3)
+    parser.add_argument("--EPOCHES", type=int, default=10)
+    parser.add_argument("--WARMUP_EPOCHS", type=int, default=5)
+    parser.add_argument("--EVAL_INTERVAL", type=int, default=1)
     parser.add_argument("--TR_BAT_SIZE", type=int, default=8)
     parser.add_argument("--VAL_BAT_SIZE", type=int, default=8)
     parser.add_argument("--TRAIN_PATH", type=str, required=True)
@@ -115,10 +117,12 @@ if __name__ == "__main__":
             optim_kwargs,
             cross_entropy,
             args.EPOCHES,
+            args.EVAL_INTERVAL,
             args.TR_BAT_SIZE,
             args.VAL_BAT_SIZE,
             backend,
             args.PRINT_EVERY,
+            args.WARMUP_EPOCHS,
         ),
         nprocs=world_size,
         join=True,
