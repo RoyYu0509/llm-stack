@@ -4,8 +4,8 @@ from typing import Type
 
 import torch
 
-
-from cs336_systems.flash_attention_torch_naive import FlashAttentionTorchFunctionTorch
+from cs336_systems.FlashAttention.flash_attention_triton import FlashAttentionTorchFunctionTriton
+from cs336_systems.FlashAttention.flash_attention_torch_naive import FlashAttentionTorchFunctionTorch
 def get_flashattention_autograd_function_pytorch() -> Type:
     """
     Returns a torch.autograd.Function subclass that implements FlashAttention2.
@@ -15,10 +15,9 @@ def get_flashattention_autograd_function_pytorch() -> Type:
     Returns:
         A class object (not an instance of the class)
     """
-    # For example: return MyFlashAttnAutogradFunctionClass
     return FlashAttentionTorchFunctionTorch
 
-from cs336_systems.flash_attention_triton import FlashAttentionTorchFunctionTriton
+
 def get_flashattention_autograd_function_triton() -> Type:
     """
     Returns a torch.autograd.Function subclass that implements FlashAttention2
@@ -31,9 +30,7 @@ def get_flashattention_autograd_function_triton() -> Type:
     Returns:
         A class object (not an instance of the class)
     """
-    # For example: return MyTritonFlashAttentionAutogradFunctionClass
     return FlashAttentionTorchFunctionTriton
-
 
 def get_ddp_individual_parameters(module: torch.nn.Module) -> torch.nn.Module:
     """
@@ -70,7 +67,7 @@ def ddp_individual_parameters_on_after_backward(ddp_model: torch.nn.Module, opti
     # For example: ddp_model.finish_gradient_synchronization()
     raise NotImplementedError
 
-
+from cs336_systems.Parallelization.FlashDDP.FlashDDP import DDPOverlapBucketed
 def get_ddp_bucketed(module: torch.nn.Module, bucket_size_mb: float) -> torch.nn.Module:
     """
     Returns a torch.nn.Module container that handles
@@ -89,7 +86,7 @@ def get_ddp_bucketed(module: torch.nn.Module, bucket_size_mb: float) -> torch.nn
     Returns:
         Instance of a DDP class.
     """
-    raise NotImplementedError
+    return DDPOverlapBucketed(module, bucket_size_mb=bucket_size_mb)
 
 
 def ddp_bucketed_on_after_backward(ddp_model: torch.nn.Module, optimizer: torch.optim.Optimizer):

@@ -71,6 +71,7 @@ def parallel_train(
     backend: str,
     print_every = None,
     time_warmup_ep = None,
+    bucket_size_mb = 1,
 ):
     """
     Training TransformerLM with with same `model_args` using DDP-style gradient sync and lazy data loading.
@@ -140,7 +141,7 @@ def parallel_train(
     for p in model.parameters():
         dist.broadcast(p.data, src=0)
     model.train()
-    model = parallel_wrapper(model, buket_size_mb=25, rank=rank, world_size=world_size)
+    model = parallel_wrapper(model, bucket_size_mb=bucket_size_mb)
     # Timing logs
     total_avg_comm_time = 0.0
     total_avg_epoch_time = 0.0
@@ -177,6 +178,17 @@ def parallel_train(
             
             # wait for grad tensor sync
             model.finish_gradient_synchromnization()
+            torch.distributed.barrier()  # Ensure all ranks have finished gradient synchronization before moving on
+
+            # # Inspect gradients
+            # if print_every is not None and (i + 1) % print_every == 0:
+            #     j = 0
+            #     for name, param in model.module.named_parameters():
+            #         if param.grad is not None:
+            #             print(f"Rank {rank}, Parameter {name}, Grad Sample: {param.grad.view(-1)[:5]}")
+            #             j += 1
+            #         if j == 5:  # Print at most 5 parameters' gradients
+            #             break
 
             # Step optimizer after gradient sync
             optimizer.step()    
@@ -200,11 +212,6 @@ def parallel_train(
 
             total_avg_epoch_time += avg_epoch_time
 
-        # Debugging logs
-        if print_every is not None and i < 100:
-            print(f"Inspect parameters sample (rank {rank}): {model.parameters().__next__()[0, :5].tolist()}")
-            print(f"Inspecting gradient sample (rank {rank}): {[p.grad[0, :5].tolist() for p in model.parameters() if p.grad is not None][0]}")
-        
         # Evaluation on validation set every eval_interval epochs
         if eval_interval > 0 and (epoch + 1) % eval_interval == 0:
             print(f"Rank {rank} starting evaluation on validation set...")
@@ -250,14 +257,15 @@ if __name__ == "__main__":
     assert torch.cuda.is_available(), "CUDA is required for this script."
 
     # Data and Training Hyperparameters
-    parser.add_argument("--EPOCHES", type=int, default=10)
-    parser.add_argument("--WARMUP_EPOCHS", type=int, default=5)
-    parser.add_argument("--EVAL_INTERVAL", type=int, default=5)
+    parser.add_argument("--EPOCHES", type=int, default=5)
+    parser.add_argument("--WARMUP_EPOCHS", type=int, default=2)
+    parser.add_argument("--EVAL_INTERVAL", type=int, default=100)
     parser.add_argument("--TR_BAT_SIZE", type=int, default=8)
     parser.add_argument("--VAL_BAT_SIZE", type=int, default=8)
     parser.add_argument("--TRAIN_PATH", type=str, required=True)
     parser.add_argument("--VAL_PATH", type=str, required=True)
     parser.add_argument("--DTYPE", type=str, default="float32", choices=list(DTYPE_DICT.keys()))
+    parser.add_argument("--BUCKET_SIZE_MB", type=int, default=1)
     
     # Model Hyperparameters
     parser.add_argument("--CONTEXT_LENGTH", type=int, default=256)
@@ -333,6 +341,7 @@ if __name__ == "__main__":
             backend,
             args.PRINT_EVERY,
             args.WARMUP_EPOCHS,
+            args.BUCKET_SIZE_MB,
         ),
         nprocs=world_size,
         join=True,

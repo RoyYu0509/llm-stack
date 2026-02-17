@@ -10,7 +10,8 @@ uv run cs336_systems/Parallelization/DDP/DDP_runner.py \
   --TR_BAT_SIZE 16 \
   --VAL_BAT_SIZE 16 \
   --DTYPE "float32" \
-  --ATTN_KERNEL "MyTriton"
+  --ATTN_KERNEL "MyTriton" \
+  
   ```
 
 git config --global user.email "royyu0509@gmail.com"
