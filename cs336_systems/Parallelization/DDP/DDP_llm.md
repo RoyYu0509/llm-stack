@@ -1,4 +1,6 @@
 ```
+source .venv/bin/activate
+
 uv run cs336_systems/Parallelization/DDP/DDP_runner.py \
   --TRAIN_PATH cs336-basics/data/tokenized/ts_train.npy \
   --VAL_PATH cs336-basics/data/tokenized/ts_valid.npy \

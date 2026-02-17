@@ -2,11 +2,6 @@ import argparse
 import os
 import time
 from typing import Callable
-
-import argparse
-import os
-import time
-from typing import Callable
 from xml.parsers.expat import model
 
 import numpy as np
@@ -28,6 +23,7 @@ from cs336_basics.transfromer.scaled_dot_prod_attention import (
     vectorized_attention_torch,
 )
 
+
 DTYPE_DICT = {
     "float32": torch.float32,
     "float16": torch.float16,
@@ -40,18 +36,150 @@ ATTN_KERNELS = [
     ("MyTriton", flash_attention_my_triton),
 ]
 
-from cs336_systems.Parallelization.DDP.stream_dataset import TokenStreamDataset
-from cs336_systems.Parallelization.FlashDDP.FlashDDP import DDPOverlapBucketed
+
 
 def set_dist_env(rank: int, world_size: int, backend: str = "gloo") -> None:
     os.environ.setdefault("MASTER_ADDR", "localhost")
     os.environ.setdefault("MASTER_PORT", "12355")
-    dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+    init_process_group(backend=backend, rank=rank, world_size=world_size)
 
 
 def _synchronize_if_cuda(device: torch.device) -> None:
     if device.type == "cuda":
         torch.cuda.synchronize(device)
+
+
+
+class flashDDPModule(torch.nn.Module):
+    """
+    An optimized DDP with Bucketing and Overlapping Communication and Computation.
+    """
+    def __init__(self, module: torch.nn.Module, buket_size: int, rank: int, world_size: int):
+        """
+        Given an instantiated PyTorch nn.Module to be parallelized, 
+        construct a DDP container that will handle gradient synchronization across ranks.
+        
+        Args:
+            - module: an instantiated PyTorch nn.Module, e.g. TransformerLM(model_args)
+        """
+        super().__init__()
+        self.module = module
+        self.rank = rank
+        self.world_size = world_size
+        self.hooks = []
+        self.comm_work_handles = []
+        self.bucket_size = buket_size
+        self.para_2_size_reverse = self._build_bucket()
+        self.acc_bucket_mb = 0
+        self._safe = torch.zeros(world_size, device=torch.device(f"cuda:{rank}"), dtype=torch.int32)
+        self.bucket = []
+        self._start_sync = False
+    
+    def _build_bucket(self):
+        """Build the parameters bucket list."""
+        para_2_size_reverse = {}
+        for para in reversed(list(self.module.parameters())):
+            para_2_size_reverse[para] = para.numel() * para.element_size()
+
+        return para_2_size_reverse
+    
+    def forward(self, *inputs, **kwargs):
+        """
+        A standard self.module forward function.
+
+        TODO: Implement parallelized forward. (Tensor parallelism, pipeline parallelism, etc.)
+        """
+        return self.module(*inputs, **kwargs)
+
+    def _board_cast_params(self):
+        for p in self.module.parameters():
+            dist.broadcast(p.data, src=0)
+
+    def call_and_register_handle(self, collective_fn, tensor):
+        """
+        Perform the collective_fn AND register the collective handle
+        """
+        handle = collective_fn(tensor)
+        self.comm_work_handles.append(handle)
+        return handle
+
+    def _hook_async_all_reduce(self):
+        """
+        Hook Fn: Issue an async all-reduce communication when the bucket is full.
+        
+        Precondition:
+            - all ranks' buckets are full and ready to sync
+            - self.bucket has been materialized to a flatten tensor
+        """
+        if self._start_sync:
+            work = dist.all_reduce(self.bucket, op=dist.ReduceOp.AVG, async_op=True)
+            self.comm_work_handles.append(work)
+            return self.bucket
+    
+    def _hook_add_to_bucket(self, grad_tensor):
+        """Hook Fn: Add the tensor to the bucket when recieved grad"""
+        print("Add parameter to bucket, size (MB): ", grad_tensor.numel() * grad_tensor.element_size() / 1e6)
+        self.bucket.append(grad_tensor)
+        self.acc_bucket_mb += grad_tensor.numel() * grad_tensor.element_size() / 1e6
+        
+        # Check if self rank bucket size == threshold
+        if self.acc_bucket_mb >= self.bucket_size:
+            # Record the current rank bucket as safe
+            self._safe[self.rank] = 1
+            
+            # Wait until all ranks are safe
+            while not sum(self._safe) == self.world_size:
+                print(f"Rank {self.rank} waiting...")
+                self._hook_try_flatten_grads()
+            
+            # All ranks are safe, start the all-reduce communication with the bucket
+            print(f"Rank {self.rank} starting all-reduce with bucket size (MB): {self.acc_bucket_mb:.2f}")
+
+    
+    def _hook_try_flatten_grads(self,):
+        """
+        Check if all ranks are safe. 
+        If all ranks safe, mature self.bucket to the actual bucket tensor.
+        """
+        if sum(self._safe) < self.world_size:
+            return
+        else:
+            # All ranks'buckets is ready
+            # Replace the bucket with the actual flatten tensor
+            self.bucket = torch._utils._flatten_dense_tensors(self.bucket)
+            self._start_sync = True
+            print(f"Rank {self.rank} bucket is full, start all-reduce with size (MB): {self.bucket.numel() * self.bucket.element_size() / 1e6}")
+        
+    def add_grad_allredu_hook(self):
+        """
+        Add a post-accumulate hook to each parameter's gradient tensor, 
+        so that after the local gradient is computed in each backward pass, 
+        it will automatically trigger an all-reduce communication to sync gradients across ranks.
+
+
+        Hooks:
+            1. Check if the bucket of this parameter is ready
+            2. If ready, fatten all tensor gradient and issue a all-reduce comm with overlapping.
+        """
+        # Check model device
+        assert next(self.module.parameters()).device == torch.device(f"cuda:{self.rank}"), "Model parameters must be on CUDA."
+        # Iterate and add post-hooks
+        for para in self.bucket:
+            if para.requires_grad:
+                # Hook Fn 1: Record safe when recieved the gradient and add to bucket
+                hook = para.register_post_accumulate_grad_hook(self._hook_add_to_bucket)
+                # Hook Fn 2: All-reduce when all ranks' bucket are ready.
+                hook = para.register_post_accumulate_grad_hook(self._hook_async_all_reduce)
+                self.hooks.append(hook)
+
+    def wait_on_queue(self):
+        """
+        Wait for all communications to finish. Mainly used for timing the communication time.
+        """
+        for handle in self.comm_work_handles:
+            handle.wait()
+
+        self.comm_work_handles.clear()
 
 
 
@@ -140,7 +268,7 @@ def parallel_train(
     for p in model.parameters():
         dist.broadcast(p.data, src=0)
     model.train()
-    model = parallel_wrapper(model, buket_size_mb=25, rank=rank, world_size=world_size)
+    model = DDPOverlapBucketed
     # Timing logs
     total_avg_comm_time = 0.0
     total_avg_epoch_time = 0.0
@@ -176,7 +304,7 @@ def parallel_train(
             loss.backward()
             
             # wait for grad tensor sync
-            model.finish_gradient_synchromnization()
+            model.wait_on_queue()
 
             # Step optimizer after gradient sync
             optimizer.step()    
@@ -238,103 +366,6 @@ def parallel_train(
         print(f"Average total time per epoch: {total_avg_epoch_time / epochs:.4f} seconds")
 
     dist.barrier()
-    dist.destroy_process_group()
+    destroy_process_group()
 
     
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Training TransformerLM with manual DDP-style gradient sync and lazy data loading"
-    )
-
-    assert torch.cuda.is_available(), "CUDA is required for this script."
-
-    # Data and Training Hyperparameters
-    parser.add_argument("--EPOCHES", type=int, default=10)
-    parser.add_argument("--WARMUP_EPOCHS", type=int, default=5)
-    parser.add_argument("--EVAL_INTERVAL", type=int, default=5)
-    parser.add_argument("--TR_BAT_SIZE", type=int, default=8)
-    parser.add_argument("--VAL_BAT_SIZE", type=int, default=8)
-    parser.add_argument("--TRAIN_PATH", type=str, required=True)
-    parser.add_argument("--VAL_PATH", type=str, required=True)
-    parser.add_argument("--DTYPE", type=str, default="float32", choices=list(DTYPE_DICT.keys()))
-    
-    # Model Hyperparameters
-    parser.add_argument("--CONTEXT_LENGTH", type=int, default=256)
-    parser.add_argument("--PRINT_EVERY", type=int, default=1)
-    parser.add_argument("--VOCAB_SIZE", type=int, default=10000)
-    parser.add_argument("--ROPE_THETA", type=float, default=10_000.0)
-    parser.add_argument("--NUM_LAYERS", type=int, default=16)
-    parser.add_argument("--D_MODEL", type=int, default=256)
-    parser.add_argument("--NUM_HEADS", type=int, default=8)
-    parser.add_argument("--D_FF", type=int, default=256*4)
-    parser.add_argument( "--ATTN_KERNEL", type=str, default="Naive Attention",
-        choices=[name for name, _ in ATTN_KERNELS],
-    )
-    parser.add_argument("--AUTOCAST", action="store_true", default=False)
-
-    # Optimizer Hyperparameters
-    parser.add_argument("--LR", type=float, default=3e-4)
-    parser.add_argument("--WEIGHT_DECAY", type=float, default=0.01)
-    parser.add_argument("--BETA1", type=float, default=0.9)
-    parser.add_argument("--BETA2", type=float, default=0.999)
-    parser.add_argument("--ADAM_EPS", type=float, default=1e-8)
-
-    args = parser.parse_args()
-
-    # Set the Pre-DDP configs
-    dtype = DTYPE_DICT[args.DTYPE]
-    attention_fn = dict(ATTN_KERNELS)[args.ATTN_KERNEL]
-    backend = "nccl"
-    world_size = torch.cuda.device_count()
-
-    # Load the same initial model 
-    model_kwargs = dict(
-        vocab_size=args.VOCAB_SIZE,
-        context_length=args.CONTEXT_LENGTH,
-        num_layers=args.NUM_LAYERS,
-        d_model=args.D_MODEL,
-        heads_num=args.NUM_HEADS,
-        d_ff=args.D_FF,
-        theta=args.ROPE_THETA,
-        device="cpu",
-        dtype=dtype,
-        attention_fn=attention_fn,
-    )
-    model = TransformerLM(**model_kwargs)
-
-    # Same optim configs
-    optim_kwargs = dict(
-        lr=args.LR,
-        weight_decay=args.WEIGHT_DECAY,
-        betas=(args.BETA1, args.BETA2),
-        eps=args.ADAM_EPS,
-    )
-
-    # Load Data Set
-    val_dataset = TokenStreamDataset(args.VAL_PATH, args.CONTEXT_LENGTH)
-    tr_dataset = TokenStreamDataset(args.TRAIN_PATH, args.CONTEXT_LENGTH)
-
-    # Load the same model to all ranks and start DDP training
-    mp.spawn(
-        fn=parallel_train,
-        args=(
-            DDPOverlapBucketed,
-            world_size,
-            tr_dataset,
-            val_dataset,
-            model,
-            optim_kwargs,
-            cross_entropy,
-            args.EPOCHES,
-            args.EVAL_INTERVAL,
-            args.TR_BAT_SIZE,
-            args.VAL_BAT_SIZE,
-            backend,
-            args.PRINT_EVERY,
-            args.WARMUP_EPOCHS,
-        ),
-        nprocs=world_size,
-        join=True,
-    )
-
