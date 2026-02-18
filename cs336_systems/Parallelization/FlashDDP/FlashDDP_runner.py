@@ -178,7 +178,6 @@ def parallel_train(
             
             # wait for grad tensor sync
             model.finish_gradient_synchromnization()
-            torch.distributed.barrier()  # Ensure all ranks have finished gradient synchronization before moving on
 
             # # Inspect gradients
             # if print_every is not None and (i + 1) % print_every == 0:
