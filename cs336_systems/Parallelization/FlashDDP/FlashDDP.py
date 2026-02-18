@@ -42,7 +42,7 @@ class Bucket:
         - _initialize_bkt_size_mb: accumulated bucket size during initialization (for bucket initialzation)
         - _initialize_full: bool flag to indicate if the bucket is full during initialization (for bucket initialzation)
 
-        - _full_para_set: the set of bucketed parameters (for quick lookup)
+        - _full_para_set: the set of bucketed parameters registered in the bucket (for quick lookup)
         - _updated_grad_para_set: the set of parameters that have received gradients (for checking if the bucket is ready for synchronization)
         
         - para_list: the list of bucketed parameters (for correct flattening/unflattening order)
@@ -93,7 +93,7 @@ class Bucket:
         """
         self._updated_grad_para_set.add(para)
 
-    def yield_flatten_grad(self):
+    def yield_flatten_bkt_grad(self):
         """
         Return the flattened gradient vectors of the bucket from self.para_list (SAME ORDER).
         """
@@ -185,7 +185,7 @@ class DDPOverlapBucketed(nn.Module):
                     temp_bucket = Bucket(self.bkt_sz_mb, offsets=offsets)
             
         # Add the last bucket if it has any parameter
-        if len(temp_bucket.para_tensor_dict.keys()) > 0:
+        if len(temp_bucket._full_para_set) > 0:
             self.buckets.append(temp_bucket)
 
         # Initialize a global flattened grads vector
@@ -203,7 +203,7 @@ class DDPOverlapBucketed(nn.Module):
     def _sync_grad(self, input_bucket:Bucket):
         """
         Sync the gradient of parameters rigstered in the `input_bucket` by:
-            1. Yield the partial flattened gradient vector of the bucket from `input_bucket.yeild`
+            1. Yield the partial flattened gradient vector of the bucket from `input_bucket.yield_flatten_bkt_grad`
             2. Replace the full flattened gradient vector with the yielded bucket gradient vector
             3. Inplace all-reduce the correpsonding slice of the flattened gradient vector across ranks.
 
@@ -212,10 +212,10 @@ class DDPOverlapBucketed(nn.Module):
         # Assert the bucket is ready for synchronization
         assert input_bucket.grad_ready(), "The gradient is not ready"        
         
-        # Get corresponding boundary in the flattened gradient vector for this bucket
-        s,e = input_bucket.bound
+        # Get slicing idx in the full tensor for this bucket
+        s,e = input_bucket.offsets, input_bucket.offsets + input_bucket.numel
         # Yield a flattened gradient vector from the bucket, normalize it, and replace the part in the full model's flat grad 
-        self.temp_flatten_grad[s:e] = input_bucket.yeild_flatten_grad() / dist.get_world_size() 
+        self.temp_flatten_grad[s:e] = input_bucket.yield_flatten_bkt_grad() / dist.get_world_size()
         log_dist(f"Syncing bucket bound [{s}, {e}]")
         # Inplace all-reduce the full model's flat grad 
         work = dist.all_reduce(self.temp_flatten_grad[s:e], op=dist.ReduceOp.SUM, async_op=True)
