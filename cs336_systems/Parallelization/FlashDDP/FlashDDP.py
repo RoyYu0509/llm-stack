@@ -33,48 +33,70 @@ def _get_tensor_size(tensor):
 class Bucket:
     """
     The communicative tensor bucket object.
+
+    Instance Attributes:
+        - offsets:      the starting offset of the bucket in the global flattened gradient vector (for correct slicing)
+        - numel:        the number of elements in the bucket (for global tensor slicing)
+        - bkt_size_mb:  the fixed bucket size threshold in MB
+
+        - _initialize_bkt_size_mb: accumulated bucket size during initialization (for bucket initialzation)
+        - _initialize_full: bool flag to indicate if the bucket is full during initialization (for bucket initialzation)
+
+        - _full_para_set: the set of bucketed parameters (for quick lookup)
+        - _updated_grad_para_set: the set of parameters that have received gradients (for checking if the bucket is ready for synchronization)
+        
+        - para_list: the list of bucketed parameters (for correct flattening/unflattening order)
     """
-    def __init__(self, bucket_size_mb: float, bound: List[int]):
+    def __init__(self, bucket_size_mb: float, offsets:int):
+        self.offsets = offsets
+        self.numel = 0
         self.bkt_size_mb = bucket_size_mb
         self._initialize_bkt_size_mb = 0.0
-        self.para_tensor_dict = {}
         self._initialize_full = False
         self._full_para_set = set()
-        self._updated_grad_para= set()
-        self.bound = bound
+        self._updated_grad_para_set= set()
         self.para_list = []
     
     def add_tensor(self, para):
         """
-        Create a dictionary: {para: para.grad}
-        Set self.full = True if `self.bkt_size_mb == self.curr_bkt_size_mb`.
+        Register para into the bucket:
+            1. Update current bucket size in MB
+            2. Add para into the bucket's parameter set (for quick lookup)
+            3. Add para into the bucket's parameter list (for correct flattening order)
+            4. Update self.numel the number of parameter elements in the bucket (for global tensor slicing)
+        
+        Update the full flag if the bucket size exceeds.
         """
-        # Add the parameter tensor to the bucket dict
-        self.para_tensor_dict[para] = para.grad
         self._initialize_bkt_size_mb += _get_tensor_size(para.grad)
         self._full_para_set.add(para)
         self.para_list.append(para)
+        self.numel += para.numel()
         # Check if the bucket is full
         if self._initialize_bkt_size_mb >= self.bkt_size_mb:
             self._initialize_full = True
 
     def is_full(self):
+        """
+        Return `True` if the bucket is full, False otherwise.
+        """
         return self._initialize_full
     
     def grad_ready(self):
         """
-        Check if all the gradient tensors in the bucket are ready (i.e., have been computed).
-        Return True if all gradients are ready, False otherwise.
+        Return `True` if all parameters in the bucket have received bwd gradients.
         """
-        return self._updated_grad_para == self._full_para_set
+        return self._updated_grad_para_set == self._full_para_set
     
     def record_updates(self, para):
         """
-        Add para into the `self._updated_grad_para` set, to record that the para has been updated
+        Add para into the `self._updated_grad_para_set` set, to record that the para has been updated
         """
-        self._updated_grad_para.add(para)
+        self._updated_grad_para_set.add(para)
 
-    def yeild_flatten_grad(self):
+    def yield_flatten_grad(self):
+        """
+        Return the flattened gradient vectors of the bucket from self.para_list (SAME ORDER).
+        """
         # Dynamically retrieve the CURRENT gradients from the keys (parameters)
         # We iterate over the keys (parameters) of the dictionary to get the latest .grad attribute
         grads = [p.grad for p in self.para_list]
@@ -93,39 +115,55 @@ class DDPOverlapBucketed(nn.Module):
         
         Args:
             - module: an instantiated PyTorch nn.Module, e.g. TransformerLM(model_args)
+            - bucket_size_mb: the bucket size threshold in MB for bucketing the model parameters.
+        
+        Instance Attributes:
+            - module: the original nn.Module passed in, used for forward and backward
+            - dtype: the data type of the model parameters (for initializing the bucket gradient tensors)
+            - device: the device of the model parameters (for initializing the bucket gradient tensors)
+            - hooks: a list of registered hook handles for overlapping communication and computation (for cleanup)
+            - comm_work_handles: a list of communication work handles for asynchronous communication (for synchronization)
+            - buckets: a list of Bucket objects for bucketing the model parameters
+            - para_2_bucket: a dictionary mapping each parameter to its corresponding bucket (for quick lookup during gradient synchronization)
+            - _reversed_paras: a list of model parameters in the same order as inside the buckets (for correct flattening/unflattening of the write in bucket grad vectors)
+            - temp_flatten_grad: a local full flattened gradient vector for the whole model, used for bucketing communication and synchronization   
         """
 
-        self.para_2_bucket: Dict[torch.nn.Parameter, Bucket]
+        
         super().__init__()
-        self.module = module
-        self.dtype = next(module.parameters()).dtype
-        self.device = next(module.parameters()).device
-        self.hooks = []
-        self.comm_work_handles = []
+        self.module: torch.nn.Module = module
+        self.dtype: torch.dtype = next(module.parameters()).dtype
+        self.device: torch.device = next(module.parameters()).device
+        self.hooks: List[torch.nn.utils.hooks.RemovableHandle] = []
+        self.comm_work_handles: List[torch.distributed.ProcessGroup] = []
 
         # A list of buckets
-        self.bkt_sz_mb = bucket_size_mb
-        self.buckets = []
-        self.para_2_bucket = {}
+        self.bkt_sz_mb: int = bucket_size_mb
+        self.buckets: List[Bucket] = []
+        self.para_2_bucket: Dict[torch.nn.Parameter, Bucket] = {}
 
-        # Keep a reference to the model parameters in the same order as the buckets, 
-        # for correct flattening/unflattening (since the bucket boundaries are determined by the order of parameters).
-        self._reversed_paras = []
+        # A local full parameters list in the same order as the buckets for correct flattening/unflattening of the write in bucket grad vectors.
+        self._reversed_paras: List[torch.nn.Parameter] = []
+        # A local full flattened gradient vector for the whole model, used for bucket grad replacing and synchronization.
+        self.temp_flatten_grad: torch.Tensor = None
 
         # Initialize the bucket 
         self._build_bucket()
+
         # Add the parameter hooks for overlapping communication and computation
         self.add_bucketing_hooks()
     
     def _build_bucket(self):
-        """Build the parameters bucket dict."""
+        """
+        Build model's parameters buckets for bucketed communication.
+        
+        """
         # Initialize an empty bucket
-        temp_bucket = Bucket(self.bkt_sz_mb, [0,0])
-        start = 0
-        end = 0
+        offsets = 0
+        temp_bucket = Bucket(self.bkt_sz_mb, offsets=offsets)
 
         # Build the bucket in reverse order
-        for i, para in enumerate(reversed(list(self.module.parameters()))):
+        for para in reversed(list(self.module.parameters())):
             # Initialize gradient vector only for `requires_grad == True` parameters
             if para.requires_grad:
                 # Initialize gradient tensor
@@ -136,28 +174,22 @@ class DDPOverlapBucketed(nn.Module):
             
                 # Register the para to the bucket
                 temp_bucket.add_tensor(para)
-                self.para_2_bucket[para] = temp_bucket
-                
-                prev_end = end
-                end += para.numel()
-                log_dist(f"Rank {dist.get_rank()} Added {i}-th param (size {para.numel()}) to bucket. Current specific bound in loop: [{prev_end}, {end}]")
+                self.para_2_bucket[para] = temp_bucket # Record the para to bucket mapping for quick lookup
 
                 # Yield & New a bucket if is full
                 if temp_bucket.is_full():
-                    temp_bucket.bound = [start, end] # Update the bucket bound
-                    log_dist(f"Rank {dist.get_rank()}, Bucket registered full. Bound: {temp_bucket.bound}")
-                    self.buckets.append(temp_bucket) # add to the bucket list
+                    # Add the filled bucket to the buckets list
+                    self.buckets.append(temp_bucket) 
                     # Init a new bucket
-                    temp_bucket = Bucket(self.bkt_sz_mb, [start, end])
-                    start = end # Update the start of the new bucket as the old end
+                    offsets += temp_bucket.numel # Update the offsets for the new bucket
+                    temp_bucket = Bucket(self.bkt_sz_mb, offsets=offsets)
             
-        # Add the last bucket is not empty
+        # Add the last bucket if it has any parameter
         if len(temp_bucket.para_tensor_dict.keys()) > 0:
-            temp_bucket.bound = [start, end] # Update the bucket bound
             self.buckets.append(temp_bucket)
 
-        # Initialize a flattened gradient vector for the built buckets
-        self.temp_flatten_grad = torch.zeros(end, dtype=self.dtype, device=self.device)
+        # Initialize a global flattened grads vector
+        self.temp_flatten_grad = torch.zeros(offsets, dtype=self.dtype, device=self.device)
         log_dist(f"Rank {dist.get_rank()}, Finished building buckets. Total bucketss: {len(self.buckets)}")
         
     def forward(self, *inputs, **kwargs):
@@ -168,52 +200,67 @@ class DDPOverlapBucketed(nn.Module):
         """
         return self.module(*inputs, **kwargs)
 
-    def sync_grad(self, bucket:Bucket):
-        """Sync the gradient bucket"""
+    def _sync_grad(self, input_bucket:Bucket):
+        """
+        Sync the gradient of parameters rigstered in the `input_bucket` by:
+            1. Yield the partial flattened gradient vector of the bucket from `input_bucket.yeild`
+            2. Replace the full flattened gradient vector with the yielded bucket gradient vector
+            3. Inplace all-reduce the correpsonding slice of the flattened gradient vector across ranks.
+
+        NOTE: The `input_bucket` must be ready, ie. all paras have received their gradients.
+        """
         # Assert the bucket is ready for synchronization
-        assert bucket.grad_ready(), "The gradient is not ready"        
+        assert input_bucket.grad_ready(), "The gradient is not ready"        
         
         # Get corresponding boundary in the flattened gradient vector for this bucket
-        s,e = bucket.bound
-        log_dist(f"Syncing bucket with bound [{s}, {e}] on rank {dist.get_rank()} with {bucket.yeild_flatten_grad().shape} grad tensor.")
-        # Yield a flattened gradient vector from the bucket and replace the part in the full model's flat grad 
-        self.temp_flatten_grad[s:e] = bucket.yeild_flatten_grad()
+        s,e = input_bucket.bound
+        # Yield a flattened gradient vector from the bucket, normalize it, and replace the part in the full model's flat grad 
+        self.temp_flatten_grad[s:e] = input_bucket.yeild_flatten_grad() / dist.get_world_size() 
         log_dist(f"Syncing bucket bound [{s}, {e}]")
         # Inplace all-reduce the full model's flat grad 
         work = dist.all_reduce(self.temp_flatten_grad[s:e], op=dist.ReduceOp.SUM, async_op=True)
         self.comm_work_handles.append(work)
 
-    def _register_grad_ready(self, para):
-        """register the parameter as recieved gradient in its bucket"""
+    def _hook_register_grad_ready(self, para):
+        """
+        A post-accumulate grad hook function to be registered on each parameter.
+
+        When recieved the bwd gradient, Effects: 
+            1. Modify the bucket, update the bucket's para as received gradient.
+            2. If the bucket is ready after this, trigger the synchronization of the bucket para's gradients.
+        """
         log_dist(f"Parameter of size {para.numel()} ready/accumulated.")
         bucket = self.para_2_bucket[para]
         bucket.record_updates(para)
         if bucket.grad_ready():
             log_dist("Bucket full & ready. Triggering sync.")
-            self.sync_grad(bucket)
+            self._sync_grad(bucket)
 
-    def add_bucketing_hooks(self):
+    def _add_grad_ready_hooks(self):
         """
-        Add Overlapping Bucketed DDP Hooks to `self.module.parameters()`
+        Register the post-accumulate grad hook on each parameter, enable the overlapping sync and comp.
         """
         # Iterate and add post-hooks
         for para in self.module.parameters():
             if para.requires_grad:
                 # Hook Fn 1: Record the para as received gradient in its bucket
                 #            and sync the gradient if the bucket is ready
-                hook = para.register_post_accumulate_grad_hook(self._register_grad_ready)
+                hook = para.register_post_accumulate_grad_hook(self._hook_register_grad_ready)
                 self.hooks.append(hook)
 
     def finish_gradient_synchromnization(self):
         """
-        All communication work handles have been queued.
+        A barrier Fn to wait for synchronization to finish.
+
+        Procedures:
+            1. Wait for all communication work to finish (if any).
         """
         # If no communication work was queued this step, do not overwrite
         # parameter gradients with the (possibly stale/zero) flattened buffer.
         # if len(self.comm_work_handles) == 0:
         #     log_dist("No queued all-reduce work handles in this step; skipping unflatten.")
         #     for bucket in self.buckets:
-        #         bucket._updated_grad_para.clear()
+        #         bucket._updated_grad_para_set.clear()
         #     return
 
         # Wait for all comm to finish
@@ -221,21 +268,17 @@ class DDPOverlapBucketed(nn.Module):
             handle.wait()
         self.comm_work_handles.clear()
 
-        # Normalize the gradients
-        if dist.is_initialized():
-             self.temp_flatten_grad /= dist.get_world_size()
-
-        # After allreduce updates, unflatten the gradient vector into every para.grad
+        # Unflatten the all-reduced flattened gradient vector back to the original parameters.
         self.unflatten_grads()
 
         # Clear the bucket records
         for bucket in self.buckets:
-            bucket._updated_grad_para.clear()
+            bucket._updated_grad_para_set.clear()
 
     def unflatten_grads(self):
         """
-        Unflatten the gradient vector into the original parameter shapes 
-        after all-reduce the model's full flattened gradient vector.
+        Replace the grad attribute of each parameter with the unflattened gradient 
+        from the full local flattened gradient vector after synchronization.
         """
         original_grad = [p.grad for p in self._reversed_paras]
         vector_to_parameters(self.temp_flatten_grad, original_grad)
