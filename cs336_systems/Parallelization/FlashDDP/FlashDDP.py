@@ -151,7 +151,7 @@ class DDPOverlapBucketed(nn.Module):
         self._build_bucket()
 
         # Add the parameter hooks for overlapping communication and computation
-        self.add_bucketing_hooks()
+        self._add_grad_ready_hooks()
     
     def _build_bucket(self):
         """
