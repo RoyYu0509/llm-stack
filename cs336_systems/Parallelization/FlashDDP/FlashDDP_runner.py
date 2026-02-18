@@ -170,7 +170,8 @@ def parallel_train(
             bat_y_ref = bat_y_ref.to(device, non_blocking=True)
 
             # Compute local gradients
-            optimizer.zero_grad()
+            # EDIT: Avoid per-step gradient memset; grads are recreated by autograd.
+            optimizer.zero_grad(set_to_none=True)
             bat_y_pred = model(bat_X)
             loss = loss_fn(bat_y_pred, bat_y_ref)
             # Backward is synchronous, it return after all para.grad are updated; thus, async ops are queued.
@@ -346,4 +347,3 @@ if __name__ == "__main__":
         nprocs=world_size,
         join=True,
     )
-
