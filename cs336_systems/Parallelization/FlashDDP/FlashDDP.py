@@ -56,6 +56,7 @@ class Bucket:
         self._full_para_set = set()
         self._updated_grad_para_set= set()
         self.para_list = []
+        self.grad_buffer = None
     
     def add_tensor(self, para):
         """
@@ -67,12 +68,14 @@ class Bucket:
         
         Update the full flag if the bucket size exceeds.
         """
-        self._initialize_bkt_size_mb += _get_tensor_size(para.grad)
+
+        self._initialize_bkt_size_mb += _get_tensor_size(para)
         self._full_para_set.add(para)
         self.para_list.append(para)
         self.numel += para.numel()
         # Check if the bucket is full
         if self._initialize_bkt_size_mb >= self.bkt_size_mb:
+            # Set the bucket flag to full
             self._initialize_full = True
 
     def is_full(self):
@@ -89,24 +92,45 @@ class Bucket:
     
     def record_updates(self, para):
         """
-        Add para into the `self._updated_grad_para_set` set, to record that the para has been updated
+        Record the parameter `para` as having received its gradient, by adding it to the updated_grad_para_set.
         """
         self._updated_grad_para_set.add(para)
 
-    def yield_flatten_bkt_grad(self):
+    def _prepare_grad_buffer(self, dtype: torch.dtype, device: torch.device):
         """
-        Return the flattened gradient vectors of the bucket from self.para_list (SAME ORDER).
+        Allocate a contiguous flat grad_buffer tensor for this bucket's parameters.
+
+        Linking each parameter's .grad attribute as a sliced view into it.
+
+        Autograd will then accumulate para.grad directly into the corresponding slice of the bucket's grad_buffer.
         """
-        # Dynamically retrieve the CURRENT gradients from the keys (parameters)
-        # We iterate over the keys (parameters) of the dictionary to get the latest .grad attribute
-        grads = [p.grad for p in self.para_list]
-        flatten_grad = parameters_to_vector(grads)
-        return flatten_grad
+        # Prepare contiguous grad buffer
+        self.grad_buffer = torch.zeros(self.numel, dtype=dtype, device=device)
+        offsets = 0
+        # Iterate over registered parameters & link their para.grad as views into the grad_buffer
+        for para in self.para_list:
+            n = para.numel()
+            # Link the para.grad as a view, so that the actual bwd grad flows into the buffer slice
+            para.grad = self.grad_buffer[offsets : offsets + n].view_as(para)
+            offsets += n
+    
+    def finalize(self, dtype: torch.dtype, device: torch.device):
+        """
+        Finalize the bucket after initialization by pre-allocate a grad buffer for the registered parameters.
+
+        Links each parameter's .grad attribute as a sliced view into the bucket's grad_buffer, so that the 
+        actual bwd grad flows into the buffer slice, which will be synchronized in-place during training.
+        """
+        self._prepare_grad_buffer(dtype, device)
 
 
 class DDPOverlapBucketed(nn.Module):
     """
     An optimized DDP with Bucketing and Overlapping Communication and Computation.
+
+    Precondition: 
+        1. Processes must have been initialized with `nccl` backend before creating a wrapper instance.
+        2. Optimizer.zero_grad(set_to_none=True) must be used to avoid remove the grad 2 buffer links.
     """
     def __init__(self, module: torch.nn.Module, bucket_size_mb: int):
         """
@@ -125,11 +149,34 @@ class DDPOverlapBucketed(nn.Module):
             - comm_work_handles: a list of communication work handles for asynchronous communication (for synchronization)
             - buckets: a list of Bucket objects for bucketing the model parameters
             - para_2_bucket: a dictionary mapping each parameter to its corresponding bucket (for quick lookup during gradient synchronization)
-            - _reversed_paras: a list of model parameters in the same order as inside the buckets (for correct flattening/unflattening of the write in bucket grad vectors)
-            - temp_flatten_grad: a local full flattened gradient vector for the whole model, used for bucketing communication and synchronization   
-        """
-
+            - _reversed_paras: kept for reference but not required for unflattening (grads are views into bucket grad_buffers)
         
+        Optimization:
+            Before: 
+                1. Create many bucket-level flat gradient buffers, AND one model-level flat gradient buffer. 
+                2. Each synchronization:
+                    1). Create a dummy flatten the model-level gradients zero tensor.
+                    2). Copy the bucket-level flatten gradients into the slices of the model-level flatten gradient buffer.
+                    3). All-reduce the model level gradient tensor slice [start:end].
+                    4). Unflatten the model-level flatten gradient buffer and replace the model parameters' .grad with the unflattened views.
+
+            Now:
+                1. We don't need a whole model-level flat gradient buffer for synchronization. Instead, we set link grad to bucket-level grad_buffers,
+                and directly synchronize the bucket-level gradients using the grad_buffers, which is linked directly to the parameter gradients.
+
+                Therefore, the gradients sync into parameters' .grad views in-place with no extra copy, without need to flatten(.) & unflatten(.) at model level.
+                
+                Each sync:
+                    1). All-reduce the bucket-level flatten gradient buffer directly, which is already linked to the parameter gradients as views.
+                        No unflatten step needed: each param's .grad is already a view into its bucket's grad_buffer, which has been all-reduced in-place.
+
+        We can do this optimization because 
+            ```
+            g = grad_buffer[offset:offset+n].view_as(param)
+            param.grad = g
+            ```
+        NOTE: We need to ensure the optimizer.zero_grad(set_to_none=True) to avoid remove the grad 2 buffer links, when clearing gradients during tarining.
+        """
         super().__init__()
         self.module: torch.nn.Module = module
         self.dtype: torch.dtype = next(module.parameters()).dtype
@@ -142,10 +189,8 @@ class DDPOverlapBucketed(nn.Module):
         self.buckets: List[Bucket] = []
         self.para_2_bucket: Dict[torch.nn.Parameter, Bucket] = {}
 
-        # A local full parameters list in the same order as the buckets for correct flattening/unflattening of the write in bucket grad vectors.
+        # A local full parameters list in the same order as the buckets.
         self._reversed_paras: List[torch.nn.Parameter] = []
-        # A local full flattened gradient vector for the whole model, used for bucket grad replacing and synchronization.
-        self.temp_flatten_grad: torch.Tensor = None
 
         # Initialize the bucket 
         self._build_bucket()
@@ -164,33 +209,30 @@ class DDPOverlapBucketed(nn.Module):
 
         # Build the bucket in reverse order
         for para in reversed(list(self.module.parameters())):
-            # Initialize gradient vector only for `requires_grad == True` parameters
+            # Only bucket the parameters that require gradients
             if para.requires_grad:
-                # Initialize gradient tensor
-                para.grad = torch.zeros_like(para, dtype=self.dtype, device=self.device)
-
                 # Record the order of bucketed parameters
                 self._reversed_paras.append(para)
-            
+
                 # Register the para to the bucket
                 temp_bucket.add_tensor(para)
-                self.para_2_bucket[para] = temp_bucket # Record the para to bucket mapping for quick lookup
+                self.para_2_bucket[para] = temp_bucket  # Record the para to bucket mapping for quick lookup
 
-                # Yield & New a bucket if is full
+                # Finalize & replace the bucket if it is full
                 if temp_bucket.is_full():
-                    # Add the filled bucket to the buckets list
-                    self.buckets.append(temp_bucket) 
+                    # Allocate grad_buffer and assign param grad views for this bucket
+                    temp_bucket.finalize(self.dtype, self.device)
+                    self.buckets.append(temp_bucket)
                     # Init a new bucket
-                    offsets += temp_bucket.numel # Update the offsets for the new bucket
+                    offsets += temp_bucket.numel  # Update the offsets for the new bucket
                     temp_bucket = Bucket(self.bkt_sz_mb, offsets=offsets)
-            
-        # Add the last bucket if it has any parameter
+
+        # Finalize and add the last bucket if it has any parameter
         if len(temp_bucket._full_para_set) > 0:
+            temp_bucket.finalize(self.dtype, self.device)
             self.buckets.append(temp_bucket)
 
-        # Initialize a global flattened grads vector
-        self.temp_flatten_grad = torch.zeros(offsets, dtype=self.dtype, device=self.device)
-        log_dist(f"Rank {dist.get_rank()}, Finished building buckets. Total bucketss: {len(self.buckets)}")
+        log_dist(f"Rank {dist.get_rank()}, Finished building buckets. Total buckets: {len(self.buckets)}")
         
     def forward(self, *inputs, **kwargs):
         """
@@ -200,25 +242,24 @@ class DDPOverlapBucketed(nn.Module):
         """
         return self.module(*inputs, **kwargs)
 
-    def _sync_grad(self, input_bucket:Bucket):
+    def _sync_grad_bucket(self, input_bucket: Bucket):
         """
-        Sync the gradient of parameters rigstered in the `input_bucket` by:
-            1. Yield the partial flattened gradient vector of the bucket from `input_bucket.yield_flatten_bkt_grad`
-            2. Replace the full flattened gradient vector with the yielded bucket gradient vector
-            3. Inplace all-reduce the correpsonding slice of the flattened gradient vector across ranks.
+        Sync the gradients of parameters registered in `input_bucket`.
 
-        NOTE: The `input_bucket` must be ready, ie. all paras have received their gradients.
+        Because each parameter's .grad is a view into input_bucket.grad_buffer,
+        the buffer already holds the locally accumulated gradients with no extra
+        copy.  We divide in-place (pre-scale before the sum all-reduce to get
+        the mean) and issue an async all-reduce directly on grad_buffer.
+
+        NOTE: The `input_bucket` must be ready, i.e. all paras have received their gradients.
         """
-        # Assert the bucket is ready for synchronization
-        assert input_bucket.grad_ready(), "The gradient is not ready"        
-        
-        # Get slicing idx in the full tensor for this bucket
-        s,e = input_bucket.offsets, input_bucket.offsets + input_bucket.numel
-        # Yield a flattened gradient vector from the bucket, normalize it, and replace the part in the full model's flat grad 
-        self.temp_flatten_grad[s:e] = input_bucket.yield_flatten_bkt_grad() / dist.get_world_size()
-        log_dist(f"Syncing bucket bound [{s}, {e}]")
-        # Inplace all-reduce the full model's flat grad 
-        work = dist.all_reduce(self.temp_flatten_grad[s:e], op=dist.ReduceOp.SUM, async_op=True)
+        assert input_bucket.grad_ready(), "The gradient is not ready"
+
+        log_dist(f"Syncing bucket at offset {input_bucket.offsets}, numel {input_bucket.numel}")
+        # Average bucket's gradient tensor in-place before All-Reduce
+        input_bucket.grad_buffer.div_(dist.get_world_size())
+        # All-reduce the bucket's buffer, which is already linked to the parameter gradients through views(.) method.
+        work = dist.all_reduce(input_bucket.grad_buffer, op=dist.ReduceOp.SUM, async_op=True)
         self.comm_work_handles.append(work)
 
     def _hook_register_grad_ready(self, para):
@@ -234,7 +275,7 @@ class DDPOverlapBucketed(nn.Module):
         bucket.record_updates(para)
         if bucket.grad_ready():
             log_dist("Bucket full & ready. Triggering sync.")
-            self._sync_grad(bucket)
+            self._sync_grad_bucket(bucket)
 
     def _add_grad_ready_hooks(self):
         """
@@ -255,30 +296,11 @@ class DDPOverlapBucketed(nn.Module):
         Procedures:
             1. Wait for all communication work to finish (if any).
         """
-        # If no communication work was queued this step, do not overwrite
-        # parameter gradients with the (possibly stale/zero) flattened buffer.
-        # if len(self.comm_work_handles) == 0:
-        #     log_dist("No queued all-reduce work handles in this step; skipping unflatten.")
-        #     for bucket in self.buckets:
-        #         bucket._updated_grad_para_set.clear()
-        #     return
-
         # Wait for all comm to finish
         for handle in self.comm_work_handles:
             handle.wait()
         self.comm_work_handles.clear()
 
-        # Unflatten the all-reduced flattened gradient vector back to the original parameters.
-        self.unflatten_grads()
-
         # Clear the bucket records
         for bucket in self.buckets:
             bucket._updated_grad_para_set.clear()
-
-    def unflatten_grads(self):
-        """
-        Replace the grad attribute of each parameter with the unflattened gradient 
-        from the full local flattened gradient vector after synchronization.
-        """
-        original_grad = [p.grad for p in self._reversed_paras]
-        vector_to_parameters(self.temp_flatten_grad, original_grad)
