@@ -169,9 +169,8 @@ def parallel_train(
             bat_X = bat_X.to(device, non_blocking=True)
             bat_y_ref = bat_y_ref.to(device, non_blocking=True)
 
-            # Compute local gradients
-            # EDIT: Avoid per-step gradient memset; grads are recreated by autograd.
-            optimizer.zero_grad(set_to_none=True)
+            # preserve the param.grad -> grad_buffer view links established by DDPOverlapBucketed. 
+            optimizer.zero_grad(set_to_none=False)
             bat_y_pred = model(bat_X)
             loss = loss_fn(bat_y_pred, bat_y_ref)
             # Backward is synchronous, it return after all para.grad are updated; thus, async ops are queued.
