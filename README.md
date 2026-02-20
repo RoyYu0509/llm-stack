@@ -63,3 +63,30 @@ To submit, run `./test_and_make_submission.sh` . This script will install your
 code's dependencies, run tests, and create a gzipped tarball with the output. We
 should be able to unzip your submitted tarball and run
 `./test_and_make_submission.sh` to verify your test results.
+
+
+
+
+CS336_Basics — core LM + training primitives
+- BPE/tokenizer training pipeline
+- Built a Transformer LM module (TransformerLM) that wires together embedding, multiple transformer blocks, final norm, and LM head projection.
+- Implemented a pre-norm Transformer block
+- Implemented attention stack pieces
+- Implemented core training
+
+CS336_Systems — FlashAttention2 + bucketed/overlapped DDP
+- FlashAttention-2 (PyTorch) implementation exposed via an autograd Function adapter path.
+- FlashAttention-2 (Triton) implementation (kernel code + autotune configs present).
+- Vectorized Torch attention implementation
+- Naïve DDP (all-reduce per-parameter gradients).
+- Naïve Bucketed DDP (Bucketed all parameters and send them at once).
+- Bucketed + overlapped DDP container class: you have a DDPOverlapBucketed implementation that buckets params, registers per-param grad hooks, and async all-reduces buckets.
+
+------------
+
+Above is a list of the things I have implemented in the current project repo. Now I want to conclude this project by generate a clear visualization to show what i have done so far, ie (show the optimizations). Some of them I have already drafted, but I need you to reimplement in a clearer way and produce good visualization.
+
+1). A training script on the raw plaint LLM, with training, validation loss plot recorded on WanDB. With a final loss.
+2). A compare plot to compare the forward pass time of different Attention Kernels.
+3). A compare plot to compare the forward pass time of the LLM model with different Attention Kernel.
+4). A compare plot on the training time when using plain LLM, then plus different Attention Kernels, then plus different DDP training warpper (with bucketing and overlapping comm and comp).
