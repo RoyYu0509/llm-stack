@@ -16,19 +16,10 @@ except Exception:
     SDPBackend = None
     sdpa_kernel = None
 
-# Check for hardward compatibility for TF32 tensor-core on Triton
-try:
-    # This is a bit hacky, but Triton doesn't provide a direct API to check for TF32 support
-    # We can attempt to compile a kernel with allow_tf32=True and see if it succeeds
-    @triton.jit
-    def tf32_check_kernel():
-        x = tl.zeros((1,), dtype=tl.float16)
-        y = tl.zeros((1,), dtype=tl.float16)
-        z = tl.dot(x, y, out_dtype=tl.float32)
-    tf32_check_kernel[(1,)]()  # Try to launch the kernel
-except Exception:
-    raise RuntimeError("This GPU does not support TF32, which is required for our Flash Attention implementation. Please use an Ampere or newer GPU.")
-
+# Check for TF32 support (Ampere+ GPUs) for stable softmax computation in FlashAttention
+major, minor = torch.cuda.get_device_capability()
+if major < 8:
+    raise RuntimeError("TF32 is only supported on NVIDIA Ampere (compute capability 8.0+) or newer GPUs.")
 
 autotune_configs = [
 
