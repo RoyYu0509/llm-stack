@@ -178,3 +178,7 @@ wandb-debug.log
 *.json
 *.npz
 
+# Explicitly track our default pipeline configuration even though
+# we normally ignore JSON files for submissions.
+!cs336_systems/experiments/default_pipeline_config.json
+
