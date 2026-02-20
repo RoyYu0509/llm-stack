@@ -16,6 +16,19 @@ except Exception:
     SDPBackend = None
     sdpa_kernel = None
 
+# Check for hardward compatibility for TF32 tensor-core on Triton
+try:
+    # This is a bit hacky, but Triton doesn't provide a direct API to check for TF32 support
+    # We can attempt to compile a kernel with allow_tf32=True and see if it succeeds
+    @triton.jit
+    def tf32_check_kernel():
+        x = tl.zeros((1,), dtype=tl.float16)
+        y = tl.zeros((1,), dtype=tl.float16)
+        z = tl.dot(x, y, out_dtype=tl.float32)
+    tf32_check_kernel[(1,)]()  # Try to launch the kernel
+except Exception:
+    raise RuntimeError("This GPU does not support TF32, which is required for our Flash Attention implementation. Please use an Ampere or newer GPU.")
+
 
 autotune_configs = [
 
@@ -23,53 +36,52 @@ autotune_configs = [
     # 16x16 (latency focused)
     # =========================
     triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=1, num_warps=1),
-    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=1),
-    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=1, num_warps=2),
-    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=2),
-    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=4),
+    # triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=1),
+    # triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=1, num_warps=2),
+    # triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=2),
+    # triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=4),
 
-    # =========================
-    # 32x32 (balanced)
-    # =========================
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=1, num_warps=2),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=2),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=3, num_warps=4),
+    # # =========================
+    # # 32x32 (balanced)
+    # # =========================
+    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=1, num_warps=2),
+    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=2),
+    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=4),
+    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=3, num_warps=4),
 
-    # =========================
-    # 64x32 (good for head_dim=256)
-    # =========================
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=1, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=8),
+    # # =========================
+    # # 64x32 (good for head_dim=256)
+    # # =========================
+    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=1, num_warps=4),
+    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=4),
+    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=8),
 
-    # =========================
-    # 32x64
-    # =========================
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
+    # # =========================
+    # # 32x64
+    # # =========================
+    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=4),
+    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=4),
+    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
 
-    # =========================
-    # 64x64 (throughput focused)
-    # =========================
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=3, num_warps=8),
+    # # =========================
+    # # 64x64 (throughput focused)
+    # # =========================
+    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=4),
+    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=4),
+    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
+    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=3, num_warps=8),
 
-    # =========================
-    # 128x64 (aggressive, may fail)
-    # =========================
-    triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=8),
-    triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
+    # # =========================
+    # # 128x64 (aggressive, may fail)
+    # # =========================
+    # triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=8),
+    # triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
 
-    # =========================
-    # 128x128 (very aggressive)
-    # =========================
-    triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 128}, num_stages=1, num_warps=8),
+    # # =========================
+    # # 128x128 (very aggressive)
+    # # =========================
+    # triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 128}, num_stages=1, num_warps=8),
 ]
-
 
 # We need to include N_Q, N_K in the key since they affect control flow (masking)
 # RULE: If changing the parameter affects the tile sizes, include them in the key as well
@@ -250,6 +262,16 @@ def flash_fwd_triton(
     B, Q_N, D = Q.shape
     K_N = K.shape[-2]
 
+    # Validate that the feature dimension used as a block_shape element
+    # is a power of two. Triton's tl.make_block_ptr requires each
+    # block_shape element to be a power of two; otherwise compilation
+    # can fail with obscure errors. Raise a clear error so users can
+    # either pick a power-of-two D or pad their tensors.
+    if D & (D - 1) != 0:
+        raise ValueError(
+            f"Shape = (Head_dim, Q_N, K_N) = ({D}, {Q_N}, {K_N}) all dims should be pow of 2 and >= 16,\n"
+        )
+
     
     # Create output buffers
     OUT = torch.zeros((B, Q_N, D), dtype=Q.dtype, device=DEVICE)
@@ -267,7 +289,8 @@ def flash_fwd_triton(
     }
     output_dtype = dtype_map[Q.dtype]
 
-    flash_fwd_kernel[grid](
+    try:
+        flash_fwd_kernel[grid](
         Q, K, V,
         OUT, L,
         Q.stride(0), Q.stride(1), Q.stride(2),
@@ -277,7 +300,13 @@ def flash_fwd_triton(
         L.stride(0), L.stride(1),
         Q_N, K_N,
         scale, D=D, OUTPUT_DTYPE=output_dtype, IS_CAUSAL=is_causal
-    )
+        )
+    except Exception as e:
+        # Surface a clearer, contextualized error to help debugging Triton
+        raise RuntimeError(
+            f"Triton flash_fwd_kernel failed. Shapes: Q={tuple(Q.shape)}, K={tuple(K.shape)}, V={tuple(V.shape)}, "
+            f"dtypes: Q={Q.dtype}, K={K.dtype}, V={V.dtype}. Original error: {e}"
+        ) from e
 
     return OUT, L
 

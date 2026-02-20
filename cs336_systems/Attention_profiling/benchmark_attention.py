@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from cs336_basics.transfromer.scaled_dot_prod_attention import (
     flash_attention_my_triton,
-    flash_attention_torch,
+    vectorized_attention_torch,
     scaled_dot_product_attention,
 )
 
@@ -24,7 +24,7 @@ DTYPE_DICT = {
 KERNELS: dict[str, Callable] = {
     "Naive Attention": scaled_dot_product_attention,
     "MyTriton": flash_attention_my_triton,
-    "VecTorch": flash_attention_torch,
+    "VecTorch": vectorized_attention_torch,
 }
 
 
@@ -127,10 +127,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark attention kernel runtimes")
     parser.add_argument("--DEVICE", type=str, default="cuda")
     parser.add_argument("--DTYPE", type=str, default="float16", choices=list(DTYPE_DICT.keys()))
-    parser.add_argument("--BATCH_SIZE", type=int, default=8)
+    parser.add_argument("--BATCH_SIZE", type=int, default=1)
     parser.add_argument("--NUM_HEADS", type=int, default=16)
     parser.add_argument("--SEQ_LEN", type=int, default=256)
-    parser.add_argument("--HEAD_DIM", type=int, default=64)
+    parser.add_argument("--HEAD_DIM", type=int, default=256)
     parser.add_argument("--WARMUP_ITER", type=int, default=20)
     parser.add_argument("--PROFILE_ITER", type=int, default=100)
     parser.add_argument("--IS_CAUSAL", action="store_true")
