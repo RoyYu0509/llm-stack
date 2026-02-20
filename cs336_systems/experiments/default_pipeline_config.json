@@ -4,14 +4,14 @@
   "tinystories_train_url": "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-train.txt",
   "tinystories_valid_url": "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-valid.txt",
 
-  "raw_train_text": "cs336-basics/data/ts_train.txt",
-  "raw_valid_text": "cs336-basics/data/ts_valid.txt",
+  "raw_train_text": "data/ts_train.txt",
+  "raw_valid_text": "data/ts_valid.txt",
 
-  "vocab_path": "cs336-basics/cs336_basics/bpe_tokenizer/vocab.pkl",
-  "merges_path": "cs336-basics/cs336_basics/bpe_tokenizer/merges.pkl",
+  "vocab_path": "data/bpe_tokenizer/vocab.pkl",
+  "merges_path": "data/bpe_tokenizer/merges.pkl",
 
-  "tokenized_train": "cs336-basics/data/tokenized/ts_train.npy",
-  "tokenized_valid": "cs336-basics/data/tokenized/ts_valid.npy",
+  "tokenized_train": "data/tokenized/ts_train.npy",
+  "tokenized_valid": "data/tokenized/ts_valid.npy",
 
   "model": {
     "vocab_size": 10000,

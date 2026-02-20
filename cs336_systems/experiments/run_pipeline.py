@@ -298,8 +298,8 @@ def stage_train_ddp(cfg: dict, wrapper: str) -> None:
             nprocs=world_size, join=True,
         )
     elif wrapper == "flashddp":
-        from cs336_systems.Parallelization.FlashDDP.FlashDDP import DDPOverlapBucketed
-        from cs336_systems.Parallelization.FlashDDP.FlashDDP_runner import parallel_train
+        from cs336_systems.Parallelization.DDP.FlashDDP.FlashDDP import DDPOverlapBucketed
+        from cs336_systems.Parallelization.DDP.FlashDDP.FlashDDP_runner import parallel_train
 
         bucket_mb = cfg.get("bucket_size_mb", 1)
         print(f"[stage:train] DDP=flashddp  kernel={kernel_name}  GPUs={world_size}  bucket={bucket_mb}MB")

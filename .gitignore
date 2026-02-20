@@ -171,7 +171,7 @@ cython_debug/
 # WandB artifacts / logs
 wandb/
 wandb-debug.log
-*.npy
+# *.npy
 *.pt
 *.pkl
 

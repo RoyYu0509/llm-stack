@@ -85,6 +85,9 @@ CS336_Systems — FlashAttention2 + bucketed/overlapped DDP
 ------------
 
 ## Experiments & Benchmarks
+```bash
+source .venv/bin/activate
+```
 
 ### Pipeline Script
 
@@ -129,9 +132,9 @@ Benchmarks short training runs across **3 attention kernels × 3 DDP wrappers** 
 
 ```bash
 uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
-    --train_path cs336-basics/data/tokenized/ts_train.npy \
-    --val_path   cs336-basics/data/tokenized/ts_valid.npy \
-    --epochs 3 --tr_batch_size 8
+    --train_path data/tokenized/ts_train.npy \
+    --val_path   data/tokenized/ts_valid.npy \
+    --epochs 10 --tr_batch_size 32
 ```
 
 Outputs: `artifacts/lm_matrix_results.csv`, `artifacts/lm_matrix_time.png`, `artifacts/lm_matrix_memory.png`, `artifacts/lm_matrix_throughput.png`, `artifacts/lm_matrix_report.md`
