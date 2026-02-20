@@ -83,11 +83,11 @@ class PreNormTransformer(nn.Module):
         Parameter:
             x: (batch, seq, d_model)
         """
-        x = x + self.MHA.forward(
-            self.RMSN1.forward(x),
+        x = x + self.MHA(
+            self.RMSN1(x),
             token_positions=token_positions,
         )
-        x = x + self.FNN.forward(self.RMSN2.forward(x))
+        x = x + self.FNN(self.RMSN2(x))
         return x
 
         

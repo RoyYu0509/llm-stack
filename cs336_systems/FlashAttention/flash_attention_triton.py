@@ -21,57 +21,60 @@ major, minor = torch.cuda.get_device_capability()
 if major < 8:
     raise RuntimeError("TF32 is only supported on NVIDIA Ampere (compute capability 8.0+) or newer GPUs.")
 
+import os
+os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
+
 autotune_configs = [
 
     # =========================
     # 16x16 (latency focused)
     # =========================
     triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=1, num_warps=1),
-    # triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=1),
-    # triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=1, num_warps=2),
-    # triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=2),
-    # triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=1),
+    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=1, num_warps=2),
+    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=2),
+    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 16}, num_stages=2, num_warps=4),
 
-    # # =========================
-    # # 32x32 (balanced)
-    # # =========================
-    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=1, num_warps=2),
-    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=2),
-    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=4),
-    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=3, num_warps=4),
+    # =========================
+    # 32x32 (balanced)
+    # =========================
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=1, num_warps=2),
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=2),
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32}, num_stages=3, num_warps=4),
 
-    # # =========================
-    # # 64x32 (good for head_dim=256)
-    # # =========================
-    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=1, num_warps=4),
-    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=4),
-    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=8),
+    # =========================
+    # 64x32 (good for head_dim=256)
+    # =========================
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=1, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32}, num_stages=2, num_warps=8),
 
-    # # =========================
-    # # 32x64
-    # # =========================
-    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=4),
-    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=4),
-    # triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
+    # =========================
+    # 32x64
+    # =========================
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
 
-    # # =========================
-    # # 64x64 (throughput focused)
-    # # =========================
-    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=4),
-    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=4),
-    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
-    # triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=3, num_warps=8),
+    # =========================
+    # 64x64 (throughput focused)
+    # =========================
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
+    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=3, num_warps=8),
 
-    # # =========================
-    # # 128x64 (aggressive, may fail)
-    # # =========================
-    # triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=8),
-    # triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
+    # =========================
+    # 128x64 (aggressive, may fail)
+    # =========================
+    triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 64}, num_stages=1, num_warps=8),
+    triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
 
-    # # =========================
-    # # 128x128 (very aggressive)
-    # # =========================
-    # triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 128}, num_stages=1, num_warps=8),
+    # =========================
+    # 128x128 (very aggressive)
+    # =========================
+    triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 128}, num_stages=1, num_warps=8),
 ]
 
 # We need to include N_Q, N_K in the key since they affect control flow (masking)

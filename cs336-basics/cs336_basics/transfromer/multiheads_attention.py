@@ -106,8 +106,8 @@ class MultiHeadsAttention(torch.nn.Module):
         # Add position encoding
         positions = token_positions if token_positions is not None else self.token_positions
         if self.pos_encod is not None and positions is not None:
-            Q = self.pos_encod.forward(Q, positions)
-            K = self.pos_encod.forward(K, positions)
+            Q = self.pos_encod(Q, positions)
+            K = self.pos_encod(K, positions)
 
         # Reshape to 3D ((Batch, Heads), Seq, D)
         Q_packed = rearrange(Q, "... h seq d_k -> ... seq (h d_k)")

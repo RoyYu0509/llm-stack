@@ -21,6 +21,19 @@ DTYPE_DICT = {
 }
 
 
+def _mark_cudagraph_step_begin() -> None:
+    """
+    Tell torch.compile's CUDAGraph runtime that a new step is starting.
+
+    This avoids "tensor output of CUDAGraphs overwritten by a subsequent run"
+    failures with custom autograd/Triton kernels when model invocations are
+    replayed across train/eval boundaries.
+    """
+    compiler_mod = getattr(torch, "compiler", None)
+    if compiler_mod is not None and hasattr(compiler_mod, "cudagraph_mark_step_begin"):
+        compiler_mod.cudagraph_mark_step_begin()
+
+
 def build_trainer_parser() -> argparse.ArgumentParser:
     """Build the CLI parser used by the original trainer script."""
     parser = argparse.ArgumentParser(description="Training LLM")
@@ -67,9 +80,8 @@ def build_trainer_parser() -> argparse.ArgumentParser:
     parser.add_argument("--RESUME_FROM", type=str, default=None, help="Checkpoint file to resume from.")
     parser.add_argument("--LOG_INTERVAL", type=int, default=50, help="Steps between training log prints.")
     parser.add_argument("--EVAL_INTERVAL", type=int, default=500, help="Steps between validation runs.")
-    parser.add_argument("--SAVE_INTERVAL", type=int, default=1_000, help="Steps between checkpoint saves.")
-    parser.add_argument("--CHECKPOINTING_EVERY", type=int, default=None,
-                        help="If set, overrides SAVE_INTERVAL as the checkpoint cadence. "
+    parser.add_argument("--CHECKPOINTING_INTERVAL", type=int, default=1_000,
+                        help="Steps between checkpoint saves. "
                              "<=0 disables periodic checkpoints (only final checkpoint is saved).")
     parser.add_argument("--SEED", type=int, default=0, help="Random seed.")
     return parser
@@ -88,6 +100,20 @@ def _load_np_tokens(path: str, device: str) -> torch.Tensor:
     if device.startswith("cuda"):
         tensor = tensor.pin_memory()
     return tensor
+
+@torch.no_grad()
+def evaluate_perplexity(model, valid_data, val_bat_num, val_bat_size, context_len, device, offsets):
+    was_training = model.training
+    model.eval()
+    total = 0.0
+    for _ in range(val_bat_num):
+        x, y = data_loading(valid_data, val_bat_size, context_len, device, offsets)
+        _mark_cudagraph_step_begin()
+        total += float(perplexity(model(x), y))
+    if was_training:
+        model.train()
+    return total / val_bat_num
+
 
 
 def local_train(
@@ -121,8 +147,7 @@ def local_train(
     RESUME_FROM: str | None = None,
     LOG_INTERVAL: int = 50,
     EVAL_INTERVAL: int = 500,
-    SAVE_INTERVAL: int = 1_000,
-    CHECKPOINTING_EVERY: int | None = None,
+    CHECKPOINTING_INTERVAL: int = 1_000,
     SEED: int = 0,
     WANDB_PROJECT: str | None = None,
     WANDB_RUN_NAME: str | None = None,
@@ -165,8 +190,7 @@ def local_train(
         RESUME_FROM: reserved for checkpoint resume (currently informational only).
         LOG_INTERVAL: steps between train-loss prints.
         EVAL_INTERVAL: steps between validation runs.
-        SAVE_INTERVAL: steps between checkpoint saves.
-        CHECKPOINTING_EVERY: if set, overrides SAVE_INTERVAL as the cadence.
+        CHECKPOINTING_INTERVAL: steps between checkpoint saves.
             <=0 disables periodic checkpoints (only final checkpoint is saved).
         SEED: random seed.
         WANDB_PROJECT: Weights & Biases project name (required).
@@ -185,9 +209,7 @@ def local_train(
     torch.manual_seed(SEED)
     betas = (BETA1, BETA2)
     torch_dtype = DTYPE_DICT[DTYPE]
-
-    # Resolve checkpoint cadence: CHECKPOINTING_EVERY overrides SAVE_INTERVAL.
-    _effective_save_interval = CHECKPOINTING_EVERY if CHECKPOINTING_EVERY is not None else SAVE_INTERVAL
+    
     # Use the legacy naming scheme so old experiments/checkpoint folders look familiar.
     run_name = WANDB_RUN_NAME or f"lr-{LR}-beta1-{BETA1}-beta2-{BETA2}"
     run_dir = os.path.join(CHECKPOINT_DIR, run_name)
@@ -196,7 +218,7 @@ def local_train(
     # Start a W&B run first so metrics/artifacts are attached to one run context.
     run = wandb.init(project=WANDB_PROJECT, name=run_name)
 
-    # 1) Build model from hyperparameters.
+    # 1) Build a model for evaluation, and a separate reference for training (in case of compilation).
     lm_model = TransformerLM(
         VOCAB_SIZE,
         CONTEXT_LENGTH,
@@ -209,22 +231,16 @@ def local_train(
         dtype=torch_dtype,
         attention_fn=ATTENTION_FN,
     )
+    train_model = lm_model
 
     # 2) Optionally compile for backend-specific speedups.
     if COMPILE:
-        if DEVICE.startswith("cuda") and torch.cuda.is_available():
-            backend = "inductor"
-        elif DEVICE.startswith("mps") and torch.backends.mps.is_available():
-            backend = "aot_eager"
-        else:
-            backend = "eager"
+        backend = "inductor"
+        compile_kwargs = {"backend": backend}
+        train_model = torch.compile(lm_model, **compile_kwargs)
+        print(f"Compiled model with backend='{backend}' for kernel fusion.")
 
-        try:
-            lm_model = torch.compile(lm_model, mode="reduce-overhead", backend=backend)
-            print(f"Compiled model with backend='{backend}' for kernel fusion.")
-        except Exception as compile_err:
-            print(f"torch.compile failed ({compile_err}); continuing without compilation.")
-
+    # Register the original uncompiled model parameters with optimizer
     opt = AdamW(
         lm_model.parameters(),
         lr=LR,
@@ -247,17 +263,18 @@ def local_train(
     checkpoint_num = 1
     last_train_loss = None
     last_val_perplexity = None
-
+    
     for iteration in tqdm(range(EPOCHES), desc="Training", unit="iter"):
         # 5) Sample a random train batch.
         inputs, targets = data_loading(train_data, TR_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
         opt.zero_grad()
 
         # 6) Forward + loss + backward + clipping + optimizer step.
-        prediction = lm_model.forward(inputs)
+        _mark_cudagraph_step_begin()
+        prediction = train_model(inputs)
         tr_loss = cross_entropy(prediction, targets)
         tr_loss.backward()
-        clipped_grad_l2 = grad_clip(lm_model.parameters(), GRAD_CLIP)
+        grad_norm = grad_clip(lm_model.parameters(), GRAD_CLIP)
         opt.step()
 
         # 7) Update LR using warmup then cosine decay (same policy as CLI trainer).
@@ -270,63 +287,38 @@ def local_train(
         )
         for group in opt.param_groups:
             group["lr"] = lr
+        
+        # 8) Check if 
+        _eval = (iteration % EVAL_INTERVAL == 0)
+        _checkpting = ((CHECKPOINTING_INTERVAL > 0) and iteration != 0 and iteration % CHECKPOINTING_INTERVAL == 0) or (iteration == EPOCHES - 1)
 
         if iteration % LOG_INTERVAL == 0:
-            print(f"Iter:{iteration} | Training Loss: {tr_loss}")
+            tqdm.write(f"Iter {iteration} | Train CE {float(tr_loss):.4f} | lr {lr:.2e}")
 
-        # 8) Run periodic validation and log to W&B. (sample VAL_BAT_NUM batches)
-        if iteration % EVAL_INTERVAL == 0:
-            with torch.no_grad():
-                val_loss = 0.0
-                for _ in range(VAL_BAT_NUM):
-                    inputs, targets = data_loading(valid_data, VAL_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
-                    prediction = lm_model.forward(inputs)
-                    val_loss += perplexity(prediction, targets)
-
-                val_perplexity = val_loss / VAL_BAT_NUM
-                last_train_loss = tr_loss
-                last_val_perplexity = val_perplexity
-
-                print(
-                    f"Iter:{iteration} | Training Loss: {tr_loss} | "
-                    f"Validation Loss: {val_perplexity}"
+        val_ppl = None
+        if _eval:
+            val_ppl = evaluate_perplexity(lm_model, valid_data, VAL_BAT_NUM, VAL_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
+            last_train_loss = float(tr_loss)
+            last_val_perplexity = float(val_ppl)
+            wandb.log({
+                "train_loss (CE)": float(tr_loss),
+                "validation_loss (Perplexity)": float(val_ppl),
+                "gradient": float(grad_norm),
+                "iter": iteration,
+                "lr": lr,
+            })
+        
+        if _checkpting:
+            if val_ppl is None:
+                val_ppl = evaluate_perplexity(
+                    lm_model, valid_data, VAL_BAT_NUM, VAL_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets
                 )
-                wandb.log(
-                    {
-                        # Keep metric keys unchanged so existing dashboards still match.
-                        "train_loss (CE)": tr_loss,
-                        "validation_loss (Perplexity)": val_perplexity,
-                        "gradient": clipped_grad_l2,
-                        "iter": iteration,
-                    }
-                )
-
-        # 9) Save checkpoints periodically (and always at the final iteration).
-        _is_periodic = _effective_save_interval > 0 and iteration != 0 and iteration % _effective_save_interval == 0
-        _is_final = iteration == EPOCHES - 1
-        if _is_periodic or _is_final:
-            with torch.no_grad():
-                val_loss = 0.0
-                for _ in range(VAL_BAT_NUM):
-                    inputs, targets = data_loading(valid_data, VAL_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
-                    prediction = lm_model.forward(inputs)
-                    val_loss += perplexity(prediction, targets)
-                val_perplexity = val_loss / VAL_BAT_NUM
-
-                print("Saving Checkpoint....")
-                print(
-                    f"Checkpoint {checkpoint_num}: Training Loss: {tr_loss} | "
-                    f"Validation Loss: {val_perplexity}"
-                )
-
-                local_checkpoint_path = os.path.join(
-                    run_dir,
-                    f"iter_{iteration}-loss_{val_perplexity}.pt",
-                )
-                save_checkpoint_and_log(lm_model, opt, iteration, local_checkpoint_path, run)
-                checkpoint_num += 1
-                last_train_loss = tr_loss
-                last_val_perplexity = val_perplexity
+                last_train_loss = float(tr_loss)
+                last_val_perplexity = float(val_ppl)
+            local_checkpoint_path = os.path.join(run_dir, f"iter_{iteration}-ppl_{val_ppl:.4f}.pt")
+            save_checkpoint_and_log(lm_model, opt, iteration, local_checkpoint_path, run)
+            checkpoint_num += 1
+            
 
     return {
         "model": lm_model,

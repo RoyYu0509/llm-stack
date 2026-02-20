@@ -11,13 +11,6 @@ import torch.cuda.nvtx as nvtx
 import torch
 import torch.cuda.nvtx as nvtx
 
-def _sync_device(device):
-    if device.startswith("cuda") and torch.cuda.is_available():
-        torch.cuda.synchronize()
-    elif device.startswith("mps") and torch.backends.mps.is_available():
-        torch.mps.synchronize()
-
-
 class TransformerLM(nn.Module):
     """
     Transformer language model for masked next-token prediction. It works like: 
@@ -198,7 +191,7 @@ class TransformerLM(nn.Module):
         """
         # MatMul: (batch_size, sequence_length) . (vocab_size, embedding_dim) 
         with nvtx.range("LM Input Embedding"):
-            x = self.in_embedding.forward(x)
+            x = self.in_embedding(x)
         
         
         batch_size, seq_len = x.shape[0], x.shape[1]
@@ -207,15 +200,13 @@ class TransformerLM(nn.Module):
 
         with nvtx.range("LM Tranformer Blocks Forward Pass"):
             for tf_block in self.tf_layers:
-                _sync_device(self.device)
-                x = tf_block.forward(x, token_positions=positions)
-                _sync_device(self.device)
+                x = tf_block(x, token_positions=positions)
 
         with nvtx.range("LM Final Norm"):
-            x = self.norm.forward(x)
+            x = self.norm(x)
 
         with nvtx.range("LM Output Head"):
-            x = self.head.forward(x)
+            x = self.head(x)
         
         # softmax(x, -1)  # Softmax muted, Return raw logit
         return x

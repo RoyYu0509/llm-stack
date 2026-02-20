@@ -56,12 +56,12 @@ uv run python ./cs336-basics/cs336_basics/trainer.py \
     --DEVICE "cuda" \
     --COMPILE \
     --EVAL_INTERVAL 100 \
-    --SAVE_INTERVAL 200
+    --CHECKPOINTING_INTERVAL 200
 ```
 
-# 3b. Train with custom checkpoint cadence (checkpointing_every)
+# 3b. Train with custom checkpoint cadence (checkpointing_interval)
 ```
-# Save every 500 steps instead of SAVE_INTERVAL=200:
+# Save every 500 steps:
 uv run python ./cs336-basics/cs336_basics/trainer.py \
     --TRAIN_PATH  ./cs336-basics/data/tokenized/ts_train.npy \
     --VAL_PATH  ./cs336-basics/data/tokenized/ts_valid.npy \
@@ -71,10 +71,10 @@ uv run python ./cs336-basics/cs336_basics/trainer.py \
     --WANDB_PROJECT "Train_Transformer_LM" \
     --DEVICE "cuda" \
     --COMPILE \
-    --CHECKPOINTING_EVERY 500
+    --CHECKPOINTING_INTERVAL 500
 
 # Disable periodic checkpoints, only save at the final iteration:
-# --CHECKPOINTING_EVERY 0
+# --CHECKPOINTING_INTERVAL 0
 ```
 
 

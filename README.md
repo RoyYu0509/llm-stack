@@ -111,18 +111,17 @@ uv run python cs336_systems/experiments/run_pipeline.py \
 
 **Supported DDP wrappers:** `none` (single-GPU), `naive` (all-reduce per-param), `flashddp` (bucketed + overlapped)
 
-### Checkpoint Cadence: `checkpointing_every`
+### Checkpoint Cadence: `checkpointing_interval`
 
 A new first-class hyperparameter that controls checkpoint save frequency:
 
 | Flag                | Behavior |
 |---------------------|----------|
-| Not set             | Falls back to `SAVE_INTERVAL` |
-| `> 0`              | Saves every N steps (overrides `SAVE_INTERVAL`) |
+| `> 0`              | Saves every N steps |
 | `<= 0`             | Disables periodic checkpoints; only saves at the final iteration |
 | Final iteration     | Always saved regardless of cadence |
 
-Available in both `trainer.py` (CLI) and `lm_trainer.py` (Python API), and in the pipeline config under `checkpointing.checkpointing_every`.
+Available in both `trainer.py` (CLI) and `lm_trainer.py` (Python API), and in the pipeline config under `checkpointing.checkpointing_interval`.
 
 ### LM Training Benchmark Matrix
 
@@ -158,6 +157,5 @@ Outputs: `artifacts/attention_sweep_results.csv`, `artifacts/attention_sweep_for
 2. **Attention kernel forward time** — Grouped bar chart comparing all kernels across sequence-length tiers
 3. **LM training throughput** — Tokens/sec across kernel × DDP combinations
 4. **DDP speedup** — Wall time per epoch: single-GPU → naive DDP → FlashDDP (bucketed + overlapped)
-
 
 
