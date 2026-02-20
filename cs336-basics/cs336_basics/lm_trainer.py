@@ -34,7 +34,7 @@ def build_trainer_parser() -> argparse.ArgumentParser:
     parser.add_argument("--VOCAB_PATH", type=str, required=True, help="Pickled tokenizer vocab data file.")
     parser.add_argument("--MERGES_PATH", type=str, required=True, help="Pickled tokenizer merges data file.")
     parser.add_argument("--TR_BAT_SIZE", type=int, default=32, help="Sequences per optimization step.")
-    parser.add_argument("--VAL_SAMP_SIZE", type=int, default=100, help="Sequences per optimization step.")
+    parser.add_argument("--VAL_BAT_NUM", type=int, default=100, help="Number of validation batches sampled per evaluation.")
     parser.add_argument("--VAL_BAT_SIZE", type=int, default=32, help="Sequences per optimization step.")
     parser.add_argument("--CONTEXT_LENGTH", type=int, default=256, help="Tokens per training sequence.")
     parser.add_argument("--EPOCHES", type=int, default=500, help="Number of training epoches.")
@@ -96,7 +96,7 @@ def local_train(
     VOCAB_PATH: str,
     MERGES_PATH: str,
     TR_BAT_SIZE: int = 32,
-    VAL_SAMP_SIZE: int = 100,
+    VAL_BAT_NUM: int = 100,
     VAL_BAT_SIZE: int = 32,
     CONTEXT_LENGTH: int = 256,
     EPOCHES: int = 500,
@@ -274,16 +274,16 @@ def local_train(
         if iteration % LOG_INTERVAL == 0:
             print(f"Iter:{iteration} | Training Loss: {tr_loss}")
 
-        # 8) Run periodic validation and log to W&B.
+        # 8) Run periodic validation and log to W&B. (sample VAL_BAT_NUM batches)
         if iteration % EVAL_INTERVAL == 0:
             with torch.no_grad():
                 val_loss = 0.0
-                for _ in range(VAL_SAMP_SIZE):
+                for _ in range(VAL_BAT_NUM):
                     inputs, targets = data_loading(valid_data, VAL_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
                     prediction = lm_model.forward(inputs)
                     val_loss += perplexity(prediction, targets)
 
-                val_perplexity = val_loss / VAL_SAMP_SIZE
+                val_perplexity = val_loss / VAL_BAT_NUM
                 last_train_loss = tr_loss
                 last_val_perplexity = val_perplexity
 
@@ -307,11 +307,11 @@ def local_train(
         if _is_periodic or _is_final:
             with torch.no_grad():
                 val_loss = 0.0
-                for _ in range(VAL_SAMP_SIZE):
+                for _ in range(VAL_BAT_NUM):
                     inputs, targets = data_loading(valid_data, VAL_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
                     prediction = lm_model.forward(inputs)
                     val_loss += perplexity(prediction, targets)
-                val_perplexity = val_loss / VAL_SAMP_SIZE
+                val_perplexity = val_loss / VAL_BAT_NUM
 
                 print("Saving Checkpoint....")
                 print(

@@ -12,6 +12,12 @@ Usage:
   # Single-GPU, default attention:
   uv run python cs336_systems/experiments/run_pipeline.py --config cs336_systems/experiments/default_pipeline_config.json
 
+  # Override kernel + DDP from CLI:
+  uv run python cs336_systems/experiments/run_pipeline.py \
+      --config cs336_systems/experiments/default_pipeline_config.json \
+      --attention_kernel flash_attention_triton \
+      --ddp_wrapper flashddp
+
   # Skip dataset stages if data already exists:
   uv run python cs336_systems/experiments/run_pipeline.py \
       --config cs336_systems/experiments/default_pipeline_config.json \
@@ -197,7 +203,7 @@ def stage_train_single_gpu(cfg: dict) -> None:
         VOCAB_PATH=str(_resolve(cfg["vocab_path"])),
         MERGES_PATH=str(_resolve(cfg["merges_path"])),
         TR_BAT_SIZE=t.get("tr_batch_size", 32),
-        VAL_SAMP_SIZE=t.get("val_sample_size", 50),
+        VAL_BAT_NUM=t.get("val_bat_num", 50),
         VAL_BAT_SIZE=t.get("val_batch_size", 32),
         CONTEXT_LENGTH=m.get("context_length", 256),
         EPOCHES=t.get("epochs", 5000),
@@ -318,6 +324,10 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--config", type=str, required=True, help="Path to JSON pipeline config.")
+    p.add_argument("--attention_kernel", type=str, choices=VALID_KERNELS,
+                   help="Override config attention_kernel.")
+    p.add_argument("--ddp_wrapper", type=str, choices=VALID_DDP,
+                   help="Override config ddp_wrapper.")
     p.add_argument("--skip_data", action="store_true",
                    help="Skip download/tokenizer/dataset stages (assume data exists).")
     return p
@@ -329,6 +339,12 @@ def main() -> None:
 
     with open(args.config) as f:
         cfg = json.load(f)
+
+    # CLI overrides
+    if getattr(args, "attention_kernel", None):
+        cfg["attention_kernel"] = args.attention_kernel
+    if getattr(args, "ddp_wrapper", None):
+        cfg["ddp_wrapper"] = args.ddp_wrapper
 
     kernel = cfg.get("attention_kernel", "scaled_dot_prod_attention")
     ddp = cfg.get("ddp_wrapper", "none")
