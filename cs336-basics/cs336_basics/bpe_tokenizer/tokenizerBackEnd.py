@@ -1,7 +1,7 @@
 from cs336_basics.bpe_tokenizer.tokenizeInterface import AbstractPreTokenizer
 from cs336_basics.bpe_tokenizer.helpers.bpe_helper import *
 import regex as re
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from collections import Counter
 from tqdm import tqdm
 import time
@@ -110,7 +110,8 @@ class BBPE(AbstractPreTokenizer):
             ]
         
         # Aggregate the counts from all processes
-        for future in chunk_pretks:
+        for future in tqdm(as_completed(chunk_pretks), total=len(chunk_pretks),
+                           desc="Pretokenizing chunks", unit="chunk"):
             counter = future.result()
             if not counter:
                 print(f"Warning: empty counter from chunk")
@@ -166,7 +167,8 @@ class BBPE(AbstractPreTokenizer):
         self.freq_dict = {}
 
         # Go through the pairs
-        for byte_id_seq, count in self.pretok_dict.items():
+        for byte_id_seq, count in tqdm(self.pretok_dict.items(),
+                                        desc="Building freq dict", unit="pretoken"):
             # Skip the byte_id_seq have at least two elements to form a pair
             if len(byte_id_seq) < 2:
                 # print(f"The sting {bytes([byte_id_seq[0]])} byte sequence has length {len(byte_id_seq)}, less than 2")

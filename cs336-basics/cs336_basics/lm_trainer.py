@@ -13,6 +13,7 @@ from cs336_basics.train.checkpointing import save_checkpoint_and_log
 from cs336_basics.train.data_loader import data_loading
 from cs336_basics.train.loss import cross_entropy, perplexity
 from cs336_basics.train.optimizer import AdamW, grad_clip, lr_scheduler
+from cs336_basics.transfromer.scaled_dot_prod_attention import scaled_dot_product_attention
 
 DTYPE_DICT = {
     "float32": torch.float32,
@@ -89,7 +90,7 @@ def _load_np_tokens(path: str, device: str) -> torch.Tensor:
     return tensor
 
 
-def train_lm(
+def local_train(
     TRAIN_PATH: str,
     VAL_PATH: str,
     VOCAB_PATH: str,
@@ -125,6 +126,7 @@ def train_lm(
     SEED: int = 0,
     WANDB_PROJECT: str | None = None,
     WANDB_RUN_NAME: str | None = None,
+    ATTENTION_FN=scaled_dot_product_attention,
 ):
     """
     Train a Transformer language model end-to-end.
@@ -205,6 +207,7 @@ def train_lm(
         ROPE_THETA,
         device=DEVICE,
         dtype=torch_dtype,
+        attention_fn=ATTENTION_FN,
     )
 
     # 2) Optionally compile for backend-specific speedups.
@@ -233,7 +236,7 @@ def train_lm(
     Tokenizer.from_files(VOCAB_PATH, MERGES_PATH, special_tokens=["<|endoftext|>"])
 
     if RESUME_FROM:
-        print("RESUME_FROM is provided, but resume loading is not implemented in this trainer.")
+        raise NotImplementedError("Checkpoint resume is not yet implemented in the API trainer.")
 
     # 4) Load token arrays once, then sample random subsequences each iteration.
     train_data = _load_np_tokens(TRAIN_PATH, DEVICE)
@@ -337,7 +340,7 @@ def train_lm(
 
 def train_lm_from_args(argv: Sequence[str] | None = None):
     """
-    Parse CLI-style args and forward them into `train_lm(...)`.
+    Parse CLI-style args and forward them into `local_train(...)`.
 
     Useful when you still want list-of-args behavior, but no standalone CLI file.
     """
@@ -346,4 +349,4 @@ def train_lm_from_args(argv: Sequence[str] | None = None):
     for name in sorted(vars(args)):
         print(f"{name}: {getattr(args, name)}")
     print("===========================")
-    return train_lm(**vars(args))
+    return local_train(**vars(args))

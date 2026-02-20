@@ -12,12 +12,6 @@ Usage:
   # Single-GPU, default attention:
   uv run python cs336_systems/experiments/run_pipeline.py --config cs336_systems/experiments/default_pipeline_config.json
 
-  # Override kernel + DDP from CLI:
-  uv run python cs336_systems/experiments/run_pipeline.py \
-      --config cs336_systems/experiments/default_pipeline_config.json \
-      --attention_kernel flash_attention_triton \
-      --ddp_wrapper flashddp
-
   # Skip dataset stages if data already exists:
   uv run python cs336_systems/experiments/run_pipeline.py \
       --config cs336_systems/experiments/default_pipeline_config.json \
@@ -185,8 +179,8 @@ def _get_kernel_fn(name: str):
 
 
 def stage_train_single_gpu(cfg: dict) -> None:
-    """Single-GPU training via lm_trainer.train_lm()."""
-    from cs336_basics.lm_trainer import train_lm
+    """Single-GPU training via lm_trainer.local_train()."""
+    from cs336_basics.lm_trainer import local_train
 
     m = cfg["model"]
     t = cfg["training"]
@@ -194,58 +188,47 @@ def stage_train_single_gpu(cfg: dict) -> None:
     w = cfg["wandb"]
 
     kernel_name = cfg.get("attention_kernel", "scaled_dot_prod_attention")
+    kernel_fn = _get_kernel_fn(kernel_name)
     print(f"[stage:train] attention_kernel={kernel_name}  ddp_wrapper=none")
 
-    # NOTE: train_lm uses the default attention inside TransformerLM.
-    # To inject a custom kernel, we monkey-patch the model constructor's default.
-    # We pass attention_fn indirectly by overriding the module-level default.
-    # For the single-GPU path, we modify lm.py's default at import time.
-    from cs336_basics import lm as lm_module
-
-    original_default = lm_module.scaled_dot_product_attention
-    kernel_fn = _get_kernel_fn(kernel_name)
-    lm_module.scaled_dot_product_attention = kernel_fn
-
-    try:
-        result = train_lm(
-            TRAIN_PATH=str(_resolve(cfg["tokenized_train"])),
-            VAL_PATH=str(_resolve(cfg["tokenized_valid"])),
-            VOCAB_PATH=str(_resolve(cfg["vocab_path"])),
-            MERGES_PATH=str(_resolve(cfg["merges_path"])),
-            TR_BAT_SIZE=t.get("tr_batch_size", 32),
-            VAL_SAMP_SIZE=t.get("val_sample_size", 50),
-            VAL_BAT_SIZE=t.get("val_batch_size", 32),
-            CONTEXT_LENGTH=m.get("context_length", 256),
-            EPOCHES=t.get("epochs", 5000),
-            VOCAB_SIZE=m.get("vocab_size", 10_000),
-            NUM_LAYERS=m.get("num_layers", 4),
-            D_MODEL=m.get("d_model", 512),
-            NUM_HEADS=m.get("num_heads", 16),
-            D_FF=m.get("d_ff", 1344),
-            ROPE_THETA=m.get("rope_theta", 10_000.0),
-            LR=t.get("lr", 6e-4),
-            WEIGHT_DECAY=t.get("weight_decay", 0.01),
-            BETA1=t.get("beta1", 0.9),
-            BETA2=t.get("beta2", 0.999),
-            ADAM_EPS=t.get("adam_eps", 1e-8),
-            GRAD_CLIP=t.get("grad_clip", 1.0),
-            MAX_ITERS=t.get("max_iters", 5000),
-            WARMUP_ITERS=t.get("warmup_iters", 1500),
-            DEVICE="cuda",
-            DTYPE=t.get("dtype", "float32"),
-            COMPILE=t.get("compile", True),
-            CHECKPOINT_DIR=c.get("checkpoint_dir", "checkpoints"),
-            LOG_INTERVAL=c.get("log_interval", 50),
-            EVAL_INTERVAL=c.get("eval_interval", 100),
-            SAVE_INTERVAL=c.get("save_interval", 200),
-            CHECKPOINTING_EVERY=c.get("checkpointing_every"),
-            SEED=t.get("seed", 0),
-            WANDB_PROJECT=w.get("project", "Train_Transformer_LM"),
-            WANDB_RUN_NAME=w.get("run_name"),
-        )
-        print(f"[stage:train] done — last_val_perplexity={result.get('last_val_perplexity')}")
-    finally:
-        lm_module.scaled_dot_product_attention = original_default
+    result = local_train(
+        TRAIN_PATH=str(_resolve(cfg["tokenized_train"])),
+        VAL_PATH=str(_resolve(cfg["tokenized_valid"])),
+        VOCAB_PATH=str(_resolve(cfg["vocab_path"])),
+        MERGES_PATH=str(_resolve(cfg["merges_path"])),
+        TR_BAT_SIZE=t.get("tr_batch_size", 32),
+        VAL_SAMP_SIZE=t.get("val_sample_size", 50),
+        VAL_BAT_SIZE=t.get("val_batch_size", 32),
+        CONTEXT_LENGTH=m.get("context_length", 256),
+        EPOCHES=t.get("epochs", 5000),
+        VOCAB_SIZE=m.get("vocab_size", 10_000),
+        NUM_LAYERS=m.get("num_layers", 4),
+        D_MODEL=m.get("d_model", 512),
+        NUM_HEADS=m.get("num_heads", 16),
+        D_FF=m.get("d_ff", 1344),
+        ROPE_THETA=m.get("rope_theta", 10_000.0),
+        LR=t.get("lr", 6e-4),
+        WEIGHT_DECAY=t.get("weight_decay", 0.01),
+        BETA1=t.get("beta1", 0.9),
+        BETA2=t.get("beta2", 0.999),
+        ADAM_EPS=t.get("adam_eps", 1e-8),
+        GRAD_CLIP=t.get("grad_clip", 1.0),
+        MAX_ITERS=t.get("max_iters", 5000),
+        WARMUP_ITERS=t.get("warmup_iters", 1500),
+        DEVICE="cuda",
+        DTYPE=t.get("dtype", "float32"),
+        COMPILE=t.get("compile", True),
+        CHECKPOINT_DIR=c.get("checkpoint_dir", "checkpoints"),
+        LOG_INTERVAL=c.get("log_interval", 50),
+        EVAL_INTERVAL=c.get("eval_interval", 100),
+        SAVE_INTERVAL=c.get("save_interval", 200),
+        CHECKPOINTING_EVERY=c.get("checkpointing_every"),
+        SEED=t.get("seed", 0),
+        WANDB_PROJECT=w.get("project", "Train_Transformer_LM"),
+        WANDB_RUN_NAME=w.get("run_name"),
+        ATTENTION_FN=kernel_fn,
+    )
+    print(f"[stage:train] done — last_val_perplexity={result.get('last_val_perplexity')}")
 
 
 def stage_train_ddp(cfg: dict, wrapper: str) -> None:
@@ -335,44 +318,9 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--config", type=str, required=True, help="Path to JSON pipeline config.")
-    p.add_argument("--attention_kernel", type=str, default=None, choices=VALID_KERNELS,
-                   help="Override config attention_kernel.")
-    p.add_argument("--ddp_wrapper", type=str, default=None, choices=VALID_DDP,
-                   help="Override config ddp_wrapper.")
-    p.add_argument("--checkpointing_every", type=int, default=None,
-                   help="Override config checkpointing_every.")
     p.add_argument("--skip_data", action="store_true",
                    help="Skip download/tokenizer/dataset stages (assume data exists).")
-    p.add_argument("--override", nargs="*", default=[],
-                   help="Dot-separated key=value overrides, e.g. training.epochs=1000")
     return p
-
-
-def _apply_overrides(cfg: dict, overrides: list[str]) -> None:
-    """Apply dot-separated key=value overrides to the config dict."""
-    for ov in overrides:
-        if "=" not in ov:
-            raise ValueError(f"Override must be key=value, got: {ov}")
-        key, value = ov.split("=", 1)
-        parts = key.split(".")
-        d = cfg
-        for part in parts[:-1]:
-            d = d.setdefault(part, {})
-        # Auto-cast to int/float/bool/null
-        for caster in (int, float):
-            try:
-                value = caster(value)
-                break
-            except (ValueError, TypeError):
-                continue
-        else:
-            if value.lower() == "true":
-                value = True
-            elif value.lower() == "false":
-                value = False
-            elif value.lower() == "null" or value.lower() == "none":
-                value = None
-        d[parts[-1]] = value
 
 
 def main() -> None:
@@ -381,15 +329,6 @@ def main() -> None:
 
     with open(args.config) as f:
         cfg = json.load(f)
-
-    # CLI overrides take precedence over config file
-    if args.attention_kernel:
-        cfg["attention_kernel"] = args.attention_kernel
-    if args.ddp_wrapper:
-        cfg["ddp_wrapper"] = args.ddp_wrapper
-    if args.checkpointing_every is not None:
-        cfg.setdefault("checkpointing", {})["checkpointing_every"] = args.checkpointing_every
-    _apply_overrides(cfg, args.override)
 
     kernel = cfg.get("attention_kernel", "scaled_dot_prod_attention")
     ddp = cfg.get("ddp_wrapper", "none")
