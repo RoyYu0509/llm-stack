@@ -52,6 +52,9 @@ parser.add_argument("--RESUME_FROM", type=str, default=None, help="Checkpoint fi
 parser.add_argument("--LOG_INTERVAL", type=int, default=50, help="Steps between training log prints.")
 parser.add_argument("--EVAL_INTERVAL", type=int, default=500, help="Steps between validation runs.")
 parser.add_argument("--SAVE_INTERVAL", type=int, default=1_000, help="Steps between checkpoint saves.")
+parser.add_argument("--CHECKPOINTING_EVERY", type=int, default=None,
+                    help="If set, overrides SAVE_INTERVAL as the checkpoint cadence. "
+                         "<=0 disables periodic checkpoints (only final checkpoint is saved).")
 parser.add_argument("--SEED", type=int, default=0, help="Random seed.")
 
 
@@ -93,6 +96,9 @@ RESUME_FROM = args.RESUME_FROM
 LOG_INTERVAL = args.LOG_INTERVAL
 EVAL_INTERVAL = args.EVAL_INTERVAL
 SAVE_INTERVAL = args.SAVE_INTERVAL
+CHECKPOINTING_EVERY = args.CHECKPOINTING_EVERY
+# Resolution: CHECKPOINTING_EVERY overrides SAVE_INTERVAL when set.
+_effective_save_interval = CHECKPOINTING_EVERY if CHECKPOINTING_EVERY is not None else SAVE_INTERVAL
 SEED = args.SEED
 
 WANDB_PROJECT = args.WANDB_PROJECT
@@ -206,26 +212,22 @@ for iter in tqdm(range(EPOCHES), desc="Training", unit="iter"):
             })
 
     if (iter != 0 and iter % SAVE_INTERVAL == 0) or iter == EPOCHES-1:
-        with torch.no_grad():
-        # Compute the Validation Loss (Perplexity)
-            val_loss = 0
-            for sample in range(VAL_SAMP_SIZE):
-                # Sample validation batch
-                inputs, targets = data_loading(valid_data, batch_size=VAL_BAT_SIZE, context_length=CONTEXT_LENGTH, device=DEVICE, offsets=offsets)
-                prediction = lm_model.forward(inputs)
-                val_loss += perplexity(prediction, targets)
-            print(f"Saving Checkpoint....")
-            print(f"Checkpoing {checkpoint_num}: Training Loss: {tr_loss} | Validation Loss: {val_loss/VAL_SAMP_SIZE}")
+        # Use _effective_save_interval for periodic saves; always save final.
+        _is_periodic = _effective_save_interval > 0 and iter != 0 and iter % _effective_save_interval == 0
+        _is_final = iter == EPOCHES - 1
+        if _is_periodic or _is_final:
+            with torch.no_grad():
+                # Compute the Validation Loss (Perplexity)
+                val_loss = 0
+                for sample in range(VAL_SAMP_SIZE):
+                    # Sample validation batch
+                    inputs, targets = data_loading(valid_data, batch_size=VAL_BAT_SIZE, context_length=CONTEXT_LENGTH, device=DEVICE, offsets=offsets)
+                    prediction = lm_model.forward(inputs)
+                    val_loss += perplexity(prediction, targets)
+                print(f"Saving Checkpoint....")
+                print(f"Checkpoint {checkpoint_num}: Training Loss: {tr_loss} | Validation Loss: {val_loss/VAL_SAMP_SIZE}")
 
-            # Log into WanDB
-            local_checkpoint_path = os.path.join(CHECKPOINT_DIR, f"lr-{LR}-beta1-{BETAS[0]}-beta2-{BETAS[1]}/iter_{iter}-loss_{val_loss/VAL_SAMP_SIZE}.pt")
-            save_checkpoint_and_log(lm_model, opt, iter, local_checkpoint_path, run)
-            checkpoint_num+=1
-
-
-            
-
-    
-    
-
-        
+                # Log into WanDB
+                local_checkpoint_path = os.path.join(CHECKPOINT_DIR, f"lr-{LR}-beta1-{BETAS[0]}-beta2-{BETAS[1]}/iter_{iter}-loss_{val_loss/VAL_SAMP_SIZE}.pt")
+                save_checkpoint_and_log(lm_model, opt, iter, local_checkpoint_path, run)
+                checkpoint_num += 1

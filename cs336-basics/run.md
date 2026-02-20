@@ -56,7 +56,25 @@ uv run python ./cs336-basics/cs336_basics/trainer.py \
     --DEVICE "cuda" \
     --COMPILE \
     --EVAL_INTERVAL 100 \
-    --SAVE_INTERVAL 200 
+    --SAVE_INTERVAL 200
+```
+
+# 3b. Train with custom checkpoint cadence (checkpointing_every)
+```
+# Save every 500 steps instead of SAVE_INTERVAL=200:
+uv run python ./cs336-basics/cs336_basics/trainer.py \
+    --TRAIN_PATH  ./cs336-basics/data/tokenized/ts_train.npy \
+    --VAL_PATH  ./cs336-basics/data/tokenized/ts_valid.npy \
+    --VOCAB_PATH ./cs336-basics/cs336_basics/bpe_tokenizer/vocab_id2b_dict.pkl \
+    --MERGES_PATH ./cs336-basics/cs336_basics/bpe_tokenizer/merges_seq.pkl \
+    --EPOCHES 5000 \
+    --WANDB_PROJECT "Train_Transformer_LM" \
+    --DEVICE "cuda" \
+    --COMPILE \
+    --CHECKPOINTING_EVERY 500
+
+# Disable periodic checkpoints, only save at the final iteration:
+# --CHECKPOINTING_EVERY 0
 ```
 
 
@@ -79,4 +97,42 @@ uv run python ./cs336-basics/cs336_basics/text_gen.py \
     --num-heads 16 \
     --d-ff 1344 \
     --rope-theta 10000
+```
+
+# 5. End-to-End Pipeline (download + tokenize + train, all in one)
+```
+# Default single-GPU (uses default_pipeline_config.json)
+uv run python cs336_systems/experiments/run_pipeline.py \
+    --config cs336_systems/experiments/default_pipeline_config.json
+
+# With FlashAttention Triton + FlashDDP
+uv run python cs336_systems/experiments/run_pipeline.py \
+    --config cs336_systems/experiments/default_pipeline_config.json \
+    --attention_kernel flash_attention_triton \
+    --ddp_wrapper flashddp
+
+# Skip data stages, override epochs
+uv run python cs336_systems/experiments/run_pipeline.py \
+    --config cs336_systems/experiments/default_pipeline_config.json \
+    --skip_data \
+    --override training.epochs=1000
+```
+
+# 6. Benchmark: LM Training Matrix (kernel × DDP)
+```
+uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
+    --train_path cs336-basics/data/tokenized/ts_train.npy \
+    --val_path   cs336-basics/data/tokenized/ts_valid.npy \
+    --epochs 3 --tr_batch_size 8
+# → artifacts/lm_matrix_results.csv, lm_matrix_time.png, lm_matrix_memory.png, lm_matrix_report.md
+```
+
+# 7. Benchmark: Attention Forward Sweep (Small → XXL)
+```
+uv run python cs336_systems/experiments/benchmark_attention_sweep.py
+# → artifacts/attention_sweep_results.csv, attention_sweep_forward.png, attention_sweep_heatmap.png
+
+# Custom rectangular tiers:
+uv run python cs336_systems/experiments/benchmark_attention_sweep.py \
+    --custom_tiers 128:64 256:128 512:256 1024:512
 ```

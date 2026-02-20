@@ -67,6 +67,9 @@ def build_trainer_parser() -> argparse.ArgumentParser:
     parser.add_argument("--LOG_INTERVAL", type=int, default=50, help="Steps between training log prints.")
     parser.add_argument("--EVAL_INTERVAL", type=int, default=500, help="Steps between validation runs.")
     parser.add_argument("--SAVE_INTERVAL", type=int, default=1_000, help="Steps between checkpoint saves.")
+    parser.add_argument("--CHECKPOINTING_EVERY", type=int, default=None,
+                        help="If set, overrides SAVE_INTERVAL as the checkpoint cadence. "
+                             "<=0 disables periodic checkpoints (only final checkpoint is saved).")
     parser.add_argument("--SEED", type=int, default=0, help="Random seed.")
     return parser
 
@@ -118,6 +121,7 @@ def train_lm(
     LOG_INTERVAL: int = 50,
     EVAL_INTERVAL: int = 500,
     SAVE_INTERVAL: int = 1_000,
+    CHECKPOINTING_EVERY: int | None = None,
     SEED: int = 0,
     WANDB_PROJECT: str | None = None,
     WANDB_RUN_NAME: str | None = None,
@@ -160,6 +164,8 @@ def train_lm(
         LOG_INTERVAL: steps between train-loss prints.
         EVAL_INTERVAL: steps between validation runs.
         SAVE_INTERVAL: steps between checkpoint saves.
+        CHECKPOINTING_EVERY: if set, overrides SAVE_INTERVAL as the cadence.
+            <=0 disables periodic checkpoints (only final checkpoint is saved).
         SEED: random seed.
         WANDB_PROJECT: Weights & Biases project name (required).
         WANDB_RUN_NAME: optional run name override.
@@ -177,6 +183,9 @@ def train_lm(
     torch.manual_seed(SEED)
     betas = (BETA1, BETA2)
     torch_dtype = DTYPE_DICT[DTYPE]
+
+    # Resolve checkpoint cadence: CHECKPOINTING_EVERY overrides SAVE_INTERVAL.
+    _effective_save_interval = CHECKPOINTING_EVERY if CHECKPOINTING_EVERY is not None else SAVE_INTERVAL
     # Use the legacy naming scheme so old experiments/checkpoint folders look familiar.
     run_name = WANDB_RUN_NAME or f"lr-{LR}-beta1-{BETA1}-beta2-{BETA2}"
     run_dir = os.path.join(CHECKPOINT_DIR, run_name)
@@ -290,7 +299,9 @@ def train_lm(
                 )
 
         # 9) Save checkpoints periodically (and always at the final iteration).
-        if (iteration != 0 and iteration % SAVE_INTERVAL == 0) or iteration == EPOCHES - 1:
+        _is_periodic = _effective_save_interval > 0 and iteration != 0 and iteration % _effective_save_interval == 0
+        _is_final = iteration == EPOCHES - 1
+        if _is_periodic or _is_final:
             with torch.no_grad():
                 val_loss = 0.0
                 for _ in range(VAL_SAMP_SIZE):

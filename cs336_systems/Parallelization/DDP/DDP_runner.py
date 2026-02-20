@@ -14,6 +14,7 @@ from cs336_basics.transfromer.scaled_dot_prod_attention import (
     flash_attention_my_triton,
     scaled_dot_product_attention,
     vectorized_attention_torch,
+    ATTENTION_KERNEL_REGISTRY,
 )
 
 DTYPE_DICT = {

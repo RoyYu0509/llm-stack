@@ -84,9 +84,80 @@ CS336_Systems — FlashAttention2 + bucketed/overlapped DDP
 
 ------------
 
-Above is a list of the things I have implemented in the current project repo. Now I want to conclude this project by generate a clear visualization to show what i have done so far, ie (show the optimizations). Some of them I have already drafted, but I need you to reimplement in a clearer way and produce good visualization.
+## Experiments & Benchmarks
 
-1). A training script on the raw plaint LLM, with training, validation loss plot recorded on WanDB. With a final loss.
-2). A compare plot to compare the forward pass time of different Attention Kernels.
-3). A compare plot to compare the forward pass time of the LLM model with different Attention Kernel.
-4). A compare plot on the training time when using plain LLM, then plus different Attention Kernels, then plus different DDP training warpper (with bucketing and overlapping comm and comp).
+### Pipeline Script
+
+A single end-to-end pipeline script that downloads TinyStories, trains a BPE tokenizer, tokenizes the dataset, and trains a Transformer LM — all configurable from one JSON config file:
+
+```bash
+# Default single-GPU run
+uv run python cs336_systems/experiments/run_pipeline.py \
+    --config cs336_systems/experiments/default_pipeline_config.json
+
+# Override attention kernel & DDP wrapper from CLI
+uv run python cs336_systems/experiments/run_pipeline.py \
+    --config cs336_systems/experiments/default_pipeline_config.json \
+    --attention_kernel flash_attention_triton \
+    --ddp_wrapper flashddp
+
+# Skip data prep if .npy files already exist
+uv run python cs336_systems/experiments/run_pipeline.py \
+    --config cs336_systems/experiments/default_pipeline_config.json \
+    --skip_data
+```
+
+**Supported attention kernels:** `scaled_dot_prod_attention`, `vectorized_torch`, `flash_attention_triton`
+
+**Supported DDP wrappers:** `none` (single-GPU), `naive` (all-reduce per-param), `flashddp` (bucketed + overlapped)
+
+### Checkpoint Cadence: `checkpointing_every`
+
+A new first-class hyperparameter that controls checkpoint save frequency:
+
+| Flag                | Behavior |
+|---------------------|----------|
+| Not set             | Falls back to `SAVE_INTERVAL` |
+| `> 0`              | Saves every N steps (overrides `SAVE_INTERVAL`) |
+| `<= 0`             | Disables periodic checkpoints; only saves at the final iteration |
+| Final iteration     | Always saved regardless of cadence |
+
+Available in both `trainer.py` (CLI) and `lm_trainer.py` (Python API), and in the pipeline config under `checkpointing.checkpointing_every`.
+
+### LM Training Benchmark Matrix
+
+Benchmarks short training runs across **3 attention kernels × 3 DDP wrappers** (single-GPU + naive + FlashDDP):
+
+```bash
+uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
+    --train_path cs336-basics/data/tokenized/ts_train.npy \
+    --val_path   cs336-basics/data/tokenized/ts_valid.npy \
+    --epochs 3 --tr_batch_size 8
+```
+
+Outputs: `artifacts/lm_matrix_results.csv`, `artifacts/lm_matrix_time.png`, `artifacts/lm_matrix_memory.png`, `artifacts/lm_matrix_throughput.png`, `artifacts/lm_matrix_report.md`
+
+### Attention Forward Benchmark Sweep
+
+Pure forward-only attention benchmarks from Small (128) to XXL (2048), including rectangular (Q_N ≠ K_N) patterns:
+
+```bash
+uv run python cs336_systems/experiments/benchmark_attention_sweep.py
+
+# Custom tiers (must be powers of 2)
+uv run python cs336_systems/experiments/benchmark_attention_sweep.py \
+    --custom_tiers 128:64 256:128 512:256 1024:512 \
+    --warmup 10 --iters 50
+```
+
+Outputs: `artifacts/attention_sweep_results.csv`, `artifacts/attention_sweep_forward.png`, `artifacts/attention_sweep_heatmap.png`, `artifacts/attention_sweep_scaling.png`, `artifacts/attention_sweep_report.md`
+
+### Visualization Summary
+
+1. **Training loss curve** — WandB dashboard showing training/validation loss over iterations
+2. **Attention kernel forward time** — Grouped bar chart comparing all kernels across sequence-length tiers
+3. **LM training throughput** — Tokens/sec across kernel × DDP combinations
+4. **DDP speedup** — Wall time per epoch: single-GPU → naive DDP → FlashDDP (bucketed + overlapped)
+
+
+

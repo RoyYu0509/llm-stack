@@ -74,3 +74,13 @@ from cs336_systems.FlashAttention.flash_attention_triton import flash_attn_trito
 @nvtx.range("FlashAttention-MyTriton")
 def flash_attention_my_triton(query, key, value, is_causal: bool = False):
     return flash_attn_triton_fn(query, key, value, is_causal)  # Positional args only
+
+
+####################################################################
+# Kernel Registry — string → callable look-up for pipeline scripts
+####################################################################
+ATTENTION_KERNEL_REGISTRY: dict[str, callable] = {
+    "scaled_dot_prod_attention": scaled_dot_product_attention,
+    "vectorized_torch": vectorized_attention_torch,
+    "flash_attention_triton": flash_attention_my_triton,
+}
