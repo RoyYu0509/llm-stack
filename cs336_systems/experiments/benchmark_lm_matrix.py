@@ -29,6 +29,7 @@ import gc
 import os
 import time
 from pathlib import Path
+from tqdm import tqdm
 
 import torch
 import torch.distributed as dist
@@ -87,7 +88,7 @@ def _bench_single_gpu(
     t0 = time.perf_counter()
 
     total_tokens = 0
-    for epoch in range(epochs):
+    for epoch in tqdm(range(epochs), desc="Epochs"):
         for i, (x, y) in enumerate(loader):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             optimizer.zero_grad()
@@ -173,7 +174,7 @@ def _ddp_worker(
     t0 = time.perf_counter()
 
     total_tokens = 0
-    for epoch in range(epochs):
+    for epoch in tqdm(range(epochs), desc=f"Rank {rank} Epochs", disable=(rank != 0)):
         sampler.set_epoch(epoch)
         for i, (x, y) in enumerate(loader):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)

@@ -1,0 +1,10 @@
+kernel,ddp,gpus,epochs,wall_sec,sec_per_epoch,tokens_per_sec,peak_gpu_mb
+scaled_dot_prod_attention,none,1,10,124.332,12.433,33603.0,2784.5
+scaled_dot_prod_attention,naive,2,10,172.599,17.26,24206.0,2784.5
+scaled_dot_prod_attention,flashddp,2,10,170.48,17.048,24506.7,2820.7
+vectorized_torch,none,1,10,127.248,12.725,32832.8,2751.7
+vectorized_torch,naive,2,10,173.81,17.381,24037.3,2751.8
+vectorized_torch,flashddp,2,10,171.196,17.12,24404.3,2788.1
+flash_attention_triton,none,1,10,170.721,17.072,24472.2,2719.8
+flash_attention_triton,naive,2,10,175.128,17.513,23856.4,2720.0
+flash_attention_triton,flashddp,2,10,171.692,17.169,24333.8,2756.2
