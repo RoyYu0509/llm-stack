@@ -134,7 +134,33 @@ Benchmarks short training runs across **3 attention kernels × 3 DDP wrappers** 
 uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
     --train_path data/tokenized/ts_train.npy \
     --val_path   data/tokenized/ts_valid.npy \
-    --epochs 10 --tr_batch_size 32
+    --epochs 5 --tr_batch_size 8 --context_length 256 \
+    --context_length 256 \
+    --vocab_size 10_000 \
+    --d_model 1024 --d_ff 4096 --num_layers 24 --num_heads 16 \
+    --kernels flash_attention_triton vectorized_torch scaled_dot_prod_attention \
+    --wrappers torch_ddp flashddp naive none \
+    --epochs 5
+```
+
+Quick single-kernel test (e.g., just FlashAttention Triton):
+
+```bash
+uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
+    --train_path data/tokenized/ts_train.npy \
+    --val_path   data/tokenized/ts_valid.npy \
+    --epochs 3 --tr_batch_size 16 --context_length 256 \
+    --kernels flash_attention_triton
+```
+
+Only DDP wrappers (skip single-GPU baseline):
+
+```bash
+uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
+    --train_path data/tokenized/ts_train.npy \
+    --val_path   data/tokenized/ts_valid.npy \
+    --epochs 3 --tr_batch_size 16 --context_length 256 \
+    --wrappers naive flashddp torch_ddp
 ```
 
 Outputs: `artifacts/lm_matrix_results.csv`, `artifacts/lm_matrix_time.png`, `artifacts/lm_matrix_memory.png`, `artifacts/lm_matrix_throughput.png`, `artifacts/lm_matrix_report.md`

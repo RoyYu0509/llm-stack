@@ -1,10 +1,229 @@
-kernel,ddp,gpus,epochs,wall_sec,sec_per_epoch,tokens_per_sec,peak_gpu_mb
-scaled_dot_prod_attention,none,1,10,124.332,12.433,33603.0,2784.5
-scaled_dot_prod_attention,naive,2,10,172.599,17.26,24206.0,2784.5
-scaled_dot_prod_attention,flashddp,2,10,170.48,17.048,24506.7,2820.7
-vectorized_torch,none,1,10,127.248,12.725,32832.8,2751.7
-vectorized_torch,naive,2,10,173.81,17.381,24037.3,2751.8
-vectorized_torch,flashddp,2,10,171.196,17.12,24404.3,2788.1
-flash_attention_triton,none,1,10,170.721,17.072,24472.2,2719.8
-flash_attention_triton,naive,2,10,175.128,17.513,23856.4,2720.0
-flash_attention_triton,flashddp,2,10,171.692,17.169,24333.8,2756.2
+kernel,ddp,gpus,epochs,steps_per_epoch,global_batch_size,local_batch_size,samples_per_epoch,wall_sec,sec_per_epoch,tokens_per_sec,peak_gpu_mb,error
+scaled_dot_prod_attention,none,1,5,51,16,16,816,66.833,13.367,15628.2,1453.4,
+scaled_dot_prod_attention,naive,0,5,51,16,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/assignment2-systems-main/cs336_systems/experiments/benchmark_lm_matrix.py"", line 194, in _ddp_worker
+    dist.init_process_group(""nccl"", rank=rank, world_size=world_size)
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 81, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 95, in wrapper
+    func_return = func(*args, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py"", line 1714, in init_process_group
+    store, rank, world_size = next(rendezvous_iterator)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 274, in _env_rendezvous_handler
+    store = _create_c10d_store(
+            ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 194, in _create_c10d_store
+    return TCPStore(
+           ^^^^^^^^^
+RuntimeError: The server socket has failed to listen on any local network address. port: 29500, useIpv6: 0, code: -98, name: EADDRINUSE, message: address already in use
+"
+scaled_dot_prod_attention,flashddp,0,5,51,16,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/assignment2-systems-main/cs336_systems/experiments/benchmark_lm_matrix.py"", line 194, in _ddp_worker
+    dist.init_process_group(""nccl"", rank=rank, world_size=world_size)
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 81, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 95, in wrapper
+    func_return = func(*args, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py"", line 1714, in init_process_group
+    store, rank, world_size = next(rendezvous_iterator)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 274, in _env_rendezvous_handler
+    store = _create_c10d_store(
+            ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 194, in _create_c10d_store
+    return TCPStore(
+           ^^^^^^^^^
+RuntimeError: The server socket has failed to listen on any local network address. port: 29500, useIpv6: 0, code: -98, name: EADDRINUSE, message: address already in use
+"
+scaled_dot_prod_attention,torch_ddp,0,5,51,16,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/assignment2-systems-main/cs336_systems/experiments/benchmark_lm_matrix.py"", line 194, in _ddp_worker
+    dist.init_process_group(""nccl"", rank=rank, world_size=world_size)
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 81, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 95, in wrapper
+    func_return = func(*args, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py"", line 1714, in init_process_group
+    store, rank, world_size = next(rendezvous_iterator)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 274, in _env_rendezvous_handler
+    store = _create_c10d_store(
+            ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 194, in _create_c10d_store
+    return TCPStore(
+           ^^^^^^^^^
+RuntimeError: The server socket has failed to listen on any local network address. port: 29500, useIpv6: 0, code: -98, name: EADDRINUSE, message: address already in use
+"
+vectorized_torch,none,1,5,51,16,16,816,64.159,12.832,16279.5,1436.5,
+vectorized_torch,naive,0,5,51,16,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/assignment2-systems-main/cs336_systems/experiments/benchmark_lm_matrix.py"", line 194, in _ddp_worker
+    dist.init_process_group(""nccl"", rank=rank, world_size=world_size)
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 81, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 95, in wrapper
+    func_return = func(*args, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py"", line 1714, in init_process_group
+    store, rank, world_size = next(rendezvous_iterator)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 274, in _env_rendezvous_handler
+    store = _create_c10d_store(
+            ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 194, in _create_c10d_store
+    return TCPStore(
+           ^^^^^^^^^
+RuntimeError: The server socket has failed to listen on any local network address. port: 29500, useIpv6: 0, code: -98, name: EADDRINUSE, message: address already in use
+"
+vectorized_torch,flashddp,0,5,51,16,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/assignment2-systems-main/cs336_systems/experiments/benchmark_lm_matrix.py"", line 194, in _ddp_worker
+    dist.init_process_group(""nccl"", rank=rank, world_size=world_size)
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 81, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 95, in wrapper
+    func_return = func(*args, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py"", line 1714, in init_process_group
+    store, rank, world_size = next(rendezvous_iterator)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 274, in _env_rendezvous_handler
+    store = _create_c10d_store(
+            ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 194, in _create_c10d_store
+    return TCPStore(
+           ^^^^^^^^^
+RuntimeError: The server socket has failed to listen on any local network address. port: 29500, useIpv6: 0, code: -98, name: EADDRINUSE, message: address already in use
+"
+vectorized_torch,torch_ddp,0,5,51,16,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/assignment2-systems-main/cs336_systems/experiments/benchmark_lm_matrix.py"", line 194, in _ddp_worker
+    dist.init_process_group(""nccl"", rank=rank, world_size=world_size)
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 81, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 95, in wrapper
+    func_return = func(*args, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py"", line 1714, in init_process_group
+    store, rank, world_size = next(rendezvous_iterator)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 274, in _env_rendezvous_handler
+    store = _create_c10d_store(
+            ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 194, in _create_c10d_store
+    return TCPStore(
+           ^^^^^^^^^
+RuntimeError: The server socket has failed to listen on any local network address. port: 29500, useIpv6: 0, code: -98, name: EADDRINUSE, message: address already in use
+"
+flash_attention_triton,none,1,5,51,16,16,816,64.457,12.891,16204.3,1421.0,
+flash_attention_triton,naive,0,5,51,16,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/assignment2-systems-main/cs336_systems/experiments/benchmark_lm_matrix.py"", line 194, in _ddp_worker
+    dist.init_process_group(""nccl"", rank=rank, world_size=world_size)
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 81, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 95, in wrapper
+    func_return = func(*args, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py"", line 1714, in init_process_group
+    store, rank, world_size = next(rendezvous_iterator)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 274, in _env_rendezvous_handler
+    store = _create_c10d_store(
+            ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 194, in _create_c10d_store
+    return TCPStore(
+           ^^^^^^^^^
+RuntimeError: The server socket has failed to listen on any local network address. port: 29500, useIpv6: 0, code: -98, name: EADDRINUSE, message: address already in use
+"
+flash_attention_triton,flashddp,0,5,51,16,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/assignment2-systems-main/cs336_systems/experiments/benchmark_lm_matrix.py"", line 194, in _ddp_worker
+    dist.init_process_group(""nccl"", rank=rank, world_size=world_size)
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 81, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 95, in wrapper
+    func_return = func(*args, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py"", line 1714, in init_process_group
+    store, rank, world_size = next(rendezvous_iterator)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 274, in _env_rendezvous_handler
+    store = _create_c10d_store(
+            ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 194, in _create_c10d_store
+    return TCPStore(
+           ^^^^^^^^^
+RuntimeError: The server socket has failed to listen on any local network address. port: 29500, useIpv6: 0, code: -98, name: EADDRINUSE, message: address already in use
+"
+flash_attention_triton,torch_ddp,0,5,51,16,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/assignment2-systems-main/cs336_systems/experiments/benchmark_lm_matrix.py"", line 194, in _ddp_worker
+    dist.init_process_group(""nccl"", rank=rank, world_size=world_size)
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 81, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/c10d_logger.py"", line 95, in wrapper
+    func_return = func(*args, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py"", line 1714, in init_process_group
+    store, rank, world_size = next(rendezvous_iterator)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 274, in _env_rendezvous_handler
+    store = _create_c10d_store(
+            ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/assignment2-systems-main/.venv/lib/python3.12/site-packages/torch/distributed/rendezvous.py"", line 194, in _create_c10d_store
+    return TCPStore(
+           ^^^^^^^^^
+RuntimeError: The server socket has failed to listen on any local network address. port: 29500, useIpv6: 0, code: -98, name: EADDRINUSE, message: address already in use
+"
