@@ -2,11 +2,11 @@
 source .venv/bin/activate
 
 uv run cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py \
-  --TRAIN_PATH cs336-basics/data/tokenized/ts_train.npy \
-  --VAL_PATH cs336-basics/data/tokenized/ts_valid.npy \
+  --TRAIN_PATH data/tokenized/ts_train.npy \
+  --VAL_PATH data/tokenized/ts_valid.npy \
   --CONTEXT_LENGTH 256 \
   --NUM_LAYERS 24\
-  --D_MODEL 1024 \
+  --D_MODEL 512 \
   --D_FF 3072 \
   --NUM_HEADS 16 \
   --EPOCHES 5 \

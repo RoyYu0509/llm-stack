@@ -135,12 +135,10 @@ uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
     --train_path data/tokenized/ts_train.npy \
     --val_path   data/tokenized/ts_valid.npy \
     --epochs 5 --tr_batch_size 8 --context_length 256 \
-    --context_length 256 \
     --vocab_size 10_000 \
-    --d_model 1024 --d_ff 4096 --num_layers 24 --num_heads 16 \
-    --kernels flash_attention_triton vectorized_torch scaled_dot_prod_attention \
-    --wrappers torch_ddp flashddp naive none \
-    --epochs 5
+    --d_model 512 --d_ff 4096 --num_layers 24 --num_heads 16 \
+    --kernels scaled_dot_prod_attention vectorized_torch flash_attention_triton \
+    --wrappers none naive flashddp torch_ddp    
 ```
 
 Quick single-kernel test (e.g., just FlashAttention Triton):

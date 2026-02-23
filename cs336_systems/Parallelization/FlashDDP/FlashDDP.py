@@ -336,6 +336,8 @@ class DDPOverlapBucketed(nn.Module):
         # Wait for all comm to finish
         for handle in self.comm_work_handles:
             handle.wait()
+        assert self.next_bucket_to_reduce == len(self.buckets), "Not all buckets have been synchronized"
+        
         self.comm_work_handles.clear()
 
         # Reset the bucket states for the next iteration
@@ -345,3 +347,5 @@ class DDPOverlapBucketed(nn.Module):
             bucket.ready = False
             # Remove the para_grad_has_updated records 
             bucket._updated_grad_para_set.clear()
+
+        

@@ -621,6 +621,9 @@ def main() -> None:
                     "tokens_per_sec": 0, "peak_gpu_mb": 0,
                     "error": str(e),
                 })
+            # Cleanup between runs
+            torch.cuda.empty_cache()
+            gc.collect()
 
     # Save main results CSV
     csv_path = out_dir / "lm_matrix_results.csv"
