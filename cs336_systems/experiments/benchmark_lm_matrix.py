@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gc
+import math
 import os
 import time
 from pathlib import Path
@@ -45,6 +46,7 @@ KERNELS = [
 ]
 
 DDP_WRAPPERS = ["none", "naive", "flashddp"]
+BENCH_STEPS_PER_EPOCH = 51
 
 
 def _get_kernel_fn(name: str):
@@ -97,7 +99,7 @@ def _bench_single_gpu(
             loss.backward()
             optimizer.step()
             total_tokens += x.numel()
-            if i >= 50:
+            if (i + 1) >= BENCH_STEPS_PER_EPOCH:
                 break  # cap iterations per epoch for benchmark
 
     torch.cuda.synchronize()
@@ -113,10 +115,14 @@ def _bench_single_gpu(
         "ddp": "none",
         "gpus": 1,
         "epochs": epochs,
+        "steps_per_epoch": BENCH_STEPS_PER_EPOCH,
+        "global_batch_size": tr_batch_size,
+        "local_batch_size": tr_batch_size,
         "wall_sec": round(elapsed, 3),
         "sec_per_epoch": round(elapsed / max(epochs, 1), 3),
         "tokens_per_sec": round(total_tokens / max(elapsed, 1e-6), 1),
         "peak_gpu_mb": round(peak_mb, 1),
+        "peak_system_mb": round(peak_mb, 1),
     }
 
 
@@ -130,7 +136,9 @@ def _ddp_worker(
     kernel_name: str,
     train_path: str,
     context_length: int,
-    tr_batch_size: int,
+    local_batch_size: int,
+    steps_per_epoch: int,
+    global_target_samples_per_epoch: int,
     epochs: int,
     model_cfg: dict,
     dtype: torch.dtype,
@@ -167,9 +175,10 @@ def _ddp_worker(
     optimizer = AdamW(model.parameters(), lr=3e-4, weight_decay=0.01, betas=(0.9, 0.999))
     dataset = TokenStreamDataset(train_path, context_length)
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True, drop_last=True)
-    loader = DataLoader(dataset, batch_size=tr_batch_size, sampler=sampler, num_workers=2)
+    loader = DataLoader(dataset, batch_size=local_batch_size, sampler=sampler, num_workers=2)
 
     torch.cuda.reset_peak_memory_stats(rank)
+    dist.barrier()
     torch.cuda.synchronize(device)
     t0 = time.perf_counter()
 
@@ -196,19 +205,31 @@ def _ddp_worker(
 
             optimizer.step()
             total_tokens += x.numel()
-            if i >= 50:
+            if (i + 1) >= steps_per_epoch:
                 break
 
     torch.cuda.synchronize(device)
+    dist.barrier()
     elapsed = time.perf_counter() - t0
     peak_mb = torch.cuda.max_memory_allocated(rank) / (1024 ** 2)
+    peak_tensor = torch.tensor([peak_mb], device=device, dtype=torch.float64)
+    token_tensor = torch.tensor([total_tokens], device=device, dtype=torch.float64)
+    elapsed_tensor = torch.tensor([elapsed], device=device, dtype=torch.float64)
+    dist.all_reduce(peak_tensor, op=dist.ReduceOp.SUM)
+    dist.all_reduce(token_tensor, op=dist.ReduceOp.SUM)
+    dist.all_reduce(elapsed_tensor, op=dist.ReduceOp.MAX)
 
     # Only rank 0 writes results
     if rank == 0:
-        result_dict["wall_sec"] = round(elapsed, 3)
-        result_dict["sec_per_epoch"] = round(elapsed / max(epochs, 1), 3)
-        result_dict["tokens_per_sec"] = round(total_tokens / max(elapsed, 1e-6), 1)
+        wall_sec = elapsed_tensor.item()
+        result_dict["steps_per_epoch"] = steps_per_epoch
+        result_dict["global_target_samples_per_epoch"] = global_target_samples_per_epoch
+        result_dict["global_samples_per_epoch"] = local_batch_size * world_size * steps_per_epoch
+        result_dict["wall_sec"] = round(wall_sec, 3)
+        result_dict["sec_per_epoch"] = round(wall_sec / max(epochs, 1), 3)
+        result_dict["tokens_per_sec"] = round(token_tensor.item() / max(wall_sec, 1e-6), 1)
         result_dict["peak_gpu_mb"] = round(peak_mb, 1)
+        result_dict["peak_system_mb"] = round(peak_tensor.item(), 1)
 
     dist.barrier()
     dist.destroy_process_group()
@@ -228,17 +249,27 @@ def _bench_ddp(
     if world_size < 2:
         return None
 
+    # Keep global work close to single-GPU accounting:
+    # target samples/epoch = BENCH_STEPS_PER_EPOCH * tr_batch_size.
+    local_batch_size = max(1, tr_batch_size // world_size)
+    effective_global_batch = local_batch_size * world_size
+    global_target_samples_per_epoch = BENCH_STEPS_PER_EPOCH * tr_batch_size
+    steps_per_epoch = max(1, math.ceil(global_target_samples_per_epoch / effective_global_batch))
+
     manager = mp.Manager()
     result_dict = manager.dict()
     result_dict["kernel"] = kernel_name
     result_dict["ddp"] = wrapper_name
     result_dict["gpus"] = world_size
     result_dict["epochs"] = epochs
+    result_dict["global_batch_size"] = effective_global_batch
+    result_dict["local_batch_size"] = local_batch_size
 
     mp.spawn(
         _ddp_worker,
         args=(world_size, wrapper_name, kernel_name, train_path, context_length,
-              tr_batch_size, epochs, model_cfg, dtype, result_dict),
+              local_batch_size, steps_per_epoch, global_target_samples_per_epoch,
+              epochs, model_cfg, dtype, result_dict),
         nprocs=world_size,
         join=True,
     )
@@ -281,13 +312,13 @@ def _plot_results(results: list[dict], out_dir: Path) -> None:
     plt.close(fig)
 
     # --- Memory bar chart ---
-    mems = [r["peak_gpu_mb"] for r in results]
+    mems = [r["peak_system_mb"] for r in results]
     fig2, ax2 = plt.subplots(figsize=(max(8, len(results) * 1.5), 5))
     bars2 = ax2.bar(x, mems, color=colors, edgecolor="black", linewidth=0.5)
     ax2.set_xticks(x)
     ax2.set_xticklabels(labels, fontsize=8, rotation=30, ha="right")
-    ax2.set_ylabel("Peak GPU Memory (MB)")
-    ax2.set_title("LM Training: Peak GPU Memory")
+    ax2.set_ylabel("Peak System GPU Memory (MB)")
+    ax2.set_title("LM Training: Peak System GPU Memory")
     for bar, m in zip(bars2, mems):
         ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 5,
                  f"{m:.0f}", ha="center", va="bottom", fontsize=7)
@@ -316,16 +347,17 @@ def _write_markdown(results: list[dict], out_dir: Path) -> None:
     md_path = out_dir / "lm_matrix_report.md"
     with open(md_path, "w") as f:
         f.write("# LM Training Benchmark Matrix\n\n")
-        f.write("| Kernel | DDP | GPUs | Epochs | Wall (s) | s/epoch | tok/s | Peak MB |\n")
-        f.write("|--------|-----|------|--------|----------|---------|-------|--------|\n")
+        f.write("| Kernel | DDP | GPUs | Epochs | Steps/epoch | Global BS | Local BS | Global Samples/epoch | Wall (s) | s/epoch | tok/s | Peak GPU MB | Peak System MB |\n")
+        f.write("|--------|-----|------|--------|-------------|-----------|----------|----------------------|----------|---------|-------|-------------|----------------|\n")
         for r in results:
             f.write(
                 f"| {r['kernel']} | {r['ddp']} | {r['gpus']} | {r['epochs']} "
-                f"| {r['wall_sec']} | {r['sec_per_epoch']} | {r['tokens_per_sec']} "
-                f"| {r['peak_gpu_mb']} |\n"
+                f"| {r['steps_per_epoch']} | {r['global_batch_size']} | {r['local_batch_size']} "
+                f"| {r['global_samples_per_epoch']} | {r['wall_sec']} | {r['sec_per_epoch']} "
+                f"| {r['tokens_per_sec']} | {r['peak_gpu_mb']} | {r['peak_system_mb']} |\n"
             )
         f.write("\n![Time per Epoch](lm_matrix_time.png)\n")
-        f.write("\n![Peak GPU Memory](lm_matrix_memory.png)\n")
+        f.write("\n![Peak System GPU Memory](lm_matrix_memory.png)\n")
         f.write("\n![Throughput](lm_matrix_throughput.png)\n")
     print(f"[report] Saved {md_path}")
 
@@ -386,27 +418,46 @@ def main() -> None:
                     row = _bench_single_gpu(kernel, args.train_path, args.val_path,
                                             args.epochs, args.tr_batch_size,
                                             args.context_length, model_cfg, dtype)
+                    row["global_samples_per_epoch"] = row["steps_per_epoch"] * row["global_batch_size"]
+                    row["global_target_samples_per_epoch"] = row["global_samples_per_epoch"]
                 else:
                     row = _bench_ddp(wrapper, kernel, args.train_path,
                                      args.context_length, args.tr_batch_size,
                                      args.epochs, model_cfg, dtype)
                 if row:
                     results.append(row)
-                    print(f"  ✓ {tag}: {row['sec_per_epoch']:.3f} s/epoch, {row['peak_gpu_mb']:.0f} MB")
+                    print(
+                        f"  ✓ {tag}: {row['sec_per_epoch']:.3f} s/epoch, "
+                        f"{row['peak_system_mb']:.0f} MB(system), "
+                        f"samples/epoch={row['global_samples_per_epoch']} "
+                        f"(target={row['global_target_samples_per_epoch']})"
+                    )
                 else:
                     print(f"  ⊘ {tag}: skipped (not enough GPUs)")
             except Exception as e:
                 print(f"  ✗ {tag}: {e}")
                 results.append({
                     "kernel": kernel, "ddp": wrapper, "gpus": 0,
-                    "epochs": args.epochs, "wall_sec": 0, "sec_per_epoch": 0,
-                    "tokens_per_sec": 0, "peak_gpu_mb": 0, "error": str(e),
+                    "epochs": args.epochs, "steps_per_epoch": BENCH_STEPS_PER_EPOCH,
+                    "global_batch_size": args.tr_batch_size, "local_batch_size": 0,
+                    "global_samples_per_epoch": 0,
+                    "global_target_samples_per_epoch": BENCH_STEPS_PER_EPOCH * args.tr_batch_size,
+                    "wall_sec": 0, "sec_per_epoch": 0,
+                    "tokens_per_sec": 0, "peak_gpu_mb": 0, "peak_system_mb": 0,
+                    "error": str(e),
                 })
 
     # Save CSV
     csv_path = out_dir / "lm_matrix_results.csv"
     if results:
-        keys = list(results[0].keys())
+        preferred_keys = [
+            "kernel", "ddp", "gpus", "epochs",
+            "steps_per_epoch", "global_batch_size", "local_batch_size",
+            "global_samples_per_epoch", "global_target_samples_per_epoch",
+            "wall_sec", "sec_per_epoch", "tokens_per_sec",
+            "peak_gpu_mb", "peak_system_mb", "error",
+        ]
+        keys = [k for k in preferred_keys if any(k in r for r in results)]
         with open(csv_path, "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=keys)
             w.writeheader()
