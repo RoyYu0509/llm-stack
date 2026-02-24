@@ -78,4 +78,4 @@ def _vectorized_attn_torch_apply(
     return VectorizedAttentionTorchFunction.apply(Q, K, V, is_causal)
 
 
-vectorized_attn_torch_fn = torch.compile(_vectorized_attn_torch_apply)
+vectorized_attn_torch_fn = _vectorized_attn_torch_apply

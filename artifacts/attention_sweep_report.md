@@ -1,0 +1,106 @@
+# Attention Forward Benchmark Sweep
+
+| Kernel | Tier | Q_N | K_N | head_dim | heads | batch | avg_ms | std_ms | min_ms |
+|--------|------|-----|-----|----------|-------|-------|--------|--------|--------|
+| scaled_dot_prod_attention | Long-hd128-12h-1b-512 | 512 | 512 | 64 | 12 | 1 | 0.7293 | 0.1292 | 0.6459 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-1k | 1024 | 1024 | 64 | 12 | 1 | 1.886 | 0.0428 | 1.8186 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-2k | 2048 | 2048 | 64 | 12 | 1 | 7.2683 | 0.0878 | 7.2394 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-4k | 4096 | 4096 | 64 | 12 | 1 | 27.7778 | 0.088 | 27.6678 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-8k | 8192 | 8192 | 64 | 12 | 1 | 116.6522 | 0.2226 | 116.2996 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-16k | 16384 | 16384 | 64 | 12 | 1 | 0 | 0 | 0 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-512 | 512 | 512 | 64 | 12 | 8 | 3.2894 | 0.0056 | 3.2741 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-1k | 1024 | 1024 | 64 | 12 | 8 | 12.9713 | 0.0396 | 12.9278 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-2k | 2048 | 2048 | 64 | 12 | 8 | 55.1139 | 0.0672 | 55.004 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-4k | 4096 | 4096 | 64 | 12 | 8 | 0 | 0 | 0 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-8k | 8192 | 8192 | 64 | 12 | 8 | 0 | 0 | 0 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-16k | 16384 | 16384 | 64 | 12 | 8 | 0 | 0 | 0 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-512 | 512 | 512 | 128 | 12 | 1 | 0.6364 | 0.012 | 0.6236 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-1k | 1024 | 1024 | 128 | 12 | 1 | 1.8977 | 0.0132 | 1.8842 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-2k | 2048 | 2048 | 128 | 12 | 1 | 7.51 | 0.0396 | 7.4745 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-4k | 4096 | 4096 | 128 | 12 | 1 | 29.6346 | 0.0813 | 29.5166 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-8k | 8192 | 8192 | 128 | 12 | 1 | 122.0907 | 0.1298 | 121.8315 |
+| scaled_dot_prod_attention | Long-hd128-12h-1b-16k | 16384 | 16384 | 128 | 12 | 1 | 0 | 0 | 0 |
+| scaled_dot_prod_attention | Long-hd128-16h-1b-512 | 512 | 512 | 256 | 24 | 2 | 2.1036 | 0.0097 | 2.0904 |
+| scaled_dot_prod_attention | Long-hd128-16h-1b-1k | 1024 | 1024 | 256 | 24 | 2 | 7.9878 | 0.0551 | 7.9437 |
+| scaled_dot_prod_attention | Long-hd128-16h-1b-2k | 2048 | 2048 | 256 | 24 | 2 | 33.3649 | 0.0872 | 33.2299 |
+| scaled_dot_prod_attention | Long-hd128-16h-1b-4k | 4096 | 4096 | 256 | 24 | 2 | 134.2902 | 0.2009 | 133.7573 |
+| scaled_dot_prod_attention | Long-hd128-16h-1b-8k | 8192 | 8192 | 256 | 24 | 2 | 0 | 0 | 0 |
+| scaled_dot_prod_attention | Long-hd128-16h-1b-16k | 16384 | 16384 | 256 | 24 | 2 | 0 | 0 | 0 |
+| vectorized_torch | Long-hd128-12h-1b-512 | 512 | 512 | 64 | 12 | 1 | 0.6023 | 0.0128 | 0.5892 |
+| vectorized_torch | Long-hd128-12h-1b-1k | 1024 | 1024 | 64 | 12 | 1 | 1.6756 | 0.0069 | 1.667 |
+| vectorized_torch | Long-hd128-12h-1b-2k | 2048 | 2048 | 64 | 12 | 1 | 6.233 | 0.0063 | 6.2228 |
+| vectorized_torch | Long-hd128-12h-1b-4k | 4096 | 4096 | 64 | 12 | 1 | 23.6049 | 0.0097 | 23.5883 |
+| vectorized_torch | Long-hd128-12h-1b-8k | 8192 | 8192 | 64 | 12 | 1 | 97.8315 | 0.0611 | 97.6996 |
+| vectorized_torch | Long-hd128-12h-1b-16k | 16384 | 16384 | 64 | 12 | 1 | 0 | 0 | 0 |
+| vectorized_torch | Long-hd128-12h-1b-512 | 512 | 512 | 64 | 12 | 8 | 3.0771 | 0.0059 | 3.0698 |
+| vectorized_torch | Long-hd128-12h-1b-1k | 1024 | 1024 | 64 | 12 | 8 | 11.9576 | 0.0393 | 11.937 |
+| vectorized_torch | Long-hd128-12h-1b-2k | 2048 | 2048 | 64 | 12 | 8 | 46.7879 | 0.1828 | 46.7369 |
+| vectorized_torch | Long-hd128-12h-1b-4k | 4096 | 4096 | 64 | 12 | 8 | 0 | 0 | 0 |
+| vectorized_torch | Long-hd128-12h-1b-8k | 8192 | 8192 | 64 | 12 | 8 | 0 | 0 | 0 |
+| vectorized_torch | Long-hd128-12h-1b-16k | 16384 | 16384 | 64 | 12 | 8 | 0 | 0 | 0 |
+| vectorized_torch | Long-hd128-12h-1b-512 | 512 | 512 | 128 | 12 | 1 | 0.6127 | 0.0131 | 0.5999 |
+| vectorized_torch | Long-hd128-12h-1b-1k | 1024 | 1024 | 128 | 12 | 1 | 1.7396 | 0.0079 | 1.731 |
+| vectorized_torch | Long-hd128-12h-1b-2k | 2048 | 2048 | 128 | 12 | 1 | 6.4398 | 0.0382 | 6.4219 |
+| vectorized_torch | Long-hd128-12h-1b-4k | 4096 | 4096 | 128 | 12 | 1 | 25.1795 | 0.0102 | 25.1608 |
+| vectorized_torch | Long-hd128-12h-1b-8k | 8192 | 8192 | 128 | 12 | 1 | 102.0077 | 0.0366 | 101.9477 |
+| vectorized_torch | Long-hd128-12h-1b-16k | 16384 | 16384 | 128 | 12 | 1 | 0 | 0 | 0 |
+| vectorized_torch | Long-hd128-16h-1b-512 | 512 | 512 | 256 | 24 | 2 | 1.9521 | 0.0094 | 1.9435 |
+| vectorized_torch | Long-hd128-16h-1b-1k | 1024 | 1024 | 256 | 24 | 2 | 7.3713 | 0.0066 | 7.3605 |
+| vectorized_torch | Long-hd128-16h-1b-2k | 2048 | 2048 | 256 | 24 | 2 | 28.8886 | 0.0306 | 28.8557 |
+| vectorized_torch | Long-hd128-16h-1b-4k | 4096 | 4096 | 256 | 24 | 2 | 114.6211 | 0.1839 | 114.439 |
+| vectorized_torch | Long-hd128-16h-1b-8k | 8192 | 8192 | 256 | 24 | 2 | 0 | 0 | 0 |
+| vectorized_torch | Long-hd128-16h-1b-16k | 16384 | 16384 | 256 | 24 | 2 | 0 | 0 | 0 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-512 | 512 | 512 | 64 | 12 | 1 | 0.2259 | 0.0144 | 0.2133 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-1k | 1024 | 1024 | 64 | 12 | 1 | 0.6323 | 0.0117 | 0.616 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-2k | 2048 | 2048 | 64 | 12 | 1 | 1.8635 | 0.0203 | 1.8426 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-4k | 4096 | 4096 | 64 | 12 | 1 | 5.6902 | 0.0199 | 5.6598 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-8k | 8192 | 8192 | 64 | 12 | 1 | 28.4492 | 0.0878 | 28.281 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-16k | 16384 | 16384 | 64 | 12 | 1 | 115.0546 | 0.2302 | 114.5051 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-512 | 512 | 512 | 64 | 12 | 8 | 1.007 | 0.0143 | 0.9923 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-1k | 1024 | 1024 | 64 | 12 | 8 | 3.1931 | 0.0174 | 3.169 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-2k | 2048 | 2048 | 64 | 12 | 8 | 15.4495 | 0.0512 | 15.4127 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-4k | 4096 | 4096 | 64 | 12 | 8 | 61.7124 | 0.0933 | 61.5975 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-8k | 8192 | 8192 | 64 | 12 | 8 | 0 | 0 | 0 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-16k | 16384 | 16384 | 64 | 12 | 8 | 0 | 0 | 0 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-512 | 512 | 512 | 128 | 12 | 1 | 0.4673 | 0.0114 | 0.4547 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-1k | 1024 | 1024 | 128 | 12 | 1 | 0.8929 | 0.0114 | 0.8767 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-2k | 2048 | 2048 | 128 | 12 | 1 | 2.3396 | 0.0194 | 2.3176 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-4k | 4096 | 4096 | 128 | 12 | 1 | 7.958 | 0.1295 | 7.8599 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-8k | 8192 | 8192 | 128 | 12 | 1 | 34.5388 | 0.1047 | 34.3391 |
+| vectorized_torch_compiled | Long-hd128-12h-1b-16k | 16384 | 16384 | 128 | 12 | 1 | 136.0505 | 0.272 | 135.667 |
+| vectorized_torch_compiled | Long-hd128-16h-1b-512 | 512 | 512 | 256 | 24 | 2 | 2.5598 | 0.0116 | 2.5459 |
+| vectorized_torch_compiled | Long-hd128-16h-1b-1k | 1024 | 1024 | 256 | 24 | 2 | 6.022 | 0.0229 | 5.9991 |
+| vectorized_torch_compiled | Long-hd128-16h-1b-2k | 2048 | 2048 | 256 | 24 | 2 | 16.2983 | 0.1863 | 16.1105 |
+| vectorized_torch_compiled | Long-hd128-16h-1b-4k | 4096 | 4096 | 256 | 24 | 2 | 53.8963 | 0.2371 | 53.3408 |
+| vectorized_torch_compiled | Long-hd128-16h-1b-8k | 8192 | 8192 | 256 | 24 | 2 | 204.8968 | 0.6277 | 203.0438 |
+| vectorized_torch_compiled | Long-hd128-16h-1b-16k | 16384 | 16384 | 256 | 24 | 2 | 0 | 0 | 0 |
+| flash_attention_triton | Long-hd128-12h-1b-512 | 512 | 512 | 64 | 12 | 1 | 0.3094 | 0.0136 | 0.2965 |
+| flash_attention_triton | Long-hd128-12h-1b-1k | 1024 | 1024 | 64 | 12 | 1 | 0.5226 | 0.0172 | 0.5073 |
+| flash_attention_triton | Long-hd128-12h-1b-2k | 2048 | 2048 | 64 | 12 | 1 | 1.4658 | 0.1075 | 1.3621 |
+| flash_attention_triton | Long-hd128-12h-1b-4k | 4096 | 4096 | 64 | 12 | 1 | 4.8 | 0.0102 | 4.7853 |
+| flash_attention_triton | Long-hd128-12h-1b-8k | 8192 | 8192 | 64 | 12 | 1 | 18.2421 | 0.0786 | 18.1597 |
+| flash_attention_triton | Long-hd128-12h-1b-16k | 16384 | 16384 | 64 | 12 | 1 | 72.3212 | 0.2252 | 71.8521 |
+| flash_attention_triton | Long-hd128-12h-1b-512 | 512 | 512 | 64 | 12 | 8 | 0.8165 | 0.0105 | 0.809 |
+| flash_attention_triton | Long-hd128-12h-1b-1k | 1024 | 1024 | 64 | 12 | 8 | 2.4633 | 0.0092 | 2.4544 |
+| flash_attention_triton | Long-hd128-12h-1b-2k | 2048 | 2048 | 64 | 12 | 8 | 9.1564 | 0.0188 | 9.1263 |
+| flash_attention_triton | Long-hd128-12h-1b-4k | 4096 | 4096 | 64 | 12 | 8 | 35.9822 | 0.0295 | 35.8473 |
+| flash_attention_triton | Long-hd128-12h-1b-8k | 8192 | 8192 | 64 | 12 | 8 | 145.4139 | 0.7312 | 143.3444 |
+| flash_attention_triton | Long-hd128-12h-1b-16k | 16384 | 16384 | 64 | 12 | 8 | 582.7256 | 1.4725 | 581.9378 |
+| flash_attention_triton | Long-hd128-12h-1b-512 | 512 | 512 | 128 | 12 | 1 | 0.4205 | 0.011 | 0.4136 |
+| flash_attention_triton | Long-hd128-12h-1b-1k | 1024 | 1024 | 128 | 12 | 1 | 0.9783 | 0.0161 | 0.9641 |
+| flash_attention_triton | Long-hd128-12h-1b-2k | 2048 | 2048 | 128 | 12 | 1 | 3.0174 | 0.0085 | 3.0049 |
+| flash_attention_triton | Long-hd128-12h-1b-4k | 4096 | 4096 | 128 | 12 | 1 | 11.4345 | 0.1636 | 11.391 |
+| flash_attention_triton | Long-hd128-12h-1b-8k | 8192 | 8192 | 128 | 12 | 1 | 45.0113 | 0.0479 | 44.9815 |
+| flash_attention_triton | Long-hd128-12h-1b-16k | 16384 | 16384 | 128 | 12 | 1 | 175.9235 | 0.1852 | 174.8184 |
+| flash_attention_triton | Long-hd128-16h-1b-512 | 512 | 512 | 256 | 24 | 2 | 2.6938 | 0.1205 | 2.5655 |
+| flash_attention_triton | Long-hd128-16h-1b-1k | 1024 | 1024 | 256 | 24 | 2 | 10.2103 | 0.0099 | 10.1965 |
+| flash_attention_triton | Long-hd128-16h-1b-2k | 2048 | 2048 | 256 | 24 | 2 | 40.0923 | 0.1265 | 39.8278 |
+| flash_attention_triton | Long-hd128-16h-1b-4k | 4096 | 4096 | 256 | 24 | 2 | 160.0305 | 0.0466 | 159.8847 |
+| flash_attention_triton | Long-hd128-16h-1b-8k | 8192 | 8192 | 256 | 24 | 2 | 658.9815 | 9.5228 | 644.5455 |
+| flash_attention_triton | Long-hd128-16h-1b-16k | 16384 | 16384 | 256 | 24 | 2 | 2598.2892 | 0.6678 | 2596.6824 |
+
+![Forward Time](attention_sweep_forward.png)
+
+![Heatmap](attention_sweep_heatmap.png)
+
+![Scaling Curve](attention_sweep_scaling.png)

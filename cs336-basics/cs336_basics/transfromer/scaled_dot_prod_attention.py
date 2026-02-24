@@ -81,6 +81,8 @@ def flash_attention_my_triton(query, key, value, is_causal: bool = False):
 ####################################################################
 ATTENTION_KERNEL_REGISTRY: dict[str, callable] = {
     "scaled_dot_prod_attention": scaled_dot_product_attention,
+    "scaled_dot_prod_attention_compiled": torch.compile(scaled_dot_product_attention),
     "vectorized_torch": vectorized_attention_torch,
+    "vectorized_torch_compiled": torch.compile(vectorized_attention_torch),
     "flash_attention_triton": flash_attention_my_triton,
 }

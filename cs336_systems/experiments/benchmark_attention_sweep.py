@@ -15,7 +15,7 @@ Produces:
 Usage:
   uv run python cs336_systems/experiments/benchmark_attention_sweep.py
   uv run python cs336_systems/experiments/benchmark_attention_sweep.py \\
-      --custom_tiers 128:64 256:128 512:256 1024:512 \\
+      --custom_tiers 128:128 256:128 512:256 1024:512 \\
       --warmup 10 --iters 50
 """
 
@@ -34,23 +34,63 @@ import torch
 # ---------------------------------------------------------------------------
 # Tier definitions (powers of 2)
 # ---------------------------------------------------------------------------
-# Each tier is (label, Q_N, K_N, head_dim, num_heads, batch_size)
 DEFAULT_TIERS = [
-    ("Small",   128,  128,   64,  8, 4),
-    ("Medium",  256,  256,   64, 16, 2),
-    ("Large",   512,  512,  128, 16, 2),
-    ("XL",     1024, 1024,  128, 16, 1),
-    ("XXL",    2048, 2048,  128, 16, 1),
-    # Rectangular (Q_N ≠ K_N) tiers
-    ("Rect-S",  128,  256,   64,  8, 4),
-    ("Rect-M",  256,  512,   64, 16, 2),
-    ("Rect-L",  512, 1024,  128, 16, 2),
-    ("Rect-XL",1024, 2048,  128, 16, 1),
+    
+    # ==========================================
+    # head_dim=128, num_heads=12, batch_size=1
+    # (Great for 768-wide models, long context)
+    # ==========================================
+
+    ("Long-hd128-12h-1b-512",    512,    512,   64, 12, 1),
+    ("Long-hd128-12h-1b-1k",    1024,   1024,   64, 12, 1),
+    ("Long-hd128-12h-1b-2k",    2048,   2048,   64, 12, 1),
+    ("Long-hd128-12h-1b-4k",    4096,   4096,   64, 12, 1),
+    ("Long-hd128-12h-1b-8k",    8192,   8192,   64, 12, 1),
+    ("Long-hd128-12h-1b-16k",  16384,  16384,   64, 12, 1),
+
+
+    # ==========================================
+    # head_dim=128, num_heads=16, batch_size=1
+    # (Very Triton-friendly, warp aligned)
+    # ==========================================
+
+    ("Long-hd128-12h-1b-512",    512,    512,   64, 12, 8),
+    ("Long-hd128-12h-1b-1k",    1024,   1024,   64, 12, 8),
+    ("Long-hd128-12h-1b-2k",    2048,   2048,   64, 12, 8),
+    ("Long-hd128-12h-1b-4k",    4096,   4096,   64, 12, 8),
+    ("Long-hd128-12h-1b-8k",    8192,   8192,   64, 12, 8),
+    ("Long-hd128-12h-1b-16k",  16384,  16384,   64, 12, 8),
+
+    # ==========================================
+    # head_dim=128, num_heads=12, batch_size=1
+    # (Great for 768-wide models, long context)
+    # ==========================================
+
+    ("Long-hd128-12h-1b-512",    512,    512,   128, 12, 1),
+    ("Long-hd128-12h-1b-1k",    1024,   1024,   128, 12, 1),
+    ("Long-hd128-12h-1b-2k",    2048,   2048,   128, 12, 1),
+    ("Long-hd128-12h-1b-4k",    4096,   4096,   128, 12, 1),
+    ("Long-hd128-12h-1b-8k",    8192,   8192,   128, 12, 1),
+    ("Long-hd128-12h-1b-16k",  16384,  16384,   128, 12, 1),
+
+
+    # ==========================================
+    # head_dim=128, num_heads=16, batch_size=1
+    # (Very Triton-friendly, warp aligned)
+    # ==========================================
+
+    ("Long-hd128-16h-1b-512",    512,    512,   256, 24, 2),
+    ("Long-hd128-16h-1b-1k",    1024,   1024,   256, 24, 2),
+    ("Long-hd128-16h-1b-2k",    2048,   2048,   256, 24, 2),
+    ("Long-hd128-16h-1b-4k",    4096,   4096,   256, 24, 2),
+    ("Long-hd128-16h-1b-8k",    8192,   8192,   256, 24, 2),
+    ("Long-hd128-16h-1b-16k",  16384,  16384,   256, 24, 2),
 ]
 
 KERNEL_NAMES = [
     "scaled_dot_prod_attention",
     "vectorized_torch",
+    "vectorized_torch_compiled",
     "flash_attention_triton",
 ]
 
@@ -104,6 +144,7 @@ def bench_one(
     for _ in range(warmup):
         _ = kernel_fn(q, k, v, True)
     _sync()
+    print("finished warmup, starting timed iterations...")
 
     # Timed iterations
     times = []
@@ -151,8 +192,10 @@ def _plot_results(results: list[dict], out_dir: Path) -> None:
         print("[plot] matplotlib not available — skipping PNG.")
         return
 
-    kernels = sorted(set(r["kernel"] for r in results))
-    tiers = list(dict.fromkeys(r["tier"] for r in results))  # preserves order
+    # drop any rows where an error (e.g. OOM) occurred
+    clean_results = [r for r in results if not r.get("error")]
+    kernels = sorted(set(r["kernel"] for r in clean_results))
+    tiers = list(dict.fromkeys(r["tier"] for r in clean_results))  # preserves order
 
     kernel_colors = {
         "scaled_dot_prod_attention": "#4C72B0",
@@ -160,38 +203,56 @@ def _plot_results(results: list[dict], out_dir: Path) -> None:
         "flash_attention_triton": "#55A868",
     }
 
-    # --- Grouped bar chart: forward time ---
-    x = np.arange(len(tiers))
-    width = 0.8 / max(len(kernels), 1)
+    # --- Line plots by configuration: seq_len x-axis ---
+    # We only plot square tiers (Q_N == K_N) and create one subplot per
+    # unique combination of head_dim, num_heads, batch_size.
+    square = [r for r in clean_results if r["Q_N"] == r["K_N"]]
+    if square:
+        # group by config tuple
+        configs = {}
+        for r in square:
+            cfg = (r["head_dim"], r["num_heads"], r["batch_size"])
+            configs.setdefault(cfg, []).append(r)
 
-    fig, ax = plt.subplots(figsize=(max(10, len(tiers) * 2), 6))
-    for i, kern in enumerate(kernels):
-        vals = []
-        for tier in tiers:
-            row = next((r for r in results if r["kernel"] == kern and r["tier"] == tier), None)
-            vals.append(row["avg_ms"] if row else 0)
-        offset = (i - len(kernels) / 2 + 0.5) * width
-        bars = ax.bar(x + offset, vals, width, label=kern.replace("_", " "),
-                       color=kernel_colors.get(kern, "#999"), edgecolor="black", linewidth=0.4)
-        for bar, v in zip(bars, vals):
-            if v > 0:
-                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                        f"{v:.2f}", ha="center", va="bottom", fontsize=6, rotation=45)
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(tiers, fontsize=8, rotation=30, ha="right")
-    ax.set_ylabel("Forward Time (ms)")
-    ax.set_title("Attention Forward Pass — Kernel × Tier")
-    ax.legend(fontsize=8)
-    fig.tight_layout()
-    fig.savefig(out_dir / "attention_sweep_forward.png", dpi=150)
-    plt.close(fig)
+        ncfg = len(configs)
+        cols = min(3, ncfg)
+        rows = math.ceil(ncfg / cols)
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 5, rows * 4), squeeze=False)
+        markers = ["o", "s", "^", "D", "x"]
+        for idx, (cfg, cfg_rows) in enumerate(configs.items()):
+            hd, nh, bs = cfg
+            ax = axes[idx // cols][idx % cols]
+            ax.set_title(f"hd={hd}, heads={nh}, batch={bs}")
+            ax.set_xlabel("Sequence Length (Q_N=K_N)")
+            ax.set_ylabel("Forward Time (ms)")
+            for i, kern in enumerate(kernels):
+                rows_k = sorted([r for r in cfg_rows if r["kernel"] == kern], key=lambda r: r["Q_N"])
+                if not rows_k:
+                    continue
+                xs = [r["Q_N"] for r in rows_k]
+                ys = [r["avg_ms"] for r in rows_k]
+                yerrs = [r.get("std_ms", 0) for r in rows_k]
+                ax.errorbar(xs, ys, yerr=yerrs,
+                            label=kern.replace("_", " "),
+                            color=kernel_colors.get(kern, f"C{i}"),
+                            marker=markers[i % len(markers)],
+                            linestyle="-", linewidth=1.5, markersize=5, capsize=2)
+            ax.grid(True, alpha=0.3)
+            ax.legend(fontsize=6)
+        # remove empty subplots
+        for j in range(ncfg, rows * cols):
+            fig.delaxes(axes[j // cols][j % cols])
+        fig.tight_layout()
+        fig.savefig(out_dir / "attention_sweep_forward.png", dpi=150)
+        plt.close(fig)
+    else:
+        print("[plot] No square tiers available for sequence-length plots.")
 
     # --- Heatmap: kernel × tier ---
     mat = np.zeros((len(kernels), len(tiers)))
     for i, kern in enumerate(kernels):
         for j, tier in enumerate(tiers):
-            row = next((r for r in results if r["kernel"] == kern and r["tier"] == tier), None)
+            row = next((r for r in clean_results if r["kernel"] == kern and r["tier"] == tier), None)
             mat[i, j] = row["avg_ms"] if row else float("nan")
 
     fig2, ax2 = plt.subplots(figsize=(max(8, len(tiers) * 1.2), max(4, len(kernels) * 1.2)))
@@ -268,8 +329,8 @@ def _parse_tier(s: str, idx: int):
     else:
         raise ValueError(f"Invalid tier spec: {s}")
     label = f"Custom-{idx}"
-    _validate_tier(label, q_n, k_n, 64)
-    return (label, q_n, k_n, 64, 8, 2)
+    _validate_tier(label, q_n, k_n, 128)
+    return (label, q_n, k_n, 128, 8, 2)
 
 
 def main() -> None:
@@ -331,7 +392,8 @@ def main() -> None:
     # Save CSV
     csv_path = out_dir / "attention_sweep_results.csv"
     if results:
-        keys = list(results[0].keys())
+        # use union of all keys to tolerate optional 'error' field
+        keys = sorted({k for r in results for k in r.keys()})
         with open(csv_path, "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=keys)
             w.writeheader()
