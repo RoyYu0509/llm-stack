@@ -109,18 +109,18 @@ class MultiHeadsAttention(torch.nn.Module):
             Q = self.pos_encod(Q, positions)
             K = self.pos_encod(K, positions)
 
-        # Reshape to 3D ((Batch, Heads), Seq, D)
-        Q_packed = rearrange(Q, "... h seq d_k -> ... seq (h d_k)")
-        K_packed = rearrange(K, "... h seq d_k -> ... seq (h d_k)")
-        V_packed = rearrange(V, "... h seq d_v -> ... seq (h d_v)")
+        # Reshape to 3D by combining Batch & Head Dimensions: (B, H, seq, d_k) -> (B*H, seq, d_k)
+        Q_packed = rearrange(Q, "... h seq d_k -> (... h) seq d_k")
+        K_packed = rearrange(K, "... h seq d_k -> (... h) seq d_k")
+        V_packed = rearrange(V, "... h seq d_v -> (... h) seq d_v")
 
-        # Call attention with 3D packed format
-        multi_head_packed: Float[Tensor, f"... seq (h d_v)"]
+        # Ship the compressed QKV (shape = [B*H, seq, d_k]) to the attention kernel
+        multi_head_packed: Float[Tensor, f"(... h) seq d_v"]
         multi_head_packed = self.attention_fn(Q_packed, K_packed, V_packed, is_causal=self.is_causal)
         
-        # Reshape Back to (B, H, Seq, D)
+        # Reshape back to (B, H, Seq, d_v)
         multi_head: Float[Tensor, f"... h seq d_v"]
-        multi_head = rearrange(multi_head_packed, "... seq (h d_v) -> ... h seq d_v", h=self.heads_num, d_v=self.d_v)
+        multi_head = rearrange(multi_head_packed, "(b h) seq d_v -> b h seq d_v", h=self.heads_num)
         
         return multi_head
     

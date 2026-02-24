@@ -9,23 +9,26 @@
 
   "vocab_path": "data/bpe_tokenizer/vocab.pkl",
   "merges_path": "data/bpe_tokenizer/merges.pkl",
+  "tokenizer_num_processes":20,
+
 
   "tokenized_train": "data/tokenized/ts_train.npy",
   "tokenized_valid": "data/tokenized/ts_valid.npy",
+  "build_dataset_num_workers":20,
 
   "model": {
     "vocab_size": 10000,
-    "context_length": 256,
-    "num_layers": 32,
-    "d_model": 2560,
-    "num_heads": 32,
-    "d_ff": 10240,
+    "context_length": 1024,
+    "num_layers": 12,
+    "d_model": 768,
+    "num_heads": 12,
+    "d_ff": 3072,
     "rope_theta": 10000.0
   },
 
   "training": {
-    "tr_batch_size": 32,
-    "val_batch_size": 32,
+    "tr_batch_size": 8,
+    "val_batch_size": 8,
     "val_bat_num": 50,
     "epochs": 10,
     "lr": 0.0006,
@@ -49,8 +52,7 @@
   },
 
   "wandb": {
-    "project": "Train_Transformer_LM",
-    "run_name": null
+    "project": "Train_Transformer_LM"
   },
 
   "attention_kernel": "scaled_dot_prod_attention",

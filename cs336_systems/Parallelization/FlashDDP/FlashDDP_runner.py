@@ -9,6 +9,7 @@ import time
 from typing import Callable
 from xml.parsers.expat import model
 
+from jax.ad_checkpoint import checkpoint
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -18,7 +19,9 @@ from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 import tqdm
+import wandb
 
+from cs336_basics.train.checkpointing import save_checkpoint_and_log, save_checkpoint, load_checkpoint
 from cs336_basics.lm import TransformerLM
 from cs336_basics.train.loss import cross_entropy
 from cs336_basics.train.optimizer import AdamW
@@ -55,6 +58,67 @@ def _synchronize_if_cuda(device: torch.device) -> None:
         torch.cuda.synchronize(device)
 
 
+def save_ddp_checkpoint(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    epoch: int,
+    checkpoint_dir: str,
+    rank: int,
+    wandb_run = None,
+) -> None:
+    """
+    Save a DDP training checkpoint. Only rank 0 performs the actual save to
+    avoid file-system races. All ranks synchronize via a barrier afterwards
+    so that no rank races ahead before the file is fully written.
+
+    The checkpoint stores:
+        - model state dict (unwrapped from DDPOverlapBucketed via .module)
+        - optimizer state dict
+        - epoch number (the epoch that just completed)
+
+    Args:
+        model:  The DDPOverlapBucketed wrapper (or any wrapper with .module).
+        optimizer: The optimizer being used for training.
+        epoch: The 1-based epoch number that just finished.
+        checkpoint_dir: Directory in which to write checkpoint files.
+        rank: Current process rank.
+    """
+    if rank == 0:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        ckpt_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch:04d}.pt")
+        raw_model = model.module if hasattr(model, "module") else model
+        save_checkpoint_and_log(raw_model, optimizer, epoch, ckpt_path, wandb_run)
+        print(f"[Checkpoint] Rank {rank} saved checkpoint to {ckpt_path}")
+    dist.barrier()  # Ensure all ranks wait until checkpoint is saved before proceeding
+
+def load_ddp_checkpoint(
+    resume_from: str,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+) -> int:
+    """
+    Load a previously saved DDP checkpoint and restore model / optimizer
+    states. Every rank loads the same file independently (the model weights
+    are identical across ranks after broadcast, so this is safe).
+
+    Args:
+        resume_from: Path to the checkpoint ``.pt`` file.
+        model: The DDPOverlapBucketed wrapper (or any wrapper with .module).
+        optimizer: The optimizer to restore state into.
+        device: The device to map tensors onto (``cuda:<rank>``).
+
+    Returns:
+        The epoch number stored in the checkpoint (training resumes from
+        ``epoch + 1``).
+    """
+    checkpoint = torch.load(resume_from, map_location=device)
+    raw_model = model.module if hasattr(model, "module") else model
+    raw_model.load_state_dict(checkpoint["model"])
+    optimizer.load_state_dict(checkpoint["optimizer"])
+    print(f"[Checkpoint] Loaded checkpoint from {resume_from} with epoch {checkpoint['iter']}")
+    return checkpoint["iter"]
+
 
 def parallel_train(
     rank: int,
@@ -62,7 +126,7 @@ def parallel_train(
     world_size: int,
     trDataset: Dataset,
     valDataset: Dataset,
-    model: torch.nn.Module,
+    model_kwargs: dict,
     optimizer_args: dict,
     loss_fn: Callable,
     epochs: int,
@@ -73,6 +137,13 @@ def parallel_train(
     print_every = None,
     time_warmup_ep = None,
     bucket_size_mb = 1,
+    checkpoint_dir = None,
+    checkpoint_interval = None,
+    resume_from = None,
+    compile: bool = False,
+    seed: int = 0,
+    wandb_project: str | None = None,
+    wandb_run_name: str | None = None,
 ):
     """
     Training TransformerLM with with same `model_args` using DDP-style gradient sync and lazy data loading.
@@ -93,7 +164,17 @@ def parallel_train(
         - val_batch_size: batch size for validation
         - backend: the distributed backend to use (e.g. "nccl" for GPU training)
         - print_every: Mianly for inspecting gradient and parameter values. If None, only print at eval intervals.
+        - checkpoint_dir: directory to save training checkpoints (None disables saving).
+        - checkpoint_interval: save a checkpoint every N epochs.
+        - resume_from: path to a .pt checkpoint file to resume training from.
+        - compile: if True, torch.compile the model for kernel fusion.
+        - seed: random seed for reproducibility.
+        - wandb_project: Weights & Biases project name (only rank 0 logs). None disables W&B.
+        - wandb_run_name: optional W&B run name override.
     """
+    # Seed for reproducibility
+    torch.manual_seed(seed + rank)
+
     set_dist_env(rank, world_size, backend=backend)
 
     if backend == "nccl":
@@ -137,12 +218,38 @@ def parallel_train(
     )
 
     # Boardcast the initial model parameters from rank 0 to other ranks
+    model = TransformerLM(**model_kwargs)
     model = model.to(device)
     print(f"Rank {rank} broadcasting initial model parameters...")
     for p in model.parameters():
         dist.broadcast(p.data, src=0)
     model.train()
     model = parallel_wrapper(model, bucket_size_mb=bucket_size_mb)
+    # Compute model size
+    para_num_billion = sum(p.numel() for p in model.parameters()) / 1e9
+    print(f"Rank {rank} model initialized with {para_num_billion:.2f}B parameters.")
+
+    # Compile the model if flagged
+    if compile:
+        print(f"Rank {rank} compiling model with torch.compile (inductor backend)...")
+        model.module = torch.compile(model.module, backend="inductor")
+
+    # Initialize W&B logging on rank 0 only
+    wandb_run = None
+    if wandb_project is not None and rank == 0:
+        run_name = wandb_run_name or f"flashddp-{para_num_billion:.2f}B_LM-bkt{bucket_size_mb}MB"
+        wandb_run = wandb.init(project=wandb_project, name=run_name, config={
+            "world_size": world_size,
+            "epochs": epochs,
+            "tr_batch_size": tr_batch_size,
+            "val_batch_size": val_batch_size,
+            "bucket_size_mb": bucket_size_mb,
+            "compile": compile,
+            "seed": seed,
+            **optimizer_args,
+            **model_kwargs,
+        })
+
     # Timing logs
     total_avg_comm_time = 0.0
     total_avg_epoch_time = 0.0
@@ -152,16 +259,23 @@ def parallel_train(
 
     # Init optimizer
     optimizer = AdamW(model.parameters(), **optimizer_args)
-    for epoch in range(epochs):
+
+    # Resume from checkpoint if provided
+    start_epoch = 0
+    if resume_from is not None:
+        start_epoch = load_ddp_checkpoint(resume_from, model, optimizer, device)
+        print(f"Rank {rank} resuming training from epoch {start_epoch + 1}")
+
+    for epoch in range(start_epoch, epochs):
         # Set up DDP sampler, ensuring no data leaks across ranks
         print(f"Rank {rank} starting epoch {epoch + 1}/{epochs}")
         tr_sampler.set_epoch(epoch)
         val_sampler.set_epoch(epoch)
         acc_loss = 0.0
 
-        # Start timing
-        _synchronize_if_cuda(device)
-        t0 = time.perf_counter()
+        # # Start timing
+        # _synchronize_if_cuda(device)
+        # t0 = time.perf_counter()
 
         # Train on local batch
         i = 0
@@ -197,20 +311,25 @@ def parallel_train(
             i += 1
             if i == 100:  # TODO: Remove it
                 break
+
+        # W&B: log average training loss for the epoch
+        avg_train_loss = acc_loss / max(i, 1)
+        if wandb_run is not None:
+            wandb_run.log({"epoch": epoch + 1, "train/loss": avg_train_loss}, step=epoch + 1)
         
-        # Log Timing Info
-        _synchronize_if_cuda(device)
-        t3 = time.perf_counter()
-        epoch_time = t3 - t0
+        # # Log Timing Info
+        # _synchronize_if_cuda(device)
+        # t3 = time.perf_counter()
+        # epoch_time = t3 - t0
 
-        if time_warmup_ep is not None and epoch < time_warmup_ep:
-            timing = torch.tensor([epoch_time], device=device)
-            dist.all_reduce(timing, op=dist.ReduceOp.SUM)
-            timing /= world_size
+        # if time_warmup_ep is not None and epoch < time_warmup_ep:
+        #     timing = torch.tensor([epoch_time], device=device)
+        #     dist.all_reduce(timing, op=dist.ReduceOp.SUM)
+        #     timing /= world_size
 
-            avg_epoch_time = timing[0].item()
+        #     avg_epoch_time = timing[0].item()
 
-            total_avg_epoch_time += avg_epoch_time
+        #     total_avg_epoch_time += avg_epoch_time
 
         # Evaluation on validation set every eval_interval epochs
         if eval_interval > 0 and (epoch + 1) % eval_interval == 0:
@@ -232,17 +351,44 @@ def parallel_train(
             print(
                 f"Rank {rank} | "
                 f"Epoch {epoch + 1:04d}"
-                f"Avg total: {avg_epoch_time:.4f}s | Local loss sum: {acc_loss:.4f} | Val loss: {avg_val_loss:.4f}"
+                f"Local loss sum: {acc_loss:.4f} | Val loss: {avg_val_loss:.4f}"
             )
             print(f"Inspect parameters sample (rank {rank}): {model.parameters().__next__()[0, :5].tolist()}")
 
+            # W&B: log validation loss
+            if wandb_run is not None:
+                wandb_run.log({"epoch": epoch + 1, "val/loss": avg_val_loss}, step=epoch + 1)
+
+        # ---- Checkpoint Save ----
+        if (
+            checkpoint_dir is not None
+            and checkpoint_interval is not None
+            and (epoch + 1) % checkpoint_interval == 0
+        ):
+            save_ddp_checkpoint(
+                model,
+                optimizer,
+                epoch + 1,  # Store the epoch that just finished
+                checkpoint_dir,
+                rank,
+                wandb_run,
+            )
+
         # ---- Epoch End ----
+
+    # Save a final checkpoint at the end of training
+    if checkpoint_dir is not None:
+        save_ddp_checkpoint(model, optimizer, epochs, checkpoint_dir, rank, wandb_run)
 
     # Finished Training, print final timing results averaged across ranks.
     if rank == 0:
         print("\n=== Final Timing Results (avg across ranks) ===")
         print(f"Average communication time per epoch: {total_avg_comm_time / epochs:.4f} seconds")
         print(f"Average total time per epoch: {total_avg_epoch_time / epochs:.4f} seconds")
+
+    # Finalize W&B run
+    if wandb_run is not None:
+        wandb_run.finish()
 
     dist.barrier()
     dist.destroy_process_group()
@@ -266,6 +412,21 @@ if __name__ == "__main__":
     parser.add_argument("--VAL_PATH", type=str, required=True)
     parser.add_argument("--DTYPE", type=str, default="float32", choices=list(DTYPE_DICT.keys()))
     parser.add_argument("--BUCKET_SIZE_MB", type=int, default=1)
+
+    # Checkpointing
+    parser.add_argument("--CHECKPOINT_DIR", type=str, default=None,
+                        help="Directory to save training checkpoints. If None, no checkpoints are saved.")
+    parser.add_argument("--CHECKPOINT_INTERVAL", type=int, default=None,
+                        help="Save a checkpoint every N epochs. Requires --CHECKPOINT_DIR.")
+    parser.add_argument("--RESUME_FROM", type=str, default=None,
+                        help="Path to a .pt checkpoint file to resume training from.")
+    parser.add_argument("--COMPILE", action="store_true", default=False,
+                        help="Compile the model with torch.compile for kernel fusion.")
+    parser.add_argument("--SEED", type=int, default=0, help="Random seed for reproducibility.")
+    parser.add_argument("--WANDB_PROJECT", type=str, default=None,
+                        help="Weights & Biases project name. None disables W&B logging.")
+    parser.add_argument("--WANDB_RUN_NAME", type=str, default=None,
+                        help="Optional W&B run name override.")
     
     # Model Hyperparameters
     parser.add_argument("--CONTEXT_LENGTH", type=int, default=256)
@@ -342,6 +503,13 @@ if __name__ == "__main__":
             args.PRINT_EVERY,
             args.WARMUP_EPOCHS,
             args.BUCKET_SIZE_MB,
+            args.CHECKPOINT_DIR,
+            args.CHECKPOINT_INTERVAL,
+            args.RESUME_FROM,
+            args.COMPILE,
+            args.SEED,
+            args.WANDB_PROJECT,
+            args.WANDB_RUN_NAME,
         ),
         nprocs=world_size,
         join=True,

@@ -93,16 +93,28 @@ source .venv/bin/activate
 
 A single end-to-end pipeline script that downloads TinyStories, trains a BPE tokenizer, tokenizes the dataset, and trains a Transformer LM — all configurable from one JSON config file:
 
+Remember to set the WanDB API key as the env variable: 
+```bash
+export WANDB_API_KEY= ...
+```
+
 ```bash
 # Default single-GPU run
 uv run python cs336_systems/experiments/run_pipeline.py \
     --config cs336_systems/experiments/default_pipeline_config.json
 
-# Override attention kernel & DDP wrapper from CLI
+# Single-GPU with FlashAttention
 uv run python cs336_systems/experiments/run_pipeline.py \
     --config cs336_systems/experiments/default_pipeline_config.json \
     --attention_kernel flash_attention_triton \
-    --ddp_wrapper flashddp
+    --skip_data
+
+# Override FlashAttention kernel, DDP wrapper from CLI
+uv run python cs336_systems/experiments/run_pipeline.py \
+    --config cs336_systems/experiments/default_pipeline_config.json \
+    --attention_kernel flash_attention_triton \
+    --ddp_wrapper flashddp \
+    --skip_data
 
 # Skip data prep if .npy files already exist
 uv run python cs336_systems/experiments/run_pipeline.py \

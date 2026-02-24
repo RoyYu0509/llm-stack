@@ -167,8 +167,7 @@ class BBPE(AbstractPreTokenizer):
         self.freq_dict = {}
 
         # Go through the pairs
-        for byte_id_seq, count in tqdm(self.pretok_dict.items(),
-                                        desc="Building freq dict", unit="pretoken"):
+        for byte_id_seq, count in tqdm(self.pretok_dict.items(), desc="Building freq dict", unit="pretoken"):
             # Skip the byte_id_seq have at least two elements to form a pair
             if len(byte_id_seq) < 2:
                 # print(f"The sting {bytes([byte_id_seq[0]])} byte sequence has length {len(byte_id_seq)}, less than 2")

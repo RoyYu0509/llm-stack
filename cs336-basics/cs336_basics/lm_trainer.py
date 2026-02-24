@@ -288,7 +288,7 @@ def local_train(
         for group in opt.param_groups:
             group["lr"] = lr
         
-        # 8) Check if 
+        # 8) Checkpointing and evaluation logic based on iteration count and provided intervals.
         _eval = (iteration % EVAL_INTERVAL == 0)
         _checkpting = ((CHECKPOINTING_INTERVAL > 0) and iteration != 0 and iteration % CHECKPOINTING_INTERVAL == 0) or (iteration == EPOCHES - 1)
 

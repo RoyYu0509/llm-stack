@@ -37,6 +37,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+torch.set_float32_matmul_precision('high')
 
 
 # ---------------------------------------------------------------------------
@@ -240,10 +241,10 @@ def stage_train_ddp(cfg: dict, wrapper: str) -> None:
     """Multi-GPU DDP training via mp.spawn."""
     _ensure_cuda()
     world_size = torch.cuda.device_count()
-    if world_size < 2:
-        print("[stage:train] Only 1 GPU detected — falling back to single-GPU training.")
-        stage_train_single_gpu(cfg)
-        return
+    # if world_size < 2:
+    #     print("[stage:train] Only 1 GPU detected — falling back to single-GPU training.")
+    #     stage_train_single_gpu(cfg)
+    #     return
 
     m = cfg["model"]
     t = cfg["training"]
@@ -269,7 +270,6 @@ def stage_train_ddp(cfg: dict, wrapper: str) -> None:
         dtype=dtype,
         attention_fn=kernel_fn,
     )
-    model = TransformerLM(**model_kwargs)
 
     optim_kwargs = dict(
         lr=t.get("lr", 3e-4),
@@ -293,21 +293,38 @@ def stage_train_ddp(cfg: dict, wrapper: str) -> None:
         print(f"[stage:train] DDP=naive  kernel={kernel_name}  GPUs={world_size}")
         mp.spawn(
             fn=naive_LLM_DDP,
-            args=(world_size, tr_dataset, val_dataset, model, optim_kwargs,
+            args=(world_size, tr_dataset, val_dataset, model_kwargs, optim_kwargs,
                   cross_entropy, epochs, eval_interval, tr_bs, val_bs, backend),
             nprocs=world_size, join=True,
         )
     elif wrapper == "flashddp":
-        from cs336_systems.Parallelization.DDP.FlashDDP.FlashDDP import DDPOverlapBucketed
-        from cs336_systems.Parallelization.DDP.FlashDDP.FlashDDP_runner import parallel_train
+        from cs336_systems.Parallelization.FlashDDP.FlashDDP import DDPOverlapBucketed
+        from cs336_systems.Parallelization.FlashDDP.FlashDDP_runner import parallel_train
 
         bucket_mb = cfg.get("bucket_size_mb", 1)
-        print(f"[stage:train] DDP=flashddp  kernel={kernel_name}  GPUs={world_size}  bucket={bucket_mb}MB")
+        c = cfg.get("checkpointing", {})
+        checkpoint_dir = c.get("checkpoint_dir", None)
+        checkpoint_interval = c.get("checkpointing_interval", None)
+        resume_from = cfg.get("resume_from", None)
+        do_compile = t.get("compile", False)
+        seed = t.get("seed", 0)
+        w = cfg.get("wandb", {})
+        wandb_project = w.get("project", None)
+        wandb_run_name = w.get("run_name", None)
+
+        print(
+            f"[stage:train] DDP=flashddp  kernel={kernel_name}  GPUs={world_size}  "
+            f"bucket={bucket_mb}MB  compile={do_compile}  seed={seed}  "
+            f"ckpt_dir={checkpoint_dir}  ckpt_interval={checkpoint_interval}  "
+            f"resume={resume_from}  wandb={wandb_project}"
+        )
         mp.spawn(
             fn=parallel_train,
-            args=(DDPOverlapBucketed, world_size, tr_dataset, val_dataset, model,
+            args=(DDPOverlapBucketed, world_size, tr_dataset, val_dataset, model_kwargs,
                   optim_kwargs, cross_entropy, epochs, eval_interval, tr_bs, val_bs,
-                  backend, None, None, bucket_mb),
+                  backend, None, None, bucket_mb,
+                  checkpoint_dir, checkpoint_interval, resume_from,
+                  do_compile, seed, wandb_project, wandb_run_name),
             nprocs=world_size, join=True,
         )
     else:
@@ -327,6 +344,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Override config attention_kernel.")
     p.add_argument("--ddp_wrapper", type=str, choices=VALID_DDP,
                    help="Override config ddp_wrapper.")
+    p.add_argument("--checkpoint_dir", type=str,
+                   help="Override config checkpointing.checkpoint_dir.")
+    p.add_argument("--checkpoint_interval", type=int,
+                   help="Override config checkpointing.checkpointing_interval.")
+    p.add_argument("--resume_from", type=str,
+                   help="Path to a .pt checkpoint file to resume training from.")
     p.add_argument("--skip_data", action="store_true",
                    help="Skip download/tokenizer/dataset stages (assume data exists).")
     return p
@@ -344,6 +367,12 @@ def main() -> None:
         cfg["attention_kernel"] = args.attention_kernel
     if getattr(args, "ddp_wrapper", None):
         cfg["ddp_wrapper"] = args.ddp_wrapper
+    if getattr(args, "checkpoint_dir", None):
+        cfg.setdefault("checkpointing", {})["checkpoint_dir"] = args.checkpoint_dir
+    if getattr(args, "checkpoint_interval", None):
+        cfg.setdefault("checkpointing", {})["checkpointing_interval"] = args.checkpoint_interval
+    if getattr(args, "resume_from", None):
+        cfg["resume_from"] = args.resume_from
 
     kernel = cfg.get("attention_kernel", "scaled_dot_prod_attention")
     ddp = cfg.get("ddp_wrapper", "none")

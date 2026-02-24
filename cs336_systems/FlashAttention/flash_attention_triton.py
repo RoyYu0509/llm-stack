@@ -261,7 +261,7 @@ def flash_fwd_triton(
     # block_shape element to be a power of two; otherwise compilation
     # can fail with obscure errors. Raise a clear error so users can
     # either pick a power-of-two D or pad their tensors.
-    if D & (D - 1) != 0:
+    if (D & (D - 1)) != 0 or D < 16:
         raise ValueError(
             f"Shape = (Head_dim, Q_N, K_N) = ({D}, {Q_N}, {K_N}) all dims should be pow of 2 and >= 16,\n"
         )
