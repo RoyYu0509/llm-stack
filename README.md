@@ -115,20 +115,10 @@ Supported wrappers:
 uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
   --train_path data/tokenized/ts_train.npy \
   --val_path data/tokenized/ts_valid.npy \
-  --epochs 10 --tr_batch_size 32 --context_length 256 \
+  --epochs 10 --tr_batch_size 64 --context_length 256 \
   --vocab_size 10000 \
   --d_model 768 --d_ff 3072 --num_layers 12 --num_heads 12 \
   --kernels scaled_dot_prod_attention vectorized_torch flash_attention_triton \
-  --wrappers Local\ No\ DDP Naive\ DDP Bucketed\ Overlapping\ DDP Pytorch\ DDP
-```
-```
-uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
-  --train_path data/tokenized/ts_train.npy \
-  --val_path data/tokenized/ts_valid.npy \
-  --epochs 5 --tr_batch_size 32 --context_length 64 \
-  --vocab_size 10000 \
-  --d_model 512 --d_ff 4096 --num_layers 3 --num_heads 16 \
-  --kernels vectorized_torch \
   --wrappers Local\ No\ DDP Naive\ DDP Bucketed\ Overlapping\ DDP Pytorch\ DDP
 ```
 

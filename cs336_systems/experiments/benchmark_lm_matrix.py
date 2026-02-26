@@ -21,9 +21,10 @@ Produces:
   artifacts/lm_matrix_results.csv
   artifacts/lm_matrix_loss_curves.csv
   artifacts/lm_matrix_table_<kernel>.pdf
-  artifacts/lm_matrix_time.png
+  artifacts/<kernel>_lm_matrix_time.png
   artifacts/lm_matrix_memory.png
-  artifacts/lm_matrix_throughput.png
+  artifacts/<kernel>_lm_matrix_throughput.png
+  artifacts/<kernel>_lm_matrix_samples.png
   artifacts/lm_matrix_convergence.png
   artifacts/lm_matrix_report.md
 
@@ -406,27 +407,78 @@ def _plot_results(results: list[dict], out_dir: Path) -> None:
         print("[plot] No valid results to plot.")
         return
 
-    labels = [f"{r['kernel']}\n{r['ddp']}" for r in valid]
-    ddp_color_map = {"Local No DDP": "#4C72B0", "Naive DDP": "#DD8452", "Bucketed Overlapping DDP": "#55A868", "Pytorch DDP": "#C44E52"}
-    colors = [ddp_color_map.get(r["ddp"], "#999999") for r in valid]
-    x = np.arange(len(valid))
+    ddp_color_map = {
+        "Local No DDP": "#4C72B0",
+        "Naive DDP": "#DD8452",
+        "Bucketed Overlapping DDP": "#55A868",
+        "Pytorch DDP": "#C44E52",
+    }
 
-    # --- Time bar chart ---
-    times = [r["sec_per_epoch"] for r in valid]
-    fig, ax = plt.subplots(figsize=(max(8, len(valid) * 1.5), 5))
-    bars = ax.bar(x, times, color=colors, edgecolor="black", linewidth=0.5)
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=8, rotation=30, ha="right")
-    ax.set_ylabel("Seconds / Epoch")
-    ax.set_title("LM Training: Wall-clock Time per Epoch\n(same steps/epoch — DDP processes more samples)")
-    for bar, t in zip(bars, times):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
-                f"{t:.2f}s", ha="center", va="bottom", fontsize=7)
-    fig.tight_layout()
-    fig.savefig(out_dir / "lm_matrix_time.png", dpi=150)
-    plt.close(fig)
+    # --- Per-kernel plots: time / throughput / samples ---
+    kernels = sorted({r["kernel"] for r in valid})
+    ddp_order = {name: i for i, name in enumerate(DDP_WRAPPERS)}
+
+    for kernel in kernels:
+        k_rows = sorted(
+            [r for r in valid if r["kernel"] == kernel],
+            key=lambda r: ddp_order.get(r["ddp"], 999),
+        )
+        if not k_rows:
+            continue
+
+        labels_k = [f"{r['ddp']}\n{r.get('gpus', 0)}GPU" for r in k_rows]
+        colors_k = [ddp_color_map.get(r["ddp"], "#999999") for r in k_rows]
+        x_k = np.arange(len(k_rows))
+
+        # --- Time bar chart (per kernel) ---
+        times = [r["sec_per_epoch"] for r in k_rows]
+        fig, ax = plt.subplots(figsize=(max(7, len(k_rows) * 1.8), 5))
+        bars = ax.bar(x_k, times, color=colors_k, edgecolor="black", linewidth=0.5)
+        ax.set_xticks(x_k)
+        ax.set_xticklabels(labels_k, fontsize=9)
+        ax.set_ylabel("Seconds / Epoch")
+        ax.set_title(f"LM Training: Wall-clock Time per Epoch ({kernel})")
+        for bar, t in zip(bars, times):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+                    f"{t:.2f}s", ha="center", va="bottom", fontsize=8)
+        fig.tight_layout()
+        fig.savefig(out_dir / f"{kernel}_lm_matrix_time.png", dpi=150)
+        plt.close(fig)
+
+        # --- Throughput bar chart (per kernel) ---
+        tps = [r["tokens_per_sec"] for r in k_rows]
+        fig3, ax3 = plt.subplots(figsize=(max(7, len(k_rows) * 1.8), 5))
+        bars3 = ax3.bar(x_k, tps, color=colors_k, edgecolor="black", linewidth=0.5)
+        ax3.set_xticks(x_k)
+        ax3.set_xticklabels(labels_k, fontsize=9)
+        ax3.set_ylabel("Tokens / Second (aggregate)")
+        ax3.set_title(f"LM Training: Aggregate Throughput ({kernel})")
+        for bar, tp in zip(bars3, tps):
+            ax3.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+                     f"{tp:.0f}", ha="center", va="bottom", fontsize=8)
+        fig3.tight_layout()
+        fig3.savefig(out_dir / f"{kernel}_lm_matrix_throughput.png", dpi=150)
+        plt.close(fig3)
+
+        # --- Samples-per-epoch bar chart (per kernel) ---
+        spe = [r.get("samples_per_epoch", 0) for r in k_rows]
+        fig4, ax4 = plt.subplots(figsize=(max(7, len(k_rows) * 1.8), 5))
+        bars4 = ax4.bar(x_k, spe, color=colors_k, edgecolor="black", linewidth=0.5)
+        ax4.set_xticks(x_k)
+        ax4.set_xticklabels(labels_k, fontsize=9)
+        ax4.set_ylabel("Samples / Epoch")
+        ax4.set_title(f"LM Training: Total Samples per Epoch ({kernel})")
+        for bar, s in zip(bars4, spe):
+            ax4.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+                     f"{s}", ha="center", va="bottom", fontsize=8)
+        fig4.tight_layout()
+        fig4.savefig(out_dir / f"{kernel}_lm_matrix_samples.png", dpi=150)
+        plt.close(fig4)
 
     # --- Per-GPU Memory bar chart ---
+    labels = [f"{r['kernel']}\n{r['ddp']}" for r in valid]
+    x = np.arange(len(valid))
+    colors = [ddp_color_map.get(r["ddp"], "#999999") for r in valid]
     mems = [r["peak_gpu_mb"] for r in valid]
     fig2, ax2 = plt.subplots(figsize=(max(8, len(valid) * 1.5), 5))
     bars2 = ax2.bar(x, mems, color=colors, edgecolor="black", linewidth=0.5)
@@ -440,36 +492,6 @@ def _plot_results(results: list[dict], out_dir: Path) -> None:
     fig2.tight_layout()
     fig2.savefig(out_dir / "lm_matrix_memory.png", dpi=150)
     plt.close(fig2)
-
-    # --- Throughput bar chart ---
-    tps = [r["tokens_per_sec"] for r in valid]
-    fig3, ax3 = plt.subplots(figsize=(max(8, len(valid) * 1.5), 5))
-    bars3 = ax3.bar(x, tps, color=colors, edgecolor="black", linewidth=0.5)
-    ax3.set_xticks(x)
-    ax3.set_xticklabels(labels, fontsize=8, rotation=30, ha="right")
-    ax3.set_ylabel("Tokens / Second (aggregate)")
-    ax3.set_title("LM Training: Aggregate Throughput (higher is better)")
-    for bar, tp in zip(bars3, tps):
-        ax3.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
-                 f"{tp:.0f}", ha="center", va="bottom", fontsize=7)
-    fig3.tight_layout()
-    fig3.savefig(out_dir / "lm_matrix_throughput.png", dpi=150)
-    plt.close(fig3)
-
-    # --- Samples-per-epoch bar chart (shows DDP advantage) ---
-    spe = [r.get("samples_per_epoch", 0) for r in valid]
-    fig4, ax4 = plt.subplots(figsize=(max(8, len(valid) * 1.5), 5))
-    bars4 = ax4.bar(x, spe, color=colors, edgecolor="black", linewidth=0.5)
-    ax4.set_xticks(x)
-    ax4.set_xticklabels(labels, fontsize=8, rotation=30, ha="right")
-    ax4.set_ylabel("Samples / Epoch")
-    ax4.set_title("LM Training: Total Samples Processed per Epoch\n(DDP = world_size × single-GPU)")
-    for bar, s in zip(bars4, spe):
-        ax4.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
-                 f"{s}", ha="center", va="bottom", fontsize=7)
-    fig4.tight_layout()
-    fig4.savefig(out_dir / "lm_matrix_samples.png", dpi=150)
-    plt.close(fig4)
 
     # --- Loss convergence plot ---
     has_curves = any(r.get("loss_curve") for r in valid)
@@ -524,10 +546,13 @@ def _write_markdown(results: list[dict], out_dir: Path) -> None:
                 f"| {r.get('tokens_per_sec',0)} | {r.get('peak_gpu_mb',0)} |\n"
             )
         f.write("\n## Charts\n\n")
-        f.write("![Time per Epoch](lm_matrix_time.png)\n\n")
         f.write("![Peak Per-GPU Memory](lm_matrix_memory.png)\n\n")
-        f.write("![Throughput](lm_matrix_throughput.png)\n\n")
-        f.write("![Samples per Epoch](lm_matrix_samples.png)\n\n")
+        kernels = sorted({r["kernel"] for r in results if r.get("wall_sec", 0) > 0})
+        for kernel in kernels:
+            f.write(f"### {kernel}\n\n")
+            f.write(f"![Time per Epoch]({kernel}_lm_matrix_time.png)\n\n")
+            f.write(f"![Throughput]({kernel}_lm_matrix_throughput.png)\n\n")
+            f.write(f"![Samples per Epoch]({kernel}_lm_matrix_samples.png)\n\n")
         f.write("![Loss Convergence](lm_matrix_convergence.png)\n")
     print(f"[report] Saved {md_path}")
 
