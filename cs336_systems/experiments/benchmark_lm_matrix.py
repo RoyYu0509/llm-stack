@@ -52,7 +52,7 @@ from tqdm import tqdm
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-
+torch.set_float32_matmul_precision('high')
 # ---------------------------------------------------------------------------
 # Kernel & wrapper registries
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ KERNELS = [
 
 DDP_WRAPPERS = ["Local No DDP", "Naive DDP", "Bucketed Overlapping DDP", "Pytorch DDP"]
 BENCH_STEPS_PER_EPOCH = 51
-WARMUP_STEPS = 5
+WARMUP_EPOCHS = 2  # untimed warmup epochs before timed epochs
 
 
 def _get_kernel_fn(name: str):
@@ -103,31 +103,23 @@ def _bench_single_gpu(
     dataset = TokenStreamDataset(train_path, context_length)
     loader = DataLoader(dataset, batch_size=tr_batch_size, shuffle=True, drop_last=True, num_workers=2)
 
-    # ── Warmup iterations (not timed) ──
-    warmup_loader = DataLoader(dataset, batch_size=tr_batch_size, shuffle=True, drop_last=True, num_workers=2)
-    for wi, (x, y) in enumerate(warmup_loader):
-        print(f"[warmup] Iter {wi+1}/{WARMUP_STEPS}", end="\r")
-        x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-        optimizer.zero_grad()
-        pred = model(x)
-        loss = cross_entropy(pred, y)
-        loss.backward()
-        optimizer.step()
-        if (wi + 1) >= WARMUP_STEPS:
-            break
-    torch.cuda.synchronize()
-    del warmup_loader
-
-    torch.cuda.reset_peak_memory_stats(0)
-    torch.cuda.synchronize()
-    
-
+    total_epochs = WARMUP_EPOCHS + epochs
     total_tokens = 0
     loss_curve = []  # list of (wall_sec, global_step, loss_val)
     global_step = 0
-    
-    t0 = time.perf_counter()
-    for epoch in tqdm(range(epochs), desc="Epochs"):
+    t0 = None  # set after warmup epochs
+
+    for epoch in tqdm(range(total_epochs), desc="Epochs"):
+        # After warmup epochs finish, reset timer and memory stats
+        if epoch == WARMUP_EPOCHS:
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats(0)
+            total_tokens = 0
+            global_step = 0
+            t0 = time.perf_counter()
+
+        is_timed = epoch >= WARMUP_EPOCHS
+
         for i, (x, y) in enumerate(loader):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             optimizer.zero_grad()
@@ -135,15 +127,16 @@ def _bench_single_gpu(
             loss = cross_entropy(pred, y)
             loss.backward()
             optimizer.step()
-            total_tokens += x.numel()
-            global_step += 1
-            # Record loss every few steps
-            if global_step % 5 == 1 or (i + 1) >= BENCH_STEPS_PER_EPOCH:
-                loss_curve.append((
-                    round(time.perf_counter() - t0, 4),
-                    global_step,
-                    round(loss.item(), 4),
-                ))
+            if is_timed:
+                total_tokens += x.numel()
+                global_step += 1
+                # Record loss every few steps
+                if global_step % 5 == 1 or (i + 1) >= BENCH_STEPS_PER_EPOCH:
+                    loss_curve.append((
+                        round(time.perf_counter() - t0, 4),
+                        global_step,
+                        round(loss.item(), 4),
+                    ))
             if (i + 1) >= BENCH_STEPS_PER_EPOCH:
                 break  # cap iterations per epoch for benchmark
 
@@ -189,7 +182,7 @@ def _ddp_worker(
     dtype: torch.dtype,
     result_dict,
     loss_list,
-    bucket_size_mb: int = 1,
+    bucket_size_mb: int = 25,
 ):
     os.environ.setdefault("MASTER_ADDR", "localhost")
     os.environ.setdefault("MASTER_PORT", "29500")
@@ -226,47 +219,25 @@ def _ddp_worker(
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True, drop_last=True)
     loader = DataLoader(dataset, batch_size=local_batch_size, sampler=sampler, num_workers=2)
 
-    # ── Warmup iterations (not timed) ──
-    warmup_loader = DataLoader(dataset, batch_size=local_batch_size, sampler=sampler, num_workers=2)
-    if rank == 0:
-        print(f"[warmup-{wrapper_name}] starting {WARMUP_STEPS} iterations")
-    for wi, (x, y) in enumerate(warmup_loader):
-        if rank == 0:
-            print(f"[warmup-{wrapper_name}] Iter {wi+1}/{WARMUP_STEPS}", end="\r", flush=True)
-        x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-        if wrapper_name == "Bucketed Overlapping DDP":
-            optimizer.zero_grad(set_to_none=False)
-        else:
-            optimizer.zero_grad()
-        pred = model(x)
-        loss = cross_entropy(pred, y)
-        loss.backward()
-        if wrapper_name == "Naive DDP":
-            for p in model.parameters():
-                if p.grad is not None:
-                    dist.all_reduce(p.grad, op=dist.ReduceOp.SUM)
-                    p.grad /= world_size
-        elif wrapper_name == "Bucketed Overlapping DDP":
-            model.finish_gradient_synchromnization()
-        # Pytorch DDP: gradient sync happens automatically in backward()
-        optimizer.step()
-        if (wi + 1) >= WARMUP_STEPS:
-            break
-    torch.cuda.synchronize(device)
-    dist.barrier()
-    del warmup_loader
-
-    torch.cuda.reset_peak_memory_stats(rank)
-    dist.barrier()
-    torch.cuda.synchronize(device)
-    
-
+    total_epochs = WARMUP_EPOCHS + epochs
     total_tokens = 0
     global_step = 0
+    t0 = None  # set after warmup epochs
 
-    t0 = time.perf_counter()
-    for epoch in tqdm(range(epochs), desc=f"Rank {rank} Epochs", disable=(rank != 0)):
+    for epoch in tqdm(range(total_epochs), desc=f"Rank {rank} Epochs", disable=(rank != 0)):
         sampler.set_epoch(epoch)
+
+        # After warmup epochs finish, reset timer and memory stats
+        if epoch == WARMUP_EPOCHS:
+            torch.cuda.synchronize(device)
+            dist.barrier()
+            torch.cuda.reset_peak_memory_stats(rank)
+            total_tokens = 0
+            global_step = 0
+            t0 = time.perf_counter()
+
+        is_timed = epoch >= WARMUP_EPOCHS
+
         for i, (x, y) in enumerate(loader):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             if wrapper_name == "Bucketed Overlapping DDP":
@@ -287,16 +258,18 @@ def _ddp_worker(
             # Pytorch DDP: gradient sync happens automatically in backward()
 
             optimizer.step()
-            total_tokens += x.numel()
-            global_step += 1
 
-            # Rank 0 records loss curve
-            if rank == 0 and (global_step % 5 == 1 or (i + 1) >= steps_per_epoch):
-                loss_list.append((
-                    round(time.perf_counter() - t0, 4),
-                    global_step,
-                    round(loss.item(), 4),
-                ))
+            if is_timed:
+                total_tokens += x.numel()
+                global_step += 1
+
+                # Rank 0 records loss curve
+                if rank == 0 and (global_step % 5 == 1 or (i + 1) >= steps_per_epoch):
+                    loss_list.append((
+                        round(time.perf_counter() - t0, 4),
+                        global_step,
+                        round(loss.item(), 4),
+                    ))
 
             if (i + 1) >= steps_per_epoch:
                 break

@@ -32,7 +32,7 @@ import timeit
 from pathlib import Path
 
 import torch
-
+torch.set_float32_matmul_precision('high')
 # ---------------------------------------------------------------------------
 # Tier definitions (powers of 2)
 # ---------------------------------------------------------------------------

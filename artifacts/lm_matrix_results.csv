@@ -1,5 +1,355 @@
-kernel,ddp,gpus,epochs,steps_per_epoch,global_batch_size,local_batch_size,samples_per_epoch,wall_sec,sec_per_epoch,tokens_per_sec,peak_gpu_mb
-vectorized_torch,Local No DDP,1,5,51,8,8,408,24.649,4.93,5296.8,652.6
-vectorized_torch,Naive DDP,2,5,51,16,8,816,66.134,13.227,3948.3,653.1
-vectorized_torch,Bucketed Overlapping DDP,2,5,51,16,8,816,61.238,12.248,4264.0,777.5
-vectorized_torch,Pytorch DDP,2,5,51,16,8,816,60.994,12.199,4281.1,776.0
+kernel,ddp,gpus,epochs,steps_per_epoch,global_batch_size,local_batch_size,samples_per_epoch,wall_sec,sec_per_epoch,tokens_per_sec,peak_gpu_mb,error
+scaled_dot_prod_attention,Local No DDP,0,10,51,64,0,0,0,0,0,0,"CUDA out of memory. Tried to allocate 626.00 MiB. GPU 0 has a total capacity of 23.56 GiB of which 385.00 MiB is free. Process 877226 has 23.17 GiB memory in use. Of the allocated memory 22.79 GiB is allocated by PyTorch, and 86.11 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+scaled_dot_prod_attention,Naive DDP,0,10,51,64,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/LLM-system-project/cs336_systems/experiments/benchmark_lm_matrix.py"", line 241, in _ddp_worker
+    pred = model(x)
+           ^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/lm.py"", line 206, in forward
+    x = self.norm(x)
+        ^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/.uv/python_install/cpython-3.12.0-linux-x86_64-gnu/lib/python3.12/contextlib.py"", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/transfromer/rmsnorm.py"", line 56, in forward
+    return ((x)/rms_x * self.gain).to(x_dtype) # scale back to input dtype
+            ~~~^^~~~~
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 48.00 MiB. GPU 0 has a total capacity of 23.56 GiB of which 37.62 MiB is free. Process 877226 has 328.00 MiB memory in use. Process 877909 has 23.19 GiB memory in use. Of the allocated memory 22.74 GiB is allocated by PyTorch, and 38.04 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+"
+scaled_dot_prod_attention,Bucketed Overlapping DDP,0,10,51,64,0,0,0,0,0,0,"
+
+-- Process 1 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/LLM-system-project/cs336_systems/experiments/benchmark_lm_matrix.py"", line 241, in _ddp_worker
+    pred = model(x)
+           ^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336_systems/Parallelization/FlashDDP/FlashDDP.py"", line 265, in forward
+    return self.module(*inputs, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/lm.py"", line 203, in forward
+    x = tf_block(x, token_positions=positions)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/.uv/python_install/cpython-3.12.0-linux-x86_64-gnu/lib/python3.12/contextlib.py"", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/transfromer/transformer.py"", line 90, in forward
+    x = x + self.FNN(self.RMSN2(x))
+            ^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/.uv/python_install/cpython-3.12.0-linux-x86_64-gnu/lib/python3.12/contextlib.py"", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/transfromer/pointwise_ffn.py"", line 38, in forward
+    x = x * einsum(self.W3, x_copy, ""dim_ff d_model, ... d_model -> ... dim_ff"")
+        ~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 192.00 MiB. GPU 1 has a total capacity of 23.56 GiB of which 22.94 MiB is free. Process 878705 has 23.53 GiB memory in use. Of the allocated memory 22.94 GiB is allocated by PyTorch, and 182.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+"
+scaled_dot_prod_attention,Pytorch DDP,0,10,51,64,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/LLM-system-project/cs336_systems/experiments/benchmark_lm_matrix.py"", line 241, in _ddp_worker
+    pred = model(x)
+           ^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/parallel/distributed.py"", line 1643, in forward
+    else self._run_ddp_forward(*inputs, **kwargs)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/parallel/distributed.py"", line 1459, in _run_ddp_forward
+    return self.module(*inputs, **kwargs)  # type: ignore[index]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/lm.py"", line 203, in forward
+    x = tf_block(x, token_positions=positions)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/.uv/python_install/cpython-3.12.0-linux-x86_64-gnu/lib/python3.12/contextlib.py"", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/transfromer/transformer.py"", line 90, in forward
+    x = x + self.FNN(self.RMSN2(x))
+            ^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/.uv/python_install/cpython-3.12.0-linux-x86_64-gnu/lib/python3.12/contextlib.py"", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/transfromer/pointwise_ffn.py"", line 36, in forward
+    x = self.SiLU(x)
+        ^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/transfromer/pointwise_ffn.py"", line 25, in SiLU
+    return x * torch.sigmoid(x)
+           ~~^~~~~~~~~~~~~~~~~~
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 192.00 MiB. GPU 0 has a total capacity of 23.56 GiB of which 79.62 MiB is free. Process 877226 has 328.00 MiB memory in use. Process 879492 has 23.15 GiB memory in use. Of the allocated memory 22.56 GiB is allocated by PyTorch, and 177.50 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+"
+vectorized_torch,Local No DDP,0,10,51,64,0,0,0,0,0,0,"CUDA out of memory. Tried to allocate 626.00 MiB. GPU 0 has a total capacity of 23.56 GiB of which 331.00 MiB is free. Process 877226 has 23.23 GiB memory in use. Of the allocated memory 22.25 GiB is allocated by PyTorch, and 677.87 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+vectorized_torch,Naive DDP,0,10,51,64,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/LLM-system-project/cs336_systems/experiments/benchmark_lm_matrix.py"", line 243, in _ddp_worker
+    loss.backward()
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/_tensor.py"", line 626, in backward
+    torch.autograd.backward(
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/autograd/__init__.py"", line 347, in backward
+    _engine_run_backward(
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/autograd/graph.py"", line 823, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 626.00 MiB. GPU 0 has a total capacity of 23.56 GiB of which 185.62 MiB is free. Process 877226 has 658.00 MiB memory in use. Process 880385 has 22.72 GiB memory in use. Of the allocated memory 21.64 GiB is allocated by PyTorch, and 677.75 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+"
+vectorized_torch,Bucketed Overlapping DDP,0,10,51,64,0,0,0,0,0,0,"
+
+-- Process 1 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/LLM-system-project/cs336_systems/experiments/benchmark_lm_matrix.py"", line 243, in _ddp_worker
+    loss.backward()
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/_tensor.py"", line 626, in backward
+    torch.autograd.backward(
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/autograd/__init__.py"", line 347, in backward
+    _engine_run_backward(
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/autograd/graph.py"", line 823, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 626.00 MiB. GPU 1 has a total capacity of 23.56 GiB of which 308.94 MiB is free. Process 881171 has 23.25 GiB memory in use. Of the allocated memory 22.12 GiB is allocated by PyTorch, and 725.05 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+"
+vectorized_torch,Pytorch DDP,0,10,51,64,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/LLM-system-project/cs336_systems/experiments/benchmark_lm_matrix.py"", line 243, in _ddp_worker
+    loss.backward()
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/_tensor.py"", line 626, in backward
+    torch.autograd.backward(
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/autograd/__init__.py"", line 347, in backward
+    _engine_run_backward(
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/autograd/graph.py"", line 823, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 626.00 MiB. GPU 0 has a total capacity of 23.56 GiB of which 19.62 MiB is free. Process 877226 has 658.00 MiB memory in use. Process 882207 has 22.88 GiB memory in use. Of the allocated memory 22.13 GiB is allocated by PyTorch, and 347.16 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+"
+flash_attention_triton,Local No DDP,0,10,51,64,0,0,0,0,0,0,"CUDA out of memory. Tried to allocate 626.00 MiB. GPU 0 has a total capacity of 23.56 GiB of which 337.00 MiB is free. Process 877226 has 23.22 GiB memory in use. Of the allocated memory 22.26 GiB is allocated by PyTorch, and 669.87 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+flash_attention_triton,Naive DDP,0,10,51,64,0,0,0,0,0,0,"
+
+-- Process 1 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/LLM-system-project/cs336_systems/experiments/benchmark_lm_matrix.py"", line 243, in _ddp_worker
+    loss.backward()
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/_tensor.py"", line 626, in backward
+    torch.autograd.backward(
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/autograd/__init__.py"", line 347, in backward
+    _engine_run_backward(
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/autograd/graph.py"", line 823, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 626.00 MiB. GPU 1 has a total capacity of 23.56 GiB of which 569.56 MiB is free. Process 883774 has 22.74 GiB memory in use. Process 885026 has 256.00 MiB memory in use. Of the allocated memory 21.64 GiB is allocated by PyTorch, and 692.04 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+"
+flash_attention_triton,Bucketed Overlapping DDP,0,10,51,64,0,0,0,0,0,0,"
+
+-- Process 0 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/LLM-system-project/cs336_systems/experiments/benchmark_lm_matrix.py"", line 241, in _ddp_worker
+    pred = model(x)
+           ^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336_systems/Parallelization/FlashDDP/FlashDDP.py"", line 265, in forward
+    return self.module(*inputs, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/lm.py"", line 203, in forward
+    x = tf_block(x, token_positions=positions)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/.uv/python_install/cpython-3.12.0-linux-x86_64-gnu/lib/python3.12/contextlib.py"", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/transfromer/transformer.py"", line 86, in forward
+    x = x + self.MHA(
+            ^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/.uv/python_install/cpython-3.12.0-linux-x86_64-gnu/lib/python3.12/contextlib.py"", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/transfromer/multiheads_attention.py"", line 133, in forward
+    multi_head_attention = self._multiHead(x, token_positions)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/.uv/python_install/cpython-3.12.0-linux-x86_64-gnu/lib/python3.12/contextlib.py"", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/transfromer/multiheads_attention.py"", line 119, in _multiHead
+    multi_head_packed = self.attention_fn(Q_packed, K_packed, V_packed, is_causal=self.is_causal)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/.uv/python_install/cpython-3.12.0-linux-x86_64-gnu/lib/python3.12/contextlib.py"", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/transfromer/scaled_dot_prod_attention.py"", line 76, in flash_attention_my_triton
+    return flash_attn_triton_fn(query, key, value, is_causal)  # Positional args only
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/autograd/function.py"", line 575, in apply
+    return super().apply(*args, **kwargs)  # type: ignore[misc]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336_systems/FlashAttention/flash_attention_triton.py"", line 347, in forward
+    O, L = flash_fwd_triton(Q, K, V,is_causal)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336_systems/FlashAttention/flash_attention_triton.py"", line 271, in flash_fwd_triton
+    OUT = torch.zeros((B, Q_N, D), dtype=Q.dtype, device=DEVICE)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 48.00 MiB. GPU 0 has a total capacity of 23.56 GiB of which 22.25 MiB is free. Process 877226 has 658.00 MiB memory in use. Process 885025 has 5.76 GiB memory in use. Process 885740 has 17.12 GiB memory in use. Of the allocated memory 16.57 GiB is allocated by PyTorch, and 142.54 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+"
+flash_attention_triton,Pytorch DDP,0,10,51,64,0,0,0,0,0,0,"
+
+-- Process 1 terminated with the following error:
+Traceback (most recent call last):
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/multiprocessing/spawn.py"", line 90, in _wrap
+    fn(i, *args)
+  File ""/workspace/LLM-system-project/cs336_systems/experiments/benchmark_lm_matrix.py"", line 241, in _ddp_worker
+    pred = model(x)
+           ^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/parallel/distributed.py"", line 1643, in forward
+    else self._run_ddp_forward(*inputs, **kwargs)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/parallel/distributed.py"", line 1459, in _run_ddp_forward
+    return self.module(*inputs, **kwargs)  # type: ignore[index]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/lm.py"", line 203, in forward
+    x = tf_block(x, token_positions=positions)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/.uv/python_install/cpython-3.12.0-linux-x86_64-gnu/lib/python3.12/contextlib.py"", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/transfromer/transformer.py"", line 90, in forward
+    x = x + self.FNN(self.RMSN2(x))
+            ^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1739, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/nn/modules/module.py"", line 1750, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/.uv/python_install/cpython-3.12.0-linux-x86_64-gnu/lib/python3.12/contextlib.py"", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/cs336-basics/cs336_basics/transfromer/pointwise_ffn.py"", line 38, in forward
+    x = x * einsum(self.W3, x_copy, ""dim_ff d_model, ... d_model -> ... dim_ff"")
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/einops/einops.py"", line 916, in einsum
+    return get_backend(tensors[0]).einsum(pattern, *tensors)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/einops/_backends.py"", line 288, in einsum
+    return self.torch.einsum(pattern, *x)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/workspace/LLM-system-project/.venv/lib/python3.12/site-packages/torch/functional.py"", line 407, in einsum
+    return _VF.einsum(equation, operands)  # type: ignore[attr-defined]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 192.00 MiB. GPU 1 has a total capacity of 23.56 GiB of which 19.56 MiB is free. Process 885026 has 5.76 GiB memory in use. Process 887076 has 17.77 GiB memory in use. Of the allocated memory 17.27 GiB is allocated by PyTorch, and 89.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+"
