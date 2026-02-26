@@ -65,38 +65,31 @@ autotune_configs = [
     triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=2, num_warps=8),
     triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64}, num_stages=3, num_warps=8),
 
-    # ==========================================================
-    # 16x* (latency-focused, plus longer-K variants)
-    # ==========================================================
-    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 32},  num_stages=1, num_warps=1),
-    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 32},  num_stages=2, num_warps=2),
-    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 64},  num_stages=1, num_warps=2),
-    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 64},  num_stages=2, num_warps=2),
-    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 128}, num_stages=2, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 16, 'K_TILE_SIZE': 128}, num_stages=3, num_warps=4),
+    # -------------------------
+    # Baseline / general-purpose
+    # -------------------------
+    triton.Config({'Q_TILE_SIZE': 32,  'K_TILE_SIZE': 64},  num_stages=2, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 64,  'K_TILE_SIZE': 64},  num_stages=2, num_warps=4),
+    triton.Config({'Q_TILE_SIZE': 64,  'K_TILE_SIZE': 64},  num_stages=3, num_warps=8),
 
-    # ==========================================================
-    # 32x* (balanced, plus long-K and short-K)
-    # ==========================================================
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 16},  num_stages=1, num_warps=2),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 16},  num_stages=2, num_warps=2),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32},  num_stages=1, num_warps=2),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 32},  num_stages=2, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64},  num_stages=2, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 64},  num_stages=3, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 128}, num_stages=2, num_warps=8),
-    triton.Config({'Q_TILE_SIZE': 32, 'K_TILE_SIZE': 128}, num_stages=3, num_warps=8),
+    # -------------------------
+    # Long-context leaning (bigger K tiles)
+    # -------------------------
+    triton.Config({'Q_TILE_SIZE': 64,  'K_TILE_SIZE': 128}, num_stages=3, num_warps=8),
+    triton.Config({'Q_TILE_SIZE': 64,  'K_TILE_SIZE': 128}, num_stages=5, num_warps=8),
 
-    # ==========================================================
-    # 64x* (throughput-ish, very common sweet spots)
-    # ==========================================================
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 16},  num_stages=1, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32},  num_stages=1, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 32},  num_stages=2, num_warps=8),
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64},  num_stages=2, num_warps=4),
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 64},  num_stages=3, num_warps=8),
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 128}, num_stages=2, num_warps=8),
-    triton.Config({'Q_TILE_SIZE': 64, 'K_TILE_SIZE': 128}, num_stages=4, num_warps=8),
+    # Push max K tile (useful to demonstrate "long-K can win" at 16k/32k)
+    triton.Config({'Q_TILE_SIZE': 64,  'K_TILE_SIZE': 256}, num_stages=4, num_warps=8),
+    triton.Config({'Q_TILE_SIZE': 64,  'K_TILE_SIZE': 256}, num_stages=6, num_warps=8),
+
+    # -------------------------
+    # Big-Q throughput-ish (often competitive when arithmetic intensity is decent)
+    # -------------------------
+    triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 64},  num_stages=3, num_warps=8),
+    triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 128}, num_stages=4, num_warps=8),
+
+    # Max warps/stages (explicitly included for demo)
+    triton.Config({'Q_TILE_SIZE': 128, 'K_TILE_SIZE': 128}, num_stages=6, num_warps=16),
 ]
 
 # We need to include N_Q, N_K in the key since they affect control flow (masking)

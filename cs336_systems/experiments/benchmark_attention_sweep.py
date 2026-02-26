@@ -39,20 +39,12 @@ torch.set_float32_matmul_precision('high')
 DEFAULT_TIERS = [
     
     # ==========================================
-    # 
+    # A XS-size LM with 64 per-head dimension (d_model=768/heads=12), 12 heads, batch size 4
     # ==========================================
-    ("TOY-seq2048-hd64-12h-8b",   2048,   2048,   64, 12, 4),
-    ("TOY-seq4096-hd64-12h-8b",    4096,   4096,   64, 12, 4),
-    ("TOY-seq8192-hd64-12h-8b",    8192,   8192,   64, 12, 4),
-    ("TOY-seq16384-hd64-12h-8b",  16384,  16384,   64, 12, 4),
-
-    # ==========================================
-    # 
-    # ==========================================
-    ("XS-seq2048-hd128-16h-32b",   2048,   2048,   768, 12, 1),
-    ("XS-seq4096-hd128-16h-32b",    4096,   4096,   768, 12, 1),
-    ("XS-seq8192-hd128-16h-32b",    8192,   8192,   768, 12, 1),
-    ("XS-seq16384-hd128-16h-32b",  16384,  16384,   768, 12, 1),
+    ("XS-seq2048-hd64-12h-8b",   2048,   2048,   64, 12, 4),
+    ("XS-seq4096-hd64-12h-8b",    4096,   4096,   64, 12, 4),
+    ("XS-seq8192-hd64-12h-8b",    8192,   8192,   64, 12, 4),
+    ("XS-seq16384-hd64-12h-8b",  16384,  16384,   64, 12, 4),
 ]
 
 KERNEL_NAMES = [
@@ -162,12 +154,16 @@ def _plot_results(results: list[dict], out_dir: Path) -> None:
 
     # drop any rows where an error (e.g. OOM) occurred
     clean_results = [r for r in results if not r.get("error")]
-    kernels = sorted(set(r["kernel"] for r in clean_results))
+    # preserve ordering defined in KERNEL_NAMES; any unexpected kernels appended alphabetically
+    kernels = [k for k in KERNEL_NAMES if any(r["kernel"] == k for r in clean_results)]
+    extras = sorted({r["kernel"] for r in clean_results} - set(kernels))
+    kernels += extras
     tiers = list(dict.fromkeys(r["tier"] for r in clean_results))  # preserves order
 
     kernel_colors = {
         "scaled_dot_prod_attention": "#4C72B0",
         "vectorized_torch": "#DD8452",
+        "vectorized_torch_compiled": "#D30000",
         "flash_attention_triton": "#55A868",
     }
 
