@@ -3,7 +3,7 @@
 benchmark_lm_matrix.py — Full LM training benchmark matrix.
 
 Benchmarks a short training run across:
-  - 3 attention kernels × {single-GPU, naive DDP, FlashDDP, Torch DDP}
+  - 3 attention kernels × {single-GPU, Naive DDP DDP, FlashDDP, Torch DDP}
   - Measures: wall-clock time per epoch, peak per-GPU memory, tokens/sec,
     and per-step loss convergence.
 
@@ -61,7 +61,7 @@ KERNELS = [
     "flash_attention_triton",
 ]
 
-DDP_WRAPPERS = ["none", "naive", "flashddp", "torch_ddp"]
+DDP_WRAPPERS = ["Local No DDP", "Naive DDP", "Bucketed Overlapping DDP", "Pytorch DDP"]
 BENCH_STEPS_PER_EPOCH = 51
 WARMUP_STEPS = 5
 
@@ -156,7 +156,7 @@ def _bench_single_gpu(
 
     return {
         "kernel": kernel_name,
-        "ddp": "none",
+        "ddp": "Local No DDP",
         "gpus": 1,
         "epochs": epochs,
         "steps_per_epoch": BENCH_STEPS_PER_EPOCH,
@@ -211,12 +211,12 @@ def _ddp_worker(
     for p in model.parameters():
         dist.broadcast(p.data, src=0)
 
-    if wrapper_name == "naive":
+    if wrapper_name == "Naive DDP":
         pass  # manual all-reduce per param after backward
-    elif wrapper_name == "flashddp":
+    elif wrapper_name == "Bucketed Overlapping DDP":
         from cs336_systems.Parallelization.FlashDDP.FlashDDP import DDPOverlapBucketed
         model = DDPOverlapBucketed(model, bucket_size_mb=bucket_size_mb)
-    elif wrapper_name == "torch_ddp":
+    elif wrapper_name == "Pytorch DDP":
         from torch.nn.parallel import DistributedDataParallel as TorchDDP
         model = TorchDDP(model, device_ids=[rank], bucket_cap_mb=bucket_size_mb)
 
@@ -233,21 +233,21 @@ def _ddp_worker(
         if rank == 0:
             print(f"[warmup-{wrapper_name}] Iter {wi+1}/{WARMUP_STEPS}", end="\r", flush=True)
         x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-        if wrapper_name == "flashddp":
+        if wrapper_name == "Bucketed Overlapping DDP":
             optimizer.zero_grad(set_to_none=False)
         else:
             optimizer.zero_grad()
         pred = model(x)
         loss = cross_entropy(pred, y)
         loss.backward()
-        if wrapper_name == "naive":
+        if wrapper_name == "Naive DDP":
             for p in model.parameters():
                 if p.grad is not None:
                     dist.all_reduce(p.grad, op=dist.ReduceOp.SUM)
                     p.grad /= world_size
-        elif wrapper_name == "flashddp":
+        elif wrapper_name == "Bucketed Overlapping DDP":
             model.finish_gradient_synchromnization()
-        # torch_ddp: gradient sync happens automatically in backward()
+        # Pytorch DDP: gradient sync happens automatically in backward()
         optimizer.step()
         if (wi + 1) >= WARMUP_STEPS:
             break
@@ -268,7 +268,7 @@ def _ddp_worker(
         sampler.set_epoch(epoch)
         for i, (x, y) in enumerate(loader):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-            if wrapper_name == "flashddp":
+            if wrapper_name == "Bucketed Overlapping DDP":
                 optimizer.zero_grad(set_to_none=False)
             else:
                 optimizer.zero_grad()
@@ -276,14 +276,14 @@ def _ddp_worker(
             loss = cross_entropy(pred, y)
             loss.backward()
 
-            if wrapper_name == "naive":
+            if wrapper_name == "Naive DDP":
                 for p in model.parameters():
                     if p.grad is not None:
                         dist.all_reduce(p.grad, op=dist.ReduceOp.SUM)
                         p.grad /= world_size
-            elif wrapper_name == "flashddp":
+            elif wrapper_name == "Bucketed Overlapping DDP":
                 model.finish_gradient_synchromnization()
-            # torch_ddp: gradient sync happens automatically in backward()
+            # Pytorch DDP: gradient sync happens automatically in backward()
 
             optimizer.step()
             total_tokens += x.numel()
@@ -407,7 +407,7 @@ def _plot_results(results: list[dict], out_dir: Path) -> None:
         return
 
     labels = [f"{r['kernel']}\n{r['ddp']}" for r in valid]
-    ddp_color_map = {"none": "#4C72B0", "naive": "#DD8452", "flashddp": "#55A868", "torch_ddp": "#C44E52"}
+    ddp_color_map = {"Local No DDP": "#4C72B0", "Naive DDP": "#DD8452", "Bucketed Overlapping DDP": "#55A868", "Pytorch DDP": "#C44E52"}
     colors = [ddp_color_map.get(r["ddp"], "#999999") for r in valid]
     x = np.arange(len(valid))
 
@@ -475,7 +475,7 @@ def _plot_results(results: list[dict], out_dir: Path) -> None:
     has_curves = any(r.get("loss_curve") for r in valid)
     if has_curves:
         fig5, ax5 = plt.subplots(figsize=(10, 6))
-        style_map = {"none": "-", "naive": "--", "flashddp": "-.", "torch_ddp": ":"}
+        style_map = {"Local No DDP": "-", "Naive DDP": "--", "Bucketed Overlapping DDP": "-.", "Pytorch DDP": ":"}
         for r in valid:
             curve = r.get("loss_curve", [])
             if not curve:
@@ -560,7 +560,7 @@ def _write_kernel_table_pdfs(results: list[dict], out_dir: Path) -> None:
         if not rows_for_kernel:
             continue
 
-        baseline = rows_for_kernel.get("none")
+        baseline = rows_for_kernel.get("Local No DDP")
         baseline_tps = baseline.get("tokens_per_sec", 0) if baseline else 0
         baseline_mem = baseline.get("peak_gpu_mb", 0) if baseline else 0
 
@@ -575,7 +575,7 @@ def _write_kernel_table_pdfs(results: list[dict], out_dir: Path) -> None:
             peak_mem = row.get("peak_gpu_mb", 0)
             ddp_label = f"`{ddp}` ({gpus} GPU)" if gpus == 1 else f"`{ddp}` ({gpus} GPUs)"
 
-            if ddp == "none":
+            if ddp == "Local No DDP":
                 scaling = "N/A (no scaling)"
                 overhead = "0 MB (0.0%)"
             else:
@@ -630,14 +630,14 @@ def _write_kernel_table_pdfs(results: list[dict], out_dir: Path) -> None:
         for r_i in range(1, len(table_rows) + 1):
             table[(r_i, 0)].set_text_props(ha="left")
 
-        pdf_path = out_dir / f"lm_matrix_table_{kernel}.pdf"
-        fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
+        out_path = out_dir / f"lm_matrix_table_{kernel}.png"
+        fig.savefig(out_path, format="png", bbox_inches="tight")
         plt.close(fig)
         emitted += 1
-        print(f"[pdf-table] Saved {pdf_path}")
+        print(f"[image-table] Saved {out_path}")
 
     if emitted == 0:
-        print("[pdf-table] No kernel tables generated.")
+        print("[image-table] No kernel tables generated.")
 
 
 # ---------------------------------------------------------------------------
@@ -661,7 +661,7 @@ def main() -> None:
     parser.add_argument("--kernels", nargs="*", default=None,
                         help="Subset of kernels to benchmark (default: all)")
     parser.add_argument("--wrappers", nargs="*", default=None,
-                        help="Subset of DDP wrappers (default: none + all DDP if multi-GPU)")
+                        help="Subset of DDP wrappers (default: Local No DDP + all DDP if multi-GPU)")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -681,7 +681,7 @@ def main() -> None:
     )
 
     kernels = args.kernels or KERNELS
-    wrappers = args.wrappers or (["none"] + (["naive", "flashddp", "torch_ddp"] if torch.cuda.device_count() >= 2 else []))
+    wrappers = args.wrappers or (["Local No DDP"] + (["Naive DDP", "Bucketed Overlapping DDP", "Pytorch DDP"] if torch.cuda.device_count() >= 2 else []))
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -693,7 +693,7 @@ def main() -> None:
             tag = f"{kernel} / {wrapper}"
             print(f"\n{'='*60}\n  Benchmarking: {tag}\n{'='*60}")
             try:
-                if wrapper == "none":
+                if wrapper == "Local No DDP":
                     row = _bench_single_gpu(kernel, args.train_path, args.val_path,
                                             args.epochs, args.tr_batch_size,
                                             args.context_length, model_cfg, dtype)

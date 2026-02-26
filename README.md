@@ -45,16 +45,12 @@ Longer-context behavior (`Q=K=16384`, same tier family):
 
 This matches the long-context objective in the resume entry: major forward-pass latency reduction and practical 16K-context execution where naive/vectorized baselines fail in the same benchmark family.
 
+![LM Throughput](artifacts/lm_matrix_throughput.png)
+![LM Peak Memory](artifacts/lm_matrix_memory.png)
+
 ### 2. Multi-GPU Training Throughput (3x4 Matrix)
 
-From `artifacts/lm_matrix_results.csv` using only `flash_attention_triton`:
-
-| DDP Method\Attention Kernel (`flash_attention_triton`) | tok/s | Scaling Efficiency | memory Overhead |
-|---|---:|---:|---:|
-| `none` (1 GPU) | 2791.4 | N/A (no scaling) | 0 MB (0.0%) |
-| `naive` (2 GPU) | 3868.5 | 69.3% | +0.0 MB (0.0%) |
-| `flashddp` (2 GPU) | **4565.6** | **81.8%** | +719.1 MB (9.6%) |
-| `torch_ddp` (2 GPU) | 4566.0 | 81.8% | +720.7 MB (9.6%) |
+![pdf](artifacts/lm_matrix_table_vectorized_torch.pdf)
 
 `Scaling Efficiency` for 2-GPU rows is measured against ideal 2x throughput over the same-kernel `none` baseline. `memory Overhead` is per-GPU peak memory increase vs the same-kernel `none` baseline.
 
@@ -73,9 +69,7 @@ Summary:
 
 ### LM Matrix Benchmarks
 
-![LM Throughput](artifacts/lm_matrix_throughput.png)
-![LM Time per Epoch](artifacts/lm_matrix_time.png)
-![LM Peak Memory](artifacts/lm_matrix_memory.png)
+
 
 ## Reproduce Main Experiments
 
@@ -98,7 +92,7 @@ uv run python cs336_systems/experiments/run_pipeline.py \
 uv run python cs336_systems/experiments/run_pipeline.py \
   --config cs336_systems/experiments/default_pipeline_config.json \
   --attention_kernel flash_attention_triton \
-  --ddp_wrapper flashddp \
+  --ddp_wrapper Bucketed\ Overlapping\ DDP \
   --skip_data
 ```
 
@@ -110,9 +104,10 @@ Supported attention kernels:
 
 Supported wrappers:
 
-- `none`
-- `naive`
-- `flashddp`
+- `Local No DDP`
+- `Naive DDP`
+- `Bucketed Overlapping DDP`
+- `Pytorch DDP`
 
 ### LM Kernel x DDP Matrix
 
@@ -124,7 +119,17 @@ uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
   --vocab_size 10000 \
   --d_model 512 --d_ff 4096 --num_layers 24 --num_heads 16 \
   --kernels scaled_dot_prod_attention vectorized_torch flash_attention_triton \
-  --wrappers none naive flashddp torch_ddp
+  --wrappers Local\ No\ DDP Naive\ DDP Bucketed\ Overlapping\ DDP Pytorch\ DDP
+```
+```
+uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
+  --train_path data/tokenized/ts_train.npy \
+  --val_path data/tokenized/ts_valid.npy \
+  --epochs 5 --tr_batch_size 8 --context_length 64 \
+  --vocab_size 10000 \
+  --d_model 512 --d_ff 4096 --num_layers 3 --num_heads 16 \
+  --kernels vectorized_torch \
+  --wrappers Local\ No\ DDP Naive\ DDP Bucketed\ Overlapping\ DDP Pytorch\ DDP
 ```
 
 Outputs:

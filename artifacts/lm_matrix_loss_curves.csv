@@ -1,661 +1,221 @@
 kernel,ddp,wall_sec,step,loss
-scaled_dot_prod_attention,none,0.792,1,8.8564
-scaled_dot_prod_attention,none,4.3845,6,8.4458
-scaled_dot_prod_attention,none,7.9748,11,7.9768
-scaled_dot_prod_attention,none,11.5816,16,7.6203
-scaled_dot_prod_attention,none,15.2097,21,7.4493
-scaled_dot_prod_attention,none,18.8079,26,6.933
-scaled_dot_prod_attention,none,22.4119,31,6.5223
-scaled_dot_prod_attention,none,26.0148,36,6.0054
-scaled_dot_prod_attention,none,29.6282,41,6.1112
-scaled_dot_prod_attention,none,33.2496,46,5.8741
-scaled_dot_prod_attention,none,36.8379,51,5.7681
-scaled_dot_prod_attention,none,40.5888,56,5.7042
-scaled_dot_prod_attention,none,44.1969,61,5.9879
-scaled_dot_prod_attention,none,47.7962,66,5.9854
-scaled_dot_prod_attention,none,51.4099,71,5.9161
-scaled_dot_prod_attention,none,55.0335,76,5.9177
-scaled_dot_prod_attention,none,58.6427,81,5.2596
-scaled_dot_prod_attention,none,62.2524,86,5.7064
-scaled_dot_prod_attention,none,65.8681,91,5.5902
-scaled_dot_prod_attention,none,69.4982,96,5.5362
-scaled_dot_prod_attention,none,73.1178,101,5.4904
-scaled_dot_prod_attention,none,73.8397,102,5.492
-scaled_dot_prod_attention,none,76.8558,106,5.6409
-scaled_dot_prod_attention,none,80.5014,111,5.5225
-scaled_dot_prod_attention,none,84.1124,116,5.4382
-scaled_dot_prod_attention,none,87.7229,121,5.0918
-scaled_dot_prod_attention,none,91.3393,126,5.3467
-scaled_dot_prod_attention,none,94.9674,131,5.1899
-scaled_dot_prod_attention,none,98.5971,136,5.2854
-scaled_dot_prod_attention,none,102.2154,141,5.0154
-scaled_dot_prod_attention,none,105.8429,146,5.3261
-scaled_dot_prod_attention,none,109.4631,151,5.2787
-scaled_dot_prod_attention,none,110.9109,153,4.99
-scaled_dot_prod_attention,none,113.2249,156,5.1342
-scaled_dot_prod_attention,none,116.8528,161,5.025
-scaled_dot_prod_attention,none,120.4935,166,5.314
-scaled_dot_prod_attention,none,124.0982,171,5.1626
-scaled_dot_prod_attention,none,127.7106,176,5.2671
-scaled_dot_prod_attention,none,131.3232,181,5.3902
-scaled_dot_prod_attention,none,134.9356,186,5.0283
-scaled_dot_prod_attention,none,138.5478,191,5.241
-scaled_dot_prod_attention,none,142.1626,196,5.413
-scaled_dot_prod_attention,none,145.815,201,4.7982
-scaled_dot_prod_attention,none,148.0069,204,5.0166
-scaled_dot_prod_attention,none,149.632,206,5.0151
-scaled_dot_prod_attention,none,153.3089,211,4.8611
-scaled_dot_prod_attention,none,156.9596,216,5.1302
-scaled_dot_prod_attention,none,160.6024,221,4.6231
-scaled_dot_prod_attention,none,164.2427,226,4.8863
-scaled_dot_prod_attention,none,167.8645,231,4.9613
-scaled_dot_prod_attention,none,171.5075,236,4.9856
-scaled_dot_prod_attention,none,175.1517,241,4.4252
-scaled_dot_prod_attention,none,178.8181,246,5.2013
-scaled_dot_prod_attention,none,182.4572,251,4.8596
-scaled_dot_prod_attention,none,185.3743,255,4.7792
-scaled_dot_prod_attention,naive,6.4302,1,8.4796
-scaled_dot_prod_attention,naive,11.3628,6,8.4444
-scaled_dot_prod_attention,naive,16.4489,11,7.9899
-scaled_dot_prod_attention,naive,21.3105,16,7.6105
-scaled_dot_prod_attention,naive,26.0345,21,7.175
-scaled_dot_prod_attention,naive,30.9034,26,6.7987
-scaled_dot_prod_attention,naive,35.657,31,6.4455
-scaled_dot_prod_attention,naive,40.51,36,6.0874
-scaled_dot_prod_attention,naive,45.3239,41,5.6817
-scaled_dot_prod_attention,naive,50.1684,46,5.9876
-scaled_dot_prod_attention,naive,55.1453,51,5.8656
-scaled_dot_prod_attention,naive,66.2252,56,5.5342
-scaled_dot_prod_attention,naive,71.3947,61,5.5541
-scaled_dot_prod_attention,naive,76.4145,66,5.4471
-scaled_dot_prod_attention,naive,81.405,71,5.342
-scaled_dot_prod_attention,naive,86.2091,76,5.553
-scaled_dot_prod_attention,naive,91.2377,81,5.4069
-scaled_dot_prod_attention,naive,96.2873,86,5.5478
-scaled_dot_prod_attention,naive,101.1539,91,5.3319
-scaled_dot_prod_attention,naive,106.3139,96,5.3795
-scaled_dot_prod_attention,naive,111.6007,101,5.1624
-scaled_dot_prod_attention,naive,112.6637,102,5.3992
-scaled_dot_prod_attention,naive,122.6947,106,5.4713
-scaled_dot_prod_attention,naive,127.8969,111,4.9724
-scaled_dot_prod_attention,naive,133.1473,116,5.1301
-scaled_dot_prod_attention,naive,138.2071,121,5.3935
-scaled_dot_prod_attention,naive,143.1289,126,5.0659
-scaled_dot_prod_attention,naive,148.094,131,4.8788
-scaled_dot_prod_attention,naive,153.1143,136,4.9759
-scaled_dot_prod_attention,naive,158.096,141,4.7804
-scaled_dot_prod_attention,naive,163.1361,146,5.0782
-scaled_dot_prod_attention,naive,168.1152,151,5.2476
-scaled_dot_prod_attention,naive,170.1414,153,4.7384
-scaled_dot_prod_attention,naive,179.3643,156,4.8565
-scaled_dot_prod_attention,naive,184.3789,161,5.1413
-scaled_dot_prod_attention,naive,189.3924,166,4.8466
-scaled_dot_prod_attention,naive,194.3729,171,4.6836
-scaled_dot_prod_attention,naive,199.3725,176,4.949
-scaled_dot_prod_attention,naive,204.4147,181,5.2639
-scaled_dot_prod_attention,naive,209.3268,186,5.044
-scaled_dot_prod_attention,naive,214.1879,191,4.7879
-scaled_dot_prod_attention,naive,219.2421,196,4.8051
-scaled_dot_prod_attention,naive,224.2556,201,4.7172
-scaled_dot_prod_attention,naive,227.277,204,5.1165
-scaled_dot_prod_attention,naive,234.6487,206,4.4057
-scaled_dot_prod_attention,naive,239.689,211,4.6789
-scaled_dot_prod_attention,naive,244.6577,216,4.7263
-scaled_dot_prod_attention,naive,249.643,221,4.5482
-scaled_dot_prod_attention,naive,254.7392,226,4.927
-scaled_dot_prod_attention,naive,259.6846,231,4.693
-scaled_dot_prod_attention,naive,264.8784,236,4.6607
-scaled_dot_prod_attention,naive,269.9391,241,4.5856
-scaled_dot_prod_attention,naive,274.8031,246,4.5909
-scaled_dot_prod_attention,naive,279.5682,251,4.5805
-scaled_dot_prod_attention,naive,283.3565,255,4.8076
-scaled_dot_prod_attention,flashddp,5.9028,1,8.496
-scaled_dot_prod_attention,flashddp,9.8564,6,8.4527
-scaled_dot_prod_attention,flashddp,13.7888,11,8.0189
-scaled_dot_prod_attention,flashddp,17.7247,16,7.6373
-scaled_dot_prod_attention,flashddp,21.664,21,7.1668
-scaled_dot_prod_attention,flashddp,25.6097,26,6.7996
-scaled_dot_prod_attention,flashddp,29.5764,31,6.4368
-scaled_dot_prod_attention,flashddp,33.5568,36,6.0619
-scaled_dot_prod_attention,flashddp,37.5091,41,5.6738
-scaled_dot_prod_attention,flashddp,41.4542,46,5.9551
-scaled_dot_prod_attention,flashddp,45.4005,51,5.869
-scaled_dot_prod_attention,flashddp,55.2963,56,5.5441
-scaled_dot_prod_attention,flashddp,59.237,61,5.5547
-scaled_dot_prod_attention,flashddp,63.1821,66,5.4448
-scaled_dot_prod_attention,flashddp,67.149,71,5.3365
-scaled_dot_prod_attention,flashddp,71.1029,76,5.5297
-scaled_dot_prod_attention,flashddp,75.0741,81,5.3745
-scaled_dot_prod_attention,flashddp,79.0691,86,5.5446
-scaled_dot_prod_attention,flashddp,83.1198,91,5.3057
-scaled_dot_prod_attention,flashddp,87.1151,96,5.3617
-scaled_dot_prod_attention,flashddp,91.1365,101,5.1474
-scaled_dot_prod_attention,flashddp,91.9286,102,5.3881
-scaled_dot_prod_attention,flashddp,100.2592,106,5.4717
-scaled_dot_prod_attention,flashddp,104.2712,111,4.9622
-scaled_dot_prod_attention,flashddp,108.2717,116,5.1157
-scaled_dot_prod_attention,flashddp,112.2342,121,5.3698
-scaled_dot_prod_attention,flashddp,116.192,126,5.0691
-scaled_dot_prod_attention,flashddp,120.1392,131,4.8711
-scaled_dot_prod_attention,flashddp,124.098,136,4.9795
-scaled_dot_prod_attention,flashddp,128.0729,141,4.7754
-scaled_dot_prod_attention,flashddp,132.0397,146,5.0802
-scaled_dot_prod_attention,flashddp,135.9965,151,5.2379
-scaled_dot_prod_attention,flashddp,137.5811,153,4.7284
-scaled_dot_prod_attention,flashddp,145.669,156,4.8799
-scaled_dot_prod_attention,flashddp,149.6419,161,5.1211
-scaled_dot_prod_attention,flashddp,153.6094,166,4.8397
-scaled_dot_prod_attention,flashddp,157.5907,171,4.6586
-scaled_dot_prod_attention,flashddp,161.5463,176,4.9235
-scaled_dot_prod_attention,flashddp,165.4918,181,5.2542
-scaled_dot_prod_attention,flashddp,169.4541,186,5.0419
-scaled_dot_prod_attention,flashddp,173.4231,191,4.8025
-scaled_dot_prod_attention,flashddp,177.3917,196,4.7903
-scaled_dot_prod_attention,flashddp,181.3859,201,4.6916
-scaled_dot_prod_attention,flashddp,183.7619,204,5.103
-scaled_dot_prod_attention,flashddp,190.8456,206,4.373
-scaled_dot_prod_attention,flashddp,194.8106,211,4.651
-scaled_dot_prod_attention,flashddp,198.7781,216,4.7108
-scaled_dot_prod_attention,flashddp,203.2132,221,4.5306
-scaled_dot_prod_attention,flashddp,207.171,226,4.9158
-scaled_dot_prod_attention,flashddp,211.1252,231,4.6918
-scaled_dot_prod_attention,flashddp,215.0854,236,4.6272
-scaled_dot_prod_attention,flashddp,219.0469,241,4.5695
-scaled_dot_prod_attention,flashddp,223.01,246,4.575
-scaled_dot_prod_attention,flashddp,226.9817,251,4.5756
-scaled_dot_prod_attention,flashddp,230.1557,255,4.8131
-scaled_dot_prod_attention,torch_ddp,5.6618,1,8.4878
-scaled_dot_prod_attention,torch_ddp,9.6178,6,8.4664
-scaled_dot_prod_attention,torch_ddp,13.5722,11,7.9953
-scaled_dot_prod_attention,torch_ddp,17.5295,16,7.5788
-scaled_dot_prod_attention,torch_ddp,21.4896,21,7.0723
-scaled_dot_prod_attention,torch_ddp,25.4477,26,6.6336
-scaled_dot_prod_attention,torch_ddp,29.4017,31,6.2455
-scaled_dot_prod_attention,torch_ddp,33.389,36,5.9805
-scaled_dot_prod_attention,torch_ddp,37.3509,41,5.6273
-scaled_dot_prod_attention,torch_ddp,41.3249,46,5.9627
-scaled_dot_prod_attention,torch_ddp,45.295,51,5.8621
-scaled_dot_prod_attention,torch_ddp,54.3886,56,5.5151
-scaled_dot_prod_attention,torch_ddp,58.3691,61,5.5507
-scaled_dot_prod_attention,torch_ddp,62.3426,66,5.4536
-scaled_dot_prod_attention,torch_ddp,66.3143,71,5.3462
-scaled_dot_prod_attention,torch_ddp,70.2777,76,5.5776
-scaled_dot_prod_attention,torch_ddp,74.2867,81,5.4163
-scaled_dot_prod_attention,torch_ddp,78.2806,86,5.5736
-scaled_dot_prod_attention,torch_ddp,82.2974,91,5.3757
-scaled_dot_prod_attention,torch_ddp,86.2956,96,5.4114
-scaled_dot_prod_attention,torch_ddp,90.2839,101,5.2188
-scaled_dot_prod_attention,torch_ddp,91.0806,102,5.4329
-scaled_dot_prod_attention,torch_ddp,100.0274,106,5.5147
-scaled_dot_prod_attention,torch_ddp,104.0265,111,5.017
-scaled_dot_prod_attention,torch_ddp,107.9885,116,5.1857
-scaled_dot_prod_attention,torch_ddp,111.9913,121,5.426
-scaled_dot_prod_attention,torch_ddp,115.986,126,5.1009
-scaled_dot_prod_attention,torch_ddp,119.9705,131,4.9043
-scaled_dot_prod_attention,torch_ddp,123.9452,136,5.0288
-scaled_dot_prod_attention,torch_ddp,127.9371,141,4.8092
-scaled_dot_prod_attention,torch_ddp,131.9283,146,5.0986
-scaled_dot_prod_attention,torch_ddp,135.9406,151,5.2619
-scaled_dot_prod_attention,torch_ddp,137.5422,153,4.7744
-scaled_dot_prod_attention,torch_ddp,145.5877,156,4.8887
-scaled_dot_prod_attention,torch_ddp,149.5929,161,5.1464
-scaled_dot_prod_attention,torch_ddp,153.5785,166,4.8469
-scaled_dot_prod_attention,torch_ddp,157.5669,171,4.6816
-scaled_dot_prod_attention,torch_ddp,161.5868,176,4.9683
-scaled_dot_prod_attention,torch_ddp,165.6375,181,5.2752
-scaled_dot_prod_attention,torch_ddp,169.6268,186,5.0696
-scaled_dot_prod_attention,torch_ddp,173.6184,191,4.815
-scaled_dot_prod_attention,torch_ddp,177.6096,196,4.8192
-scaled_dot_prod_attention,torch_ddp,181.6057,201,4.7197
-scaled_dot_prod_attention,torch_ddp,184.0006,204,5.1314
-scaled_dot_prod_attention,torch_ddp,191.101,206,4.4096
-scaled_dot_prod_attention,torch_ddp,195.1096,211,4.6869
-scaled_dot_prod_attention,torch_ddp,199.0921,216,4.7393
-scaled_dot_prod_attention,torch_ddp,203.079,221,4.546
-scaled_dot_prod_attention,torch_ddp,207.3376,226,4.9397
-scaled_dot_prod_attention,torch_ddp,211.3107,231,4.7091
-scaled_dot_prod_attention,torch_ddp,215.294,236,4.668
-scaled_dot_prod_attention,torch_ddp,219.2763,241,4.6242
-scaled_dot_prod_attention,torch_ddp,223.2597,246,4.6141
-scaled_dot_prod_attention,torch_ddp,227.2473,251,4.6101
-scaled_dot_prod_attention,torch_ddp,230.4472,255,4.8395
-vectorized_torch,none,0.79,1,8.8071
-vectorized_torch,none,4.2967,6,8.6307
-vectorized_torch,none,7.8152,11,8.0611
-vectorized_torch,none,11.319,16,7.597
-vectorized_torch,none,14.8312,21,7.2081
-vectorized_torch,none,18.3453,26,6.8504
-vectorized_torch,none,21.8554,31,6.3044
-vectorized_torch,none,25.366,36,6.0862
-vectorized_torch,none,28.8787,41,5.9372
-vectorized_torch,none,32.3941,46,5.7806
-vectorized_torch,none,35.9071,51,5.6045
-vectorized_torch,none,39.5598,56,5.8854
-vectorized_torch,none,43.069,61,5.6902
-vectorized_torch,none,46.5758,66,5.3849
-vectorized_torch,none,50.0852,71,5.4535
-vectorized_torch,none,53.5947,76,5.6916
-vectorized_torch,none,57.103,81,5.8112
-vectorized_torch,none,60.6111,86,5.5448
-vectorized_torch,none,64.1232,91,5.4274
-vectorized_torch,none,67.6391,96,5.5309
-vectorized_torch,none,71.1656,101,5.5696
-vectorized_torch,none,71.8735,102,5.326
-vectorized_torch,none,74.8523,106,5.2168
-vectorized_torch,none,78.3671,111,5.2491
-vectorized_torch,none,81.8873,116,5.366
-vectorized_torch,none,85.4107,121,5.315
-vectorized_torch,none,88.9241,126,5.4432
-vectorized_torch,none,92.4507,131,5.3461
-vectorized_torch,none,95.9742,136,5.3988
-vectorized_torch,none,99.4968,141,4.8556
-vectorized_torch,none,103.0188,146,4.8736
-vectorized_torch,none,106.544,151,5.5884
-vectorized_torch,none,107.9555,153,5.1684
-vectorized_torch,none,110.2636,156,5.6024
-vectorized_torch,none,113.8,161,5.4075
-vectorized_torch,none,117.3457,166,5.2546
-vectorized_torch,none,120.8802,171,5.0557
-vectorized_torch,none,124.4137,176,4.7708
-vectorized_torch,none,127.9522,181,5.1341
-vectorized_torch,none,131.4875,186,5.3734
-vectorized_torch,none,135.0167,191,4.836
-vectorized_torch,none,138.5503,196,5.371
-vectorized_torch,none,142.0786,201,5.0525
-vectorized_torch,none,144.2001,204,5.1254
-vectorized_torch,none,145.776,206,4.8277
-vectorized_torch,none,149.3021,211,5.2612
-vectorized_torch,none,152.8352,216,4.6418
-vectorized_torch,none,156.3615,221,4.7813
-vectorized_torch,none,159.8909,226,5.1863
-vectorized_torch,none,163.42,231,4.5767
-vectorized_torch,none,166.9508,236,4.8737
-vectorized_torch,none,170.4832,241,4.8477
-vectorized_torch,none,174.0215,246,4.9698
-vectorized_torch,none,177.5668,251,4.7295
-vectorized_torch,none,180.3872,255,4.9353
-vectorized_torch,naive,6.087,1,8.464
-vectorized_torch,naive,10.6997,6,8.4599
-vectorized_torch,naive,15.3477,11,8.0098
-vectorized_torch,naive,20.0016,16,7.6555
-vectorized_torch,naive,24.6434,21,7.2328
-vectorized_torch,naive,29.3208,26,6.9314
-vectorized_torch,naive,33.9656,31,6.5853
-vectorized_torch,naive,38.632,36,6.1679
-vectorized_torch,naive,43.2817,41,5.6647
-vectorized_torch,naive,47.916,46,5.9603
-vectorized_torch,naive,52.55,51,5.8484
-vectorized_torch,naive,62.5802,56,5.5007
-vectorized_torch,naive,67.2211,61,5.5186
-vectorized_torch,naive,71.9076,66,5.4201
-vectorized_torch,naive,76.5671,71,5.3165
-vectorized_torch,naive,81.2059,76,5.52
-vectorized_torch,naive,85.8594,81,5.3768
-vectorized_torch,naive,90.4993,86,5.518
-vectorized_torch,naive,95.1405,91,5.2812
-vectorized_torch,naive,99.8131,96,5.3473
-vectorized_torch,naive,104.4778,101,5.1561
-vectorized_torch,naive,105.4103,102,5.383
-vectorized_torch,naive,114.4174,106,5.4452
-vectorized_torch,naive,119.1019,111,4.9357
-vectorized_torch,naive,123.7777,116,5.1122
-vectorized_torch,naive,128.4871,121,5.3567
-vectorized_torch,naive,133.2287,126,5.0485
-vectorized_torch,naive,137.9385,131,4.8656
-vectorized_torch,naive,142.5783,136,4.9628
-vectorized_torch,naive,147.2227,141,4.7972
-vectorized_torch,naive,151.858,146,5.0549
-vectorized_torch,naive,156.5005,151,5.2366
-vectorized_torch,naive,158.3628,153,4.7445
-vectorized_torch,naive,166.7763,156,4.8519
-vectorized_torch,naive,171.4088,161,5.0915
-vectorized_torch,naive,176.0435,166,4.8394
-vectorized_torch,naive,180.6779,171,4.641
-vectorized_torch,naive,185.3165,176,4.9403
-vectorized_torch,naive,189.9419,181,5.2529
-vectorized_torch,naive,194.5537,186,5.0304
-vectorized_torch,naive,199.1892,191,4.7756
-vectorized_torch,naive,203.8249,196,4.791
-vectorized_torch,naive,208.4454,201,4.7044
-vectorized_torch,naive,211.2202,204,5.0887
-vectorized_torch,naive,218.7683,206,4.4062
-vectorized_torch,naive,223.4467,211,4.6758
-vectorized_torch,naive,228.1296,216,4.7002
-vectorized_torch,naive,232.8036,221,4.5319
-vectorized_torch,naive,237.4734,226,4.9164
-vectorized_torch,naive,242.1417,231,4.693
-vectorized_torch,naive,246.8202,236,4.6446
-vectorized_torch,naive,251.5255,241,4.5733
-vectorized_torch,naive,256.2176,246,4.5698
-vectorized_torch,naive,260.9281,251,4.568
-vectorized_torch,naive,264.7058,255,4.8092
-vectorized_torch,flashddp,5.4937,1,8.4881
-vectorized_torch,flashddp,9.4139,6,8.4826
-vectorized_torch,flashddp,13.3569,11,8.0046
-vectorized_torch,flashddp,17.2849,16,7.6112
-vectorized_torch,flashddp,21.1872,21,7.0977
-vectorized_torch,flashddp,25.1107,26,6.6494
-vectorized_torch,flashddp,29.0306,31,6.2522
-vectorized_torch,flashddp,32.9426,36,5.9662
-vectorized_torch,flashddp,36.8515,41,5.6231
-vectorized_torch,flashddp,40.7597,46,5.9871
-vectorized_torch,flashddp,44.6795,51,5.8792
-vectorized_torch,flashddp,54.0578,56,5.5734
-vectorized_torch,flashddp,57.9598,61,5.5877
-vectorized_torch,flashddp,61.8528,66,5.4763
-vectorized_torch,flashddp,65.7508,71,5.3875
-vectorized_torch,flashddp,69.6495,76,5.5702
-vectorized_torch,flashddp,73.5434,81,5.4385
-vectorized_torch,flashddp,77.446,86,5.6207
-vectorized_torch,flashddp,81.3628,91,5.4036
-vectorized_torch,flashddp,85.2726,96,5.4452
-vectorized_torch,flashddp,89.2625,101,5.2463
-vectorized_torch,flashddp,90.061,102,5.4893
-vectorized_torch,flashddp,98.4924,106,5.5416
-vectorized_torch,flashddp,102.4238,111,5.0718
-vectorized_torch,flashddp,106.3308,116,5.1992
-vectorized_torch,flashddp,110.2565,121,5.4622
-vectorized_torch,flashddp,114.1773,126,5.1348
-vectorized_torch,flashddp,118.1026,131,4.9604
-vectorized_torch,flashddp,122.0339,136,5.0697
-vectorized_torch,flashddp,125.9728,141,4.8417
-vectorized_torch,flashddp,129.8999,146,5.1551
-vectorized_torch,flashddp,133.8251,151,5.3291
-vectorized_torch,flashddp,135.3951,153,4.8023
-vectorized_torch,flashddp,143.2024,156,4.93
-vectorized_torch,flashddp,147.2191,161,5.1955
-vectorized_torch,flashddp,151.2364,166,4.8947
-vectorized_torch,flashddp,155.1384,171,4.7293
-vectorized_torch,flashddp,159.0527,176,5.0109
-vectorized_torch,flashddp,162.9594,181,5.3405
-vectorized_torch,flashddp,166.8776,186,5.127
-vectorized_torch,flashddp,170.7939,191,4.8774
-vectorized_torch,flashddp,174.7058,196,4.8912
-vectorized_torch,flashddp,178.6185,201,4.7708
-vectorized_torch,flashddp,180.9673,204,5.1614
-vectorized_torch,flashddp,187.7161,206,4.445
-vectorized_torch,flashddp,191.6554,211,4.7309
-vectorized_torch,flashddp,195.5599,216,4.7918
-vectorized_torch,flashddp,199.4781,221,4.6019
-vectorized_torch,flashddp,203.4113,226,4.9978
-vectorized_torch,flashddp,207.326,231,4.7554
-vectorized_torch,flashddp,211.2388,236,4.6936
-vectorized_torch,flashddp,215.1568,241,4.6559
-vectorized_torch,flashddp,219.0696,246,4.6565
-vectorized_torch,flashddp,222.9871,251,4.6637
-vectorized_torch,flashddp,226.1234,255,4.8603
-vectorized_torch,torch_ddp,6.1303,1,8.476
-vectorized_torch,torch_ddp,10.0647,6,8.4689
-vectorized_torch,torch_ddp,13.9519,11,7.9938
-vectorized_torch,torch_ddp,17.8785,16,7.5922
-vectorized_torch,torch_ddp,21.7565,21,7.1147
-vectorized_torch,torch_ddp,25.6449,26,6.6819
-vectorized_torch,torch_ddp,29.5743,31,6.322
-vectorized_torch,torch_ddp,33.4811,36,5.9873
-vectorized_torch,torch_ddp,37.3793,41,5.6148
-vectorized_torch,torch_ddp,41.2826,46,5.9434
-vectorized_torch,torch_ddp,45.1867,51,5.8868
-vectorized_torch,torch_ddp,55.2116,56,5.5293
-vectorized_torch,torch_ddp,59.6958,61,5.5596
-vectorized_torch,torch_ddp,63.8906,66,5.4767
-vectorized_torch,torch_ddp,67.97,71,5.3474
-vectorized_torch,torch_ddp,71.9142,76,5.5446
-vectorized_torch,torch_ddp,75.8208,81,5.4093
-vectorized_torch,torch_ddp,79.7151,86,5.5943
-vectorized_torch,torch_ddp,83.613,91,5.3612
-vectorized_torch,torch_ddp,87.554,96,5.3954
-vectorized_torch,torch_ddp,91.4881,101,5.1976
-vectorized_torch,torch_ddp,92.2748,102,5.4244
-vectorized_torch,torch_ddp,101.2257,106,5.5187
-vectorized_torch,torch_ddp,105.1336,111,5.0147
-vectorized_torch,torch_ddp,109.0319,116,5.1598
-vectorized_torch,torch_ddp,112.9398,121,5.4161
-vectorized_torch,torch_ddp,116.8503,126,5.0811
-vectorized_torch,torch_ddp,120.7936,131,4.9099
-vectorized_torch,torch_ddp,124.7123,136,4.9929
-vectorized_torch,torch_ddp,128.6208,141,4.8152
-vectorized_torch,torch_ddp,132.5216,146,5.1037
-vectorized_torch,torch_ddp,136.4428,151,5.259
-vectorized_torch,torch_ddp,138.0149,153,4.7832
-vectorized_torch,torch_ddp,146.1904,156,4.8863
-vectorized_torch,torch_ddp,150.1939,161,5.1317
-vectorized_torch,torch_ddp,154.1766,166,4.8582
-vectorized_torch,torch_ddp,158.0855,171,4.6816
-vectorized_torch,torch_ddp,162.028,176,4.9659
-vectorized_torch,torch_ddp,165.9644,181,5.278
-vectorized_torch,torch_ddp,169.903,186,5.0501
-vectorized_torch,torch_ddp,173.8096,191,4.8026
-vectorized_torch,torch_ddp,177.7968,196,4.8266
-vectorized_torch,torch_ddp,181.7412,201,4.6985
-vectorized_torch,torch_ddp,184.0887,204,5.1252
-vectorized_torch,torch_ddp,191.2919,206,4.4042
-vectorized_torch,torch_ddp,195.2125,211,4.6969
-vectorized_torch,torch_ddp,199.1912,216,4.7214
-vectorized_torch,torch_ddp,203.0883,221,4.5525
-vectorized_torch,torch_ddp,206.9839,226,4.9322
-vectorized_torch,torch_ddp,210.8855,231,4.7109
-vectorized_torch,torch_ddp,214.8165,236,4.6633
-vectorized_torch,torch_ddp,218.7656,241,4.6233
-vectorized_torch,torch_ddp,222.6823,246,4.6125
-vectorized_torch,torch_ddp,226.6589,251,4.5908
-vectorized_torch,torch_ddp,229.8004,255,4.8336
-flash_attention_triton,none,0.8909,1,8.8634
-flash_attention_triton,none,4.5333,6,8.4495
-flash_attention_triton,none,8.202,11,8.2921
-flash_attention_triton,none,11.8672,16,7.932
-flash_attention_triton,none,15.5008,21,7.4106
-flash_attention_triton,none,19.0954,26,7.2737
-flash_attention_triton,none,22.714,31,6.4802
-flash_attention_triton,none,26.3454,36,6.1125
-flash_attention_triton,none,29.9718,41,6.0147
-flash_attention_triton,none,33.5934,46,5.8542
-flash_attention_triton,none,37.2135,51,5.9812
-flash_attention_triton,none,41.0998,56,5.5772
-flash_attention_triton,none,44.7282,61,5.6632
-flash_attention_triton,none,48.3591,66,5.6917
-flash_attention_triton,none,51.981,71,5.5622
-flash_attention_triton,none,55.6114,76,5.5899
-flash_attention_triton,none,59.2659,81,5.3175
-flash_attention_triton,none,62.8897,86,5.3032
-flash_attention_triton,none,66.5214,91,5.73
-flash_attention_triton,none,70.1495,96,5.3087
-flash_attention_triton,none,73.7794,101,5.1779
-flash_attention_triton,none,74.5178,102,5.7584
-flash_attention_triton,none,77.6915,106,5.1601
-flash_attention_triton,none,81.3198,111,5.5506
-flash_attention_triton,none,84.9567,116,5.4165
-flash_attention_triton,none,88.5847,121,5.136
-flash_attention_triton,none,92.2042,126,5.3966
-flash_attention_triton,none,95.8584,131,5.3239
-flash_attention_triton,none,99.5523,136,5.4162
-flash_attention_triton,none,103.2461,141,5.3745
-flash_attention_triton,none,106.95,146,5.2624
-flash_attention_triton,none,110.6782,151,4.9547
-flash_attention_triton,none,112.1519,153,5.2083
-flash_attention_triton,none,114.6224,156,4.987
-flash_attention_triton,none,118.2561,161,5.452
-flash_attention_triton,none,121.8945,166,5.3999
-flash_attention_triton,none,125.5243,171,5.3075
-flash_attention_triton,none,129.1664,176,5.1144
-flash_attention_triton,none,132.819,181,5.3829
-flash_attention_triton,none,136.4685,186,5.183
-flash_attention_triton,none,140.1172,191,5.0286
-flash_attention_triton,none,143.7392,196,5.2414
-flash_attention_triton,none,147.3622,201,5.3535
-flash_attention_triton,none,149.5347,204,4.9831
-flash_attention_triton,none,151.2646,206,5.0792
-flash_attention_triton,none,154.947,211,4.8799
-flash_attention_triton,none,158.5886,216,5.2367
-flash_attention_triton,none,162.2245,221,5.0096
-flash_attention_triton,none,165.8756,226,4.8082
-flash_attention_triton,none,169.5156,231,4.8817
-flash_attention_triton,none,173.1617,236,4.6405
-flash_attention_triton,none,176.7904,241,4.893
-flash_attention_triton,none,180.4037,246,4.8056
-flash_attention_triton,none,184.0488,251,5.1092
-flash_attention_triton,none,186.9819,255,4.9434
-flash_attention_triton,naive,6.0565,1,8.4575
-flash_attention_triton,naive,11.3785,6,8.4308
-flash_attention_triton,naive,16.2289,11,7.9765
-flash_attention_triton,naive,20.9761,16,7.5908
-flash_attention_triton,naive,25.7185,21,7.1292
-flash_attention_triton,naive,30.4405,26,6.7343
-flash_attention_triton,naive,35.2036,31,6.3589
-flash_attention_triton,naive,39.9284,36,6.0118
-flash_attention_triton,naive,44.6127,41,5.6487
-flash_attention_triton,naive,49.2961,46,5.9537
-flash_attention_triton,naive,53.9926,51,5.8684
-flash_attention_triton,naive,64.3759,56,5.5488
-flash_attention_triton,naive,69.1174,61,5.5709
-flash_attention_triton,naive,73.7957,66,5.4886
-flash_attention_triton,naive,78.4888,71,5.3675
-flash_attention_triton,naive,83.2526,76,5.566
-flash_attention_triton,naive,87.948,81,5.4431
-flash_attention_triton,naive,92.6194,86,5.6037
-flash_attention_triton,naive,97.3139,91,5.3905
-flash_attention_triton,naive,102.0023,96,5.4433
-flash_attention_triton,naive,106.706,101,5.2614
-flash_attention_triton,naive,107.654,102,5.4894
-flash_attention_triton,naive,117.0729,106,5.5739
-flash_attention_triton,naive,121.7879,111,5.0678
-flash_attention_triton,naive,126.4842,116,5.2297
-flash_attention_triton,naive,131.1758,121,5.4652
-flash_attention_triton,naive,135.8753,126,5.1478
-flash_attention_triton,naive,140.5759,131,4.9656
-flash_attention_triton,naive,145.2817,136,5.0795
-flash_attention_triton,naive,150.0294,141,4.862
-flash_attention_triton,naive,154.7544,146,5.171
-flash_attention_triton,naive,159.455,151,5.3271
-flash_attention_triton,naive,161.3383,153,4.8369
-flash_attention_triton,naive,170.3729,156,4.9483
-flash_attention_triton,naive,175.0789,161,5.2142
-flash_attention_triton,naive,179.8066,166,4.9037
-flash_attention_triton,naive,184.5191,171,4.7646
-flash_attention_triton,naive,189.2351,176,5.0374
-flash_attention_triton,naive,193.9171,181,5.3409
-flash_attention_triton,naive,198.624,186,5.1276
-flash_attention_triton,naive,203.3337,191,4.8824
-flash_attention_triton,naive,208.0513,196,4.875
-flash_attention_triton,naive,212.7701,201,4.7806
-flash_attention_triton,naive,215.5972,204,5.1662
-flash_attention_triton,naive,223.1822,206,4.4411
-flash_attention_triton,naive,227.9286,211,4.7413
-flash_attention_triton,naive,232.6638,216,4.7945
-flash_attention_triton,naive,237.4097,221,4.5962
-flash_attention_triton,naive,242.1681,226,5.0144
-flash_attention_triton,naive,246.851,231,4.7776
-flash_attention_triton,naive,251.5234,236,4.7142
-flash_attention_triton,naive,256.2017,241,4.6727
-flash_attention_triton,naive,260.8937,246,4.6572
-flash_attention_triton,naive,265.5917,251,4.6566
-flash_attention_triton,naive,269.3832,255,4.8936
-flash_attention_triton,flashddp,5.8977,1,8.5002
-flash_attention_triton,flashddp,9.7809,6,8.481
-flash_attention_triton,flashddp,13.6905,11,8.0347
-flash_attention_triton,flashddp,17.584,16,7.6492
-flash_attention_triton,flashddp,21.49,21,7.1863
-flash_attention_triton,flashddp,25.3874,26,6.8093
-flash_attention_triton,flashddp,29.2788,31,6.4159
-flash_attention_triton,flashddp,33.1841,36,6.0167
-flash_attention_triton,flashddp,37.0879,41,5.652
-flash_attention_triton,flashddp,40.9911,46,5.9624
-flash_attention_triton,flashddp,44.8914,51,5.8665
-flash_attention_triton,flashddp,54.4813,56,5.5458
-flash_attention_triton,flashddp,58.4095,61,5.5713
-flash_attention_triton,flashddp,62.336,66,5.4669
-flash_attention_triton,flashddp,66.2614,71,5.3568
-flash_attention_triton,flashddp,70.1727,76,5.5559
-flash_attention_triton,flashddp,74.1006,81,5.4096
-flash_attention_triton,flashddp,78.0525,86,5.5574
-flash_attention_triton,flashddp,81.9695,91,5.3486
-flash_attention_triton,flashddp,85.8975,96,5.3776
-flash_attention_triton,flashddp,89.8254,101,5.2008
-flash_attention_triton,flashddp,90.6131,102,5.4183
-flash_attention_triton,flashddp,99.7308,106,5.5016
-flash_attention_triton,flashddp,103.6442,111,4.9755
-flash_attention_triton,flashddp,107.5705,116,5.1525
-flash_attention_triton,flashddp,111.491,121,5.4024
-flash_attention_triton,flashddp,115.4113,126,5.0847
-flash_attention_triton,flashddp,119.3298,131,4.9157
-flash_attention_triton,flashddp,123.2408,136,4.9992
-flash_attention_triton,flashddp,127.1478,141,4.7954
-flash_attention_triton,flashddp,131.1216,146,5.091
-flash_attention_triton,flashddp,135.0143,151,5.2555
-flash_attention_triton,flashddp,136.5752,153,4.7436
-flash_attention_triton,flashddp,144.6254,156,4.8767
-flash_attention_triton,flashddp,148.5367,161,5.1264
-flash_attention_triton,flashddp,152.4292,166,4.8354
-flash_attention_triton,flashddp,156.3205,171,4.6729
-flash_attention_triton,flashddp,160.2263,176,4.9628
-flash_attention_triton,flashddp,164.1249,181,5.2869
-flash_attention_triton,flashddp,168.0247,186,5.0563
-flash_attention_triton,flashddp,171.9595,191,4.8221
-flash_attention_triton,flashddp,175.8713,196,4.8524
-flash_attention_triton,flashddp,179.7741,201,4.7272
-flash_attention_triton,flashddp,182.1221,204,5.1244
-flash_attention_triton,flashddp,189.358,206,4.4088
-flash_attention_triton,flashddp,193.3157,211,4.6908
-flash_attention_triton,flashddp,197.2365,216,4.732
-flash_attention_triton,flashddp,201.1791,221,4.5724
-flash_attention_triton,flashddp,205.1271,226,4.9626
-flash_attention_triton,flashddp,209.1186,231,4.7254
-flash_attention_triton,flashddp,213.0668,236,4.665
-flash_attention_triton,flashddp,217.0204,241,4.6176
-flash_attention_triton,flashddp,220.9709,246,4.6009
-flash_attention_triton,flashddp,224.9566,251,4.6127
-flash_attention_triton,flashddp,228.1095,255,4.811
-flash_attention_triton,torch_ddp,5.1787,1,8.4793
-flash_attention_triton,torch_ddp,9.185,6,8.4475
-flash_attention_triton,torch_ddp,13.2013,11,7.9832
-flash_attention_triton,torch_ddp,17.2237,16,7.5705
-flash_attention_triton,torch_ddp,21.2435,21,7.0853
-flash_attention_triton,torch_ddp,25.2448,26,6.6965
-flash_attention_triton,torch_ddp,29.2602,31,6.323
-flash_attention_triton,torch_ddp,33.293,36,6.0153
-flash_attention_triton,torch_ddp,37.3375,41,5.669
-flash_attention_triton,torch_ddp,41.3856,46,5.9719
-flash_attention_triton,torch_ddp,45.4331,51,5.8605
-flash_attention_triton,torch_ddp,54.7985,56,5.5387
-flash_attention_triton,torch_ddp,58.7378,61,5.5513
-flash_attention_triton,torch_ddp,62.6708,66,5.4571
-flash_attention_triton,torch_ddp,66.6444,71,5.3389
-flash_attention_triton,torch_ddp,70.5709,76,5.5406
-flash_attention_triton,torch_ddp,74.5064,81,5.3858
-flash_attention_triton,torch_ddp,78.4355,86,5.5388
-flash_attention_triton,torch_ddp,82.4083,91,5.3112
-flash_attention_triton,torch_ddp,86.3283,96,5.3532
-flash_attention_triton,torch_ddp,90.2521,101,5.1671
-flash_attention_triton,torch_ddp,91.0437,102,5.3765
-flash_attention_triton,torch_ddp,99.8947,106,5.4585
-flash_attention_triton,torch_ddp,103.8154,111,4.9478
-flash_attention_triton,torch_ddp,107.7393,116,5.0942
-flash_attention_triton,torch_ddp,111.6544,121,5.3623
-flash_attention_triton,torch_ddp,115.5882,126,5.0443
-flash_attention_triton,torch_ddp,119.5621,131,4.8527
-flash_attention_triton,torch_ddp,123.5128,136,4.9636
-flash_attention_triton,torch_ddp,127.4512,141,4.7666
-flash_attention_triton,torch_ddp,131.3764,146,5.069
-flash_attention_triton,torch_ddp,135.315,151,5.2141
-flash_attention_triton,torch_ddp,136.8937,153,4.7036
-flash_attention_triton,torch_ddp,144.7629,156,4.8573
-flash_attention_triton,torch_ddp,148.6829,161,5.0935
-flash_attention_triton,torch_ddp,152.6095,166,4.8073
-flash_attention_triton,torch_ddp,156.5446,171,4.6423
-flash_attention_triton,torch_ddp,160.4811,176,4.9229
-flash_attention_triton,torch_ddp,164.4068,181,5.2539
-flash_attention_triton,torch_ddp,168.3624,186,5.0207
-flash_attention_triton,torch_ddp,172.3445,191,4.7601
-flash_attention_triton,torch_ddp,176.292,196,4.8009
-flash_attention_triton,torch_ddp,180.2486,201,4.6744
-flash_attention_triton,torch_ddp,182.6293,204,5.0823
-flash_attention_triton,torch_ddp,189.6038,206,4.3652
-flash_attention_triton,torch_ddp,193.6441,211,4.6414
-flash_attention_triton,torch_ddp,197.6483,216,4.6915
-flash_attention_triton,torch_ddp,201.593,221,4.5129
-flash_attention_triton,torch_ddp,205.5192,226,4.9193
-flash_attention_triton,torch_ddp,209.4496,231,4.6837
-flash_attention_triton,torch_ddp,213.3596,236,4.637
-flash_attention_triton,torch_ddp,217.2626,241,4.5834
-flash_attention_triton,torch_ddp,221.1879,246,4.5714
-flash_attention_triton,torch_ddp,225.1092,251,4.5649
-flash_attention_triton,torch_ddp,228.2407,255,4.7886
+vectorized_torch,Local No DDP,0.2414,1,8.982
+vectorized_torch,Local No DDP,0.6905,6,8.6449
+vectorized_torch,Local No DDP,1.1492,11,8.4132
+vectorized_torch,Local No DDP,1.5981,16,7.8123
+vectorized_torch,Local No DDP,2.0577,21,7.1886
+vectorized_torch,Local No DDP,2.5181,26,6.6551
+vectorized_torch,Local No DDP,2.9758,31,6.4698
+vectorized_torch,Local No DDP,3.4366,36,6.4594
+vectorized_torch,Local No DDP,3.8835,41,6.2578
+vectorized_torch,Local No DDP,4.3502,46,6.2551
+vectorized_torch,Local No DDP,4.8129,51,5.8007
+vectorized_torch,Local No DDP,5.5156,56,5.8463
+vectorized_torch,Local No DDP,5.9712,61,6.0303
+vectorized_torch,Local No DDP,6.4232,66,5.8628
+vectorized_torch,Local No DDP,6.878,71,5.659
+vectorized_torch,Local No DDP,7.3346,76,5.8783
+vectorized_torch,Local No DDP,7.7911,81,6.0257
+vectorized_torch,Local No DDP,8.2493,86,5.6479
+vectorized_torch,Local No DDP,8.702,91,5.8372
+vectorized_torch,Local No DDP,9.1579,96,5.9836
+vectorized_torch,Local No DDP,9.6174,101,5.6733
+vectorized_torch,Local No DDP,9.7099,102,5.0933
+vectorized_torch,Local No DDP,10.3417,106,5.9778
+vectorized_torch,Local No DDP,10.7972,111,5.7602
+vectorized_torch,Local No DDP,11.2525,116,5.9415
+vectorized_torch,Local No DDP,11.706,121,5.9453
+vectorized_torch,Local No DDP,12.159,126,5.5151
+vectorized_torch,Local No DDP,12.614,131,5.3267
+vectorized_torch,Local No DDP,13.0741,136,5.5457
+vectorized_torch,Local No DDP,13.5247,141,5.615
+vectorized_torch,Local No DDP,13.9799,146,5.2806
+vectorized_torch,Local No DDP,14.4371,151,5.4468
+vectorized_torch,Local No DDP,14.6251,153,5.6224
+vectorized_torch,Local No DDP,15.1689,156,5.487
+vectorized_torch,Local No DDP,15.6408,161,5.7549
+vectorized_torch,Local No DDP,16.096,166,5.2804
+vectorized_torch,Local No DDP,16.5476,171,5.8027
+vectorized_torch,Local No DDP,16.992,176,5.2615
+vectorized_torch,Local No DDP,17.4598,181,5.2192
+vectorized_torch,Local No DDP,17.9155,186,5.8194
+vectorized_torch,Local No DDP,18.3707,191,5.5474
+vectorized_torch,Local No DDP,18.8298,196,5.586
+vectorized_torch,Local No DDP,19.2966,201,5.4959
+vectorized_torch,Local No DDP,19.575,204,5.2032
+vectorized_torch,Local No DDP,20.0454,206,5.4005
+vectorized_torch,Local No DDP,20.4952,211,5.2529
+vectorized_torch,Local No DDP,20.953,216,5.6444
+vectorized_torch,Local No DDP,21.4068,221,5.1558
+vectorized_torch,Local No DDP,21.8673,226,5.5969
+vectorized_torch,Local No DDP,22.3268,231,5.1168
+vectorized_torch,Local No DDP,22.7796,236,5.165
+vectorized_torch,Local No DDP,23.2443,241,5.7615
+vectorized_torch,Local No DDP,23.6992,246,5.2837
+vectorized_torch,Local No DDP,24.154,251,5.09
+vectorized_torch,Local No DDP,24.5237,255,5.3507
+vectorized_torch,Naive DDP,3.8527,1,8.6109
+vectorized_torch,Naive DDP,4.8243,6,8.5197
+vectorized_torch,Naive DDP,5.6816,11,8.1489
+vectorized_torch,Naive DDP,6.5589,16,7.6728
+vectorized_torch,Naive DDP,7.4242,21,7.1127
+vectorized_torch,Naive DDP,8.2991,26,6.6715
+vectorized_torch,Naive DDP,9.1659,31,6.303
+vectorized_torch,Naive DDP,10.0296,36,6.0299
+vectorized_torch,Naive DDP,10.9008,41,6.0908
+vectorized_torch,Naive DDP,11.7695,46,5.6371
+vectorized_torch,Naive DDP,12.6331,51,5.7151
+vectorized_torch,Naive DDP,17.7723,56,5.7002
+vectorized_torch,Naive DDP,18.6537,61,5.8317
+vectorized_torch,Naive DDP,19.5121,66,5.5216
+vectorized_torch,Naive DDP,20.37,71,5.8529
+vectorized_torch,Naive DDP,21.2398,76,5.52
+vectorized_torch,Naive DDP,22.1069,81,5.825
+vectorized_torch,Naive DDP,22.9655,86,5.892
+vectorized_torch,Naive DDP,23.8377,91,5.7364
+vectorized_torch,Naive DDP,24.7021,96,5.9562
+vectorized_torch,Naive DDP,25.5797,101,5.5574
+vectorized_torch,Naive DDP,25.7537,102,5.4347
+vectorized_torch,Naive DDP,30.7568,106,5.5831
+vectorized_torch,Naive DDP,31.622,111,5.5063
+vectorized_torch,Naive DDP,32.4923,116,6.0372
+vectorized_torch,Naive DDP,33.3764,121,5.1798
+vectorized_torch,Naive DDP,34.2347,126,5.5988
+vectorized_torch,Naive DDP,35.0982,131,5.7714
+vectorized_torch,Naive DDP,35.9695,136,5.6163
+vectorized_torch,Naive DDP,36.8467,141,5.4507
+vectorized_torch,Naive DDP,37.7153,146,5.4872
+vectorized_torch,Naive DDP,38.5819,151,5.2581
+vectorized_torch,Naive DDP,38.9308,153,5.2977
+vectorized_torch,Naive DDP,43.8895,156,5.3446
+vectorized_torch,Naive DDP,44.7585,161,5.283
+vectorized_torch,Naive DDP,45.6269,166,5.2037
+vectorized_torch,Naive DDP,46.4957,171,5.6396
+vectorized_torch,Naive DDP,47.3513,176,4.6564
+vectorized_torch,Naive DDP,48.2174,181,5.1961
+vectorized_torch,Naive DDP,49.0812,186,5.1017
+vectorized_torch,Naive DDP,49.9452,191,5.1768
+vectorized_torch,Naive DDP,50.8074,196,5.2259
+vectorized_torch,Naive DDP,51.6825,201,5.3527
+vectorized_torch,Naive DDP,52.204,204,4.8995
+vectorized_torch,Naive DDP,56.9427,206,4.9927
+vectorized_torch,Naive DDP,57.8157,211,5.3519
+vectorized_torch,Naive DDP,58.673,216,5.4508
+vectorized_torch,Naive DDP,59.5311,221,5.8932
+vectorized_torch,Naive DDP,60.3909,226,5.2723
+vectorized_torch,Naive DDP,61.2747,231,4.9604
+vectorized_torch,Naive DDP,62.1458,236,5.2714
+vectorized_torch,Naive DDP,63.0168,241,5.1925
+vectorized_torch,Naive DDP,63.8897,246,4.7387
+vectorized_torch,Naive DDP,64.7547,251,5.1702
+vectorized_torch,Naive DDP,65.4629,255,4.7593
+vectorized_torch,Bucketed Overlapping DDP,3.9555,1,8.6269
+vectorized_torch,Bucketed Overlapping DDP,4.7282,6,8.5794
+vectorized_torch,Bucketed Overlapping DDP,5.4912,11,8.2219
+vectorized_torch,Bucketed Overlapping DDP,6.269,16,7.7197
+vectorized_torch,Bucketed Overlapping DDP,7.0207,21,7.133
+vectorized_torch,Bucketed Overlapping DDP,7.7742,26,6.6795
+vectorized_torch,Bucketed Overlapping DDP,8.5421,31,6.3606
+vectorized_torch,Bucketed Overlapping DDP,9.3035,36,5.99
+vectorized_torch,Bucketed Overlapping DDP,10.0622,41,6.1125
+vectorized_torch,Bucketed Overlapping DDP,10.8265,46,5.6444
+vectorized_torch,Bucketed Overlapping DDP,11.5895,51,5.7284
+vectorized_torch,Bucketed Overlapping DDP,16.9163,56,5.6976
+vectorized_torch,Bucketed Overlapping DDP,17.6782,61,5.8637
+vectorized_torch,Bucketed Overlapping DDP,18.449,66,5.5498
+vectorized_torch,Bucketed Overlapping DDP,19.1898,71,5.8742
+vectorized_torch,Bucketed Overlapping DDP,19.9721,76,5.5125
+vectorized_torch,Bucketed Overlapping DDP,20.7454,81,5.813
+vectorized_torch,Bucketed Overlapping DDP,21.5164,86,5.8862
+vectorized_torch,Bucketed Overlapping DDP,22.2889,91,5.7205
+vectorized_torch,Bucketed Overlapping DDP,23.0669,96,5.9392
+vectorized_torch,Bucketed Overlapping DDP,23.8387,101,5.5828
+vectorized_torch,Bucketed Overlapping DDP,23.9961,102,5.4381
+vectorized_torch,Bucketed Overlapping DDP,28.997,106,5.5276
+vectorized_torch,Bucketed Overlapping DDP,29.7675,111,5.4788
+vectorized_torch,Bucketed Overlapping DDP,30.5382,116,6.0424
+vectorized_torch,Bucketed Overlapping DDP,31.3001,121,5.1389
+vectorized_torch,Bucketed Overlapping DDP,32.0583,126,5.5793
+vectorized_torch,Bucketed Overlapping DDP,32.8287,131,5.7405
+vectorized_torch,Bucketed Overlapping DDP,33.5878,136,5.5972
+vectorized_torch,Bucketed Overlapping DDP,34.3534,141,5.3963
+vectorized_torch,Bucketed Overlapping DDP,35.1306,146,5.5259
+vectorized_torch,Bucketed Overlapping DDP,35.8048,151,5.2171
+vectorized_torch,Bucketed Overlapping DDP,35.9423,153,5.2776
+vectorized_torch,Bucketed Overlapping DDP,40.8765,156,5.3283
+vectorized_torch,Bucketed Overlapping DDP,41.6345,161,5.2491
+vectorized_torch,Bucketed Overlapping DDP,42.4022,166,5.1876
+vectorized_torch,Bucketed Overlapping DDP,43.1654,171,5.6041
+vectorized_torch,Bucketed Overlapping DDP,43.9342,176,4.6604
+vectorized_torch,Bucketed Overlapping DDP,44.7116,181,5.1846
+vectorized_torch,Bucketed Overlapping DDP,45.4824,186,5.1085
+vectorized_torch,Bucketed Overlapping DDP,46.2399,191,5.1926
+vectorized_torch,Bucketed Overlapping DDP,47.004,196,5.2331
+vectorized_torch,Bucketed Overlapping DDP,47.7569,201,5.3332
+vectorized_torch,Bucketed Overlapping DDP,48.216,204,4.8859
+vectorized_torch,Bucketed Overlapping DDP,53.0052,206,4.9426
+vectorized_torch,Bucketed Overlapping DDP,53.7693,211,5.3487
+vectorized_torch,Bucketed Overlapping DDP,54.542,216,5.4085
+vectorized_torch,Bucketed Overlapping DDP,55.3065,221,5.8961
+vectorized_torch,Bucketed Overlapping DDP,56.08,226,5.2783
+vectorized_torch,Bucketed Overlapping DDP,56.8446,231,4.981
+vectorized_torch,Bucketed Overlapping DDP,57.6068,236,5.26
+vectorized_torch,Bucketed Overlapping DDP,58.3661,241,5.2802
+vectorized_torch,Bucketed Overlapping DDP,59.1383,246,4.6923
+vectorized_torch,Bucketed Overlapping DDP,59.8784,251,5.1365
+vectorized_torch,Bucketed Overlapping DDP,60.4846,255,4.7943
+vectorized_torch,Pytorch DDP,3.9944,1,8.583
+vectorized_torch,Pytorch DDP,4.7502,6,8.5257
+vectorized_torch,Pytorch DDP,5.499,11,8.1639
+vectorized_torch,Pytorch DDP,6.2417,16,7.622
+vectorized_torch,Pytorch DDP,6.9984,21,7.0901
+vectorized_torch,Pytorch DDP,7.7541,26,6.6848
+vectorized_torch,Pytorch DDP,8.4984,31,6.2689
+vectorized_torch,Pytorch DDP,9.2514,36,5.9739
+vectorized_torch,Pytorch DDP,10.0109,41,6.0872
+vectorized_torch,Pytorch DDP,10.7661,46,5.5903
+vectorized_torch,Pytorch DDP,11.5098,51,5.7034
+vectorized_torch,Pytorch DDP,16.6719,56,5.6593
+vectorized_torch,Pytorch DDP,17.4488,61,5.7956
+vectorized_torch,Pytorch DDP,18.2057,66,5.4835
+vectorized_torch,Pytorch DDP,18.968,71,5.8675
+vectorized_torch,Pytorch DDP,19.7247,76,5.4697
+vectorized_torch,Pytorch DDP,20.4861,81,5.8111
+vectorized_torch,Pytorch DDP,21.2511,86,5.8793
+vectorized_torch,Pytorch DDP,22.0047,91,5.7228
+vectorized_torch,Pytorch DDP,22.7642,96,5.923
+vectorized_torch,Pytorch DDP,23.5245,101,5.5586
+vectorized_torch,Pytorch DDP,23.6769,102,5.4085
+vectorized_torch,Pytorch DDP,28.8592,106,5.5248
+vectorized_torch,Pytorch DDP,29.6306,111,5.4997
+vectorized_torch,Pytorch DDP,30.3888,116,6.0184
+vectorized_torch,Pytorch DDP,31.146,121,5.1434
+vectorized_torch,Pytorch DDP,31.9019,126,5.5478
+vectorized_torch,Pytorch DDP,32.6625,131,5.744
+vectorized_torch,Pytorch DDP,33.4225,136,5.6015
+vectorized_torch,Pytorch DDP,34.1822,141,5.4182
+vectorized_torch,Pytorch DDP,34.9425,146,5.4753
+vectorized_torch,Pytorch DDP,35.6889,151,5.264
+vectorized_torch,Pytorch DDP,36.0027,153,5.2966
+vectorized_torch,Pytorch DDP,40.8886,156,5.316
+vectorized_torch,Pytorch DDP,41.653,161,5.2336
+vectorized_torch,Pytorch DDP,42.408,166,5.1907
+vectorized_torch,Pytorch DDP,43.1658,171,5.5909
+vectorized_torch,Pytorch DDP,43.9153,176,4.6105
+vectorized_torch,Pytorch DDP,44.6798,181,5.1345
+vectorized_torch,Pytorch DDP,45.4282,186,5.083
+vectorized_torch,Pytorch DDP,46.1912,191,5.1717
+vectorized_torch,Pytorch DDP,46.9408,196,5.1869
+vectorized_torch,Pytorch DDP,47.697,201,5.346
+vectorized_torch,Pytorch DDP,48.154,204,4.9238
+vectorized_torch,Pytorch DDP,52.9225,206,4.9376
+vectorized_torch,Pytorch DDP,53.6791,211,5.3025
+vectorized_torch,Pytorch DDP,54.4339,216,5.384
+vectorized_torch,Pytorch DDP,55.1835,221,5.8833
+vectorized_torch,Pytorch DDP,55.9442,226,5.283
+vectorized_torch,Pytorch DDP,56.7008,231,4.9438
+vectorized_torch,Pytorch DDP,57.4567,236,5.2682
+vectorized_torch,Pytorch DDP,58.2169,241,5.2046
+vectorized_torch,Pytorch DDP,58.957,246,4.7161
+vectorized_torch,Pytorch DDP,59.7132,251,5.1448
+vectorized_torch,Pytorch DDP,60.3188,255,4.8217

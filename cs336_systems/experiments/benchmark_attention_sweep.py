@@ -401,14 +401,14 @@ def _write_pdf_tables(results: list[dict], out_dir: Path) -> None:
                     table[(r_i, c)].set_text_props(weight="bold")
 
         slug = _slugify(f"{tier}_Q{q_n}_K{k_n}_hd{hd}_h{nh}_b{bs}")
-        pdf_path = out_dir / f"attention_sweep_table_{slug}.pdf"
-        fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
+        out_path = out_dir / f"attention_sweep_table_{slug}.png"
+        fig.savefig(out_path, format="png", dpi=1200, bbox_inches="tight")
         plt.close(fig)
         emitted += 1
-        print(f"[pdf-table] Saved {pdf_path}")
+        print(f"[image-table] Saved {out_path}")
 
     if emitted == 0:
-        print("[pdf-table] No PDF tables generated.")
+        print("[image-table] No image tables generated.")
 
 
 # ---------------------------------------------------------------------------
