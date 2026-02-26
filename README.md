@@ -117,11 +117,11 @@ source .venv/bin/activate
 uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
   --train_path data/tokenized/ts_train.npy \
   --val_path data/tokenized/ts_valid.npy \
-  --epochs 5 --tr_batch_size 22 --context_length 512 \
+  --epochs 5 --tr_batch_size 20 --context_length 512 \
   --vocab_size 10000 \
   --d_model 768 --d_ff 3072 --num_layers 12 --num_heads 12 \
-  --kernels scaled_dot_prod_attention flash_attention_triton vectorized_torch \
-  --wrappers Naive\ DDP Local\ No\ DDP Bucketed\ Overlapping\ DDP Pytorch\ DDP
+  --kernels scaled_dot_prod_attention vectorized_torch flash_attention_triton \
+  --wrappers Local\ No\ DDP Naive\ DDP Pytorch\ DDP Bucketed\ Overlapping\ DDP
 ```
 
 Outputs:
