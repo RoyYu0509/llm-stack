@@ -20,6 +20,7 @@ DDP semantics (reflecting real-world usage):
 Produces:
   artifacts/lm_matrix_results.csv
   artifacts/lm_matrix_loss_curves.csv
+  artifacts/lm_matrix_table_<kernel>.pdf
   artifacts/lm_matrix_time.png
   artifacts/lm_matrix_memory.png
   artifacts/lm_matrix_throughput.png
@@ -531,6 +532,114 @@ def _write_markdown(results: list[dict], out_dir: Path) -> None:
     print(f"[report] Saved {md_path}")
 
 
+def _write_kernel_table_pdfs(results: list[dict], out_dir: Path) -> None:
+    """
+    Generate one PDF summary table per attention kernel.
+
+    Table format matches README style:
+      DDP rows with columns: tok/s, Scaling Efficiency, memory Overhead.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[pdf-table] matplotlib not installed — skipping PDF table generation.")
+        return
+
+    valid = [r for r in results if r.get("wall_sec", 0) > 0]
+    if not valid:
+        print("[pdf-table] No valid rows to render.")
+        return
+
+    kernels = sorted({r["kernel"] for r in valid})
+    emitted = 0
+
+    for kernel in kernels:
+        rows_for_kernel = {r["ddp"]: r for r in valid if r["kernel"] == kernel}
+        if not rows_for_kernel:
+            continue
+
+        baseline = rows_for_kernel.get("none")
+        baseline_tps = baseline.get("tokens_per_sec", 0) if baseline else 0
+        baseline_mem = baseline.get("peak_gpu_mb", 0) if baseline else 0
+
+        table_rows = []
+        for ddp in DDP_WRAPPERS:
+            row = rows_for_kernel.get(ddp)
+            if row is None:
+                continue
+
+            gpus = row.get("gpus", 0)
+            tps = row.get("tokens_per_sec", 0)
+            peak_mem = row.get("peak_gpu_mb", 0)
+            ddp_label = f"`{ddp}` ({gpus} GPU)" if gpus == 1 else f"`{ddp}` ({gpus} GPUs)"
+
+            if ddp == "none":
+                scaling = "N/A (no scaling)"
+                overhead = "0 MB (0.0%)"
+            else:
+                if baseline_tps and gpus > 1:
+                    scale_eff = (tps / (baseline_tps * gpus)) * 100.0
+                    scaling = f"{scale_eff:.1f}%"
+                else:
+                    scaling = "N/A"
+
+                if baseline_mem:
+                    delta = peak_mem - baseline_mem
+                    pct = (delta / baseline_mem) * 100.0
+                    overhead = f"{delta:+.1f} MB ({pct:.1f}%)"
+                else:
+                    overhead = "N/A"
+
+            table_rows.append([ddp_label, f"{tps:.1f}", scaling, overhead])
+
+        if not table_rows:
+            continue
+
+        col_labels = [
+            f"DDP Method\\Attention Kernel (`{kernel}`)",
+            "tok/s",
+            "Scaling Efficiency",
+            "memory Overhead",
+        ]
+
+        fig_height = max(2.6, 1.0 + 0.55 * (len(table_rows) + 1))
+        fig, ax = plt.subplots(figsize=(12.8, fig_height))
+        ax.axis("off")
+
+        table = ax.table(
+            cellText=table_rows,
+            colLabels=col_labels,
+            loc="center",
+            cellLoc="center",
+            colLoc="center",
+            colWidths=[0.48, 0.14, 0.19, 0.19],
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1, 1.45)
+
+        # Header styling
+        for c in range(len(col_labels)):
+            cell = table[(0, c)]
+            cell.set_text_props(weight="bold")
+            cell.set_facecolor("#f2f2f2")
+
+        # Left-align the first column (DDP labels)
+        for r_i in range(1, len(table_rows) + 1):
+            table[(r_i, 0)].set_text_props(ha="left")
+
+        pdf_path = out_dir / f"lm_matrix_table_{kernel}.pdf"
+        fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
+        plt.close(fig)
+        emitted += 1
+        print(f"[pdf-table] Saved {pdf_path}")
+
+    if emitted == 0:
+        print("[pdf-table] No kernel tables generated.")
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -654,6 +763,7 @@ def main() -> None:
 
     _plot_results(results, out_dir)
     _write_markdown(results, out_dir)
+    _write_kernel_table_pdfs(results, out_dir)
     print("\n[benchmark_lm_matrix] Done.")
 
 

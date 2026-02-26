@@ -8,6 +8,7 @@ All tier dimensions must be powers of 2; invalid custom tiers fail fast.
 
 Produces:
   artifacts/attention_sweep_results.csv
+  artifacts/attention_sweep_table_<config>.pdf
   artifacts/attention_sweep_forward.png
   artifacts/attention_sweep_heatmap.png
   artifacts/attention_sweep_report.md
@@ -25,6 +26,7 @@ import argparse
 import csv
 import gc
 import math
+import re
 import time
 import timeit
 from pathlib import Path
@@ -41,12 +43,12 @@ DEFAULT_TIERS = [
     # (Great for 768-wide models, long context)
     # ==========================================
 
-    ("Long-hd128-12h-1b-512",    512,    512,   64, 12, 1),
-    ("Long-hd128-12h-1b-1k",    1024,   1024,   64, 12, 1),
-    ("Long-hd128-12h-1b-2k",    2048,   2048,   64, 12, 1),
-    ("Long-hd128-12h-1b-4k",    4096,   4096,   64, 12, 1),
-    ("Long-hd128-12h-1b-8k",    8192,   8192,   64, 12, 1),
-    ("Long-hd128-12h-1b-16k",  16384,  16384,   64, 12, 1),
+    ("seq512-hd64-12h-8b",    512,    512,   64, 12, 8),
+    ("seq1024-hd64-12h-8b",   1024,   1024,   64, 12, 8),
+    ("seq2048-hd64-12h-8b",   2048,   2048,   64, 12, 8),
+    ("seq4096-hd64-12h-8b",    4096,   4096,   64, 12, 8),
+    ("seq8192-hd64-12h-8b",    8192,   8192,   64, 12, 8),
+    ("seq16384-hd64-12h-8b",  16384,  16384,   64, 12, 8),
 
 
     # ==========================================
@@ -54,37 +56,12 @@ DEFAULT_TIERS = [
     # (Very Triton-friendly, warp aligned)
     # ==========================================
 
-    ("Long-hd128-12h-1b-512",    512,    512,   64, 12, 8),
-    ("Long-hd128-12h-1b-1k",    1024,   1024,   64, 12, 8),
-    ("Long-hd128-12h-1b-2k",    2048,   2048,   64, 12, 8),
-    ("Long-hd128-12h-1b-4k",    4096,   4096,   64, 12, 8),
-    ("Long-hd128-12h-1b-8k",    8192,   8192,   64, 12, 8),
-    ("Long-hd128-12h-1b-16k",  16384,  16384,   64, 12, 8),
-
-    # ==========================================
-    # head_dim=128, num_heads=12, batch_size=1
-    # (Great for 768-wide models, long context)
-    # ==========================================
-
-    ("Long-hd128-12h-1b-512",    512,    512,   128, 12, 1),
-    ("Long-hd128-12h-1b-1k",    1024,   1024,   128, 12, 1),
-    ("Long-hd128-12h-1b-2k",    2048,   2048,   128, 12, 1),
-    ("Long-hd128-12h-1b-4k",    4096,   4096,   128, 12, 1),
-    ("Long-hd128-12h-1b-8k",    8192,   8192,   128, 12, 1),
-    ("Long-hd128-12h-1b-16k",  16384,  16384,   128, 12, 1),
-
-
-    # ==========================================
-    # head_dim=128, num_heads=16, batch_size=1
-    # (Very Triton-friendly, warp aligned)
-    # ==========================================
-
-    ("Long-hd128-16h-1b-512",    512,    512,   256, 24, 2),
-    ("Long-hd128-16h-1b-1k",    1024,   1024,   256, 24, 2),
-    ("Long-hd128-16h-1b-2k",    2048,   2048,   256, 24, 2),
-    ("Long-hd128-16h-1b-4k",    4096,   4096,   256, 24, 2),
-    ("Long-hd128-16h-1b-8k",    8192,   8192,   256, 24, 2),
-    ("Long-hd128-16h-1b-16k",  16384,  16384,   256, 24, 2),
+    ("seq512-hd128-16h-32b",    512,    512,   128, 16, 32),
+    ("seq1024-hd128-16h-32b",   1024,   1024,   128, 16, 32),
+    ("seq2048-hd128-16h-32b",   2048,   2048,   128, 16, 32),
+    ("seq4096-hd128-16h-32b",    4096,   4096,   128, 16, 32),
+    ("seq8192-hd128-16h-32b",    8192,   8192,   128, 16, 32),
+    ("seq16384-hd128-16h-32b",  16384,  16384,   128, 16, 32),
 ]
 
 KERNEL_NAMES = [
@@ -316,6 +293,124 @@ def _write_markdown(results: list[dict], out_dir: Path) -> None:
     print(f"[report] Saved {md}")
 
 
+def _slugify(s: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]+", "_", s).strip("_")
+
+
+def _write_pdf_tables(results: list[dict], out_dir: Path) -> None:
+    """
+    Export one PDF table per attention configuration.
+
+    Table columns:
+      - Kernel
+      - Avg Forward Time (ms)
+      - Relative to Triton Flash
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[pdf-table] matplotlib not installed — skipping PDF table generation.")
+        return
+
+    if not results:
+        print("[pdf-table] No results to render.")
+        return
+
+    # Group by full configuration; tier labels may repeat, so include full shape metadata.
+    grouped: dict[tuple, list[dict]] = {}
+    for r in results:
+        key = (
+            r.get("tier"),
+            r.get("Q_N"),
+            r.get("K_N"),
+            r.get("head_dim"),
+            r.get("num_heads"),
+            r.get("batch_size"),
+        )
+        grouped.setdefault(key, []).append(r)
+
+    kernel_order = {k: i for i, k in enumerate(KERNEL_NAMES)}
+    emitted = 0
+
+    for (tier, q_n, k_n, hd, nh, bs), rows in grouped.items():
+        by_kernel = {r["kernel"]: r for r in rows}
+        ordered_kernels = sorted(by_kernel.keys(), key=lambda k: kernel_order.get(k, 999))
+        flash_row = by_kernel.get("flash_attention_triton")
+        flash_ms = None
+        if flash_row and not flash_row.get("error") and flash_row.get("avg_ms", 0) > 0:
+            flash_ms = float(flash_row["avg_ms"])
+
+        table_rows = []
+        for kernel in ordered_kernels:
+            row = by_kernel[kernel]
+            if row.get("error") or row.get("avg_ms", 0) <= 0:
+                avg_text = "ERROR"
+                rel_text = "N/A"
+            else:
+                avg_ms = float(row["avg_ms"])
+                avg_text = f"{avg_ms:.2f}"
+                if flash_ms is None:
+                    rel_text = "N/A"
+                else:
+                    ratio = avg_ms / flash_ms
+                    if kernel == "flash_attention_triton":
+                        rel_text = "1.00x"
+                    elif ratio >= 1.0:
+                        rel_text = f"{ratio:.2f}x slower"
+                    else:
+                        rel_text = f"{(1.0 / ratio):.2f}x faster"
+
+            table_rows.append([kernel, avg_text, rel_text])
+
+        if not table_rows:
+            continue
+
+        fig_h = max(2.8, 1.15 + 0.5 * (len(table_rows) + 1))
+        fig, ax = plt.subplots(figsize=(11.8, fig_h))
+        ax.axis("off")
+        title = (
+            f"{tier} | Q={q_n}, K={k_n}, head_dim={hd}, heads={nh}, batch={bs}"
+        )
+        ax.set_title(title, fontsize=11, pad=8)
+
+        col_labels = ["Kernel", "Avg Forward Time (ms)", "Relative to Triton Flash"]
+        table = ax.table(
+            cellText=table_rows,
+            colLabels=col_labels,
+            loc="center",
+            cellLoc="center",
+            colLoc="center",
+            colWidths=[0.34, 0.24, 0.42],
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1, 1.42)
+
+        # Header style
+        for c in range(len(col_labels)):
+            cell = table[(0, c)]
+            cell.set_text_props(weight="bold")
+            cell.set_facecolor("#f2f2f2")
+
+        # Highlight flash row values to mirror emphasis in README
+        for r_i, (kernel, _, _) in enumerate(table_rows, start=1):
+            if kernel == "flash_attention_triton":
+                for c in range(len(col_labels)):
+                    table[(r_i, c)].set_text_props(weight="bold")
+
+        slug = _slugify(f"{tier}_Q{q_n}_K{k_n}_hd{hd}_h{nh}_b{bs}")
+        pdf_path = out_dir / f"attention_sweep_table_{slug}.pdf"
+        fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
+        plt.close(fig)
+        emitted += 1
+        print(f"[pdf-table] Saved {pdf_path}")
+
+    if emitted == 0:
+        print("[pdf-table] No PDF tables generated.")
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -402,6 +497,7 @@ def main() -> None:
 
     _plot_results(results, out_dir)
     _write_markdown(results, out_dir)
+    _write_pdf_tables(results, out_dir)
     print("\n[benchmark_attention_sweep] Done.")
 
 
