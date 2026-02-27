@@ -1,163 +1,113 @@
-# Transformer Language Model Systems Project
+# Transformer Systems Engineering Project
 
-Full GPT-style decoder-only language model and systems stack built from scratch with Python and PyTorch (project period: Nov 2025 - Feb 2026, NUS).
+I implemented the model and training pipeline from scratch and then added systems optimizations that measurably improved speed and scalability, using **PyTorch** and **Triton GPU programming**.
 
-## Project Focus
+- **End-to-end LM stack** [`cs336_basics`](./cs336_basics)
+  - Byte-level BPE tokenizer (parallel training)
+  - Parallel dataset tokenization to NumPy arrays
+  - Pre-norm Transformer LM
+  - Custom AdamW + LR schedule + gradient clipping
+  - Evaluation, WanDB logging & checkpointing, generation sampling.
+  
+- **Attention kernels** [`cs336_systems/FlashAttention`](./cs336_systems/FlashAttention)
+  - Baseline scaled dot-product attention
+  - Vectorized PyTorch attention baseline
+  - Autotuned **Triton FlashAttention** integrated into the model interface
 
-This repository centers on building and optimizing a full Transformer LM pipeline:
+- **Distributed training** [`cs336_systems/Parallelization`](cs336_systems/Parallelization)
+  - Naive per-parameter synchronization baseline
+  - PyTorch DDP baseline
+  - **Custom bucketed, overlapped DDP** wrapper (communication/computation overlap)
 
-- End-to-end LM implementation and training stack
-- Long-context attention optimization with Triton FlashAttention
-- Distributed multi-GPU training from first principles
-- Reproducible experiment pipelines and benchmark reporting
+- **Experiment + profiling workflow** [`cs336_systems/experiments`](./cs336_systems/experiments) & [`cs336_systems/Attention_profiling`](./cs336_systems/Attention_profiling)
+  - Benchmark drivers that emit **CSV + Markdown summaries**
+  - Plots for timing, throughput, convergence, and memory behavior
+  - Artifacts saved under [`artifacts/`](./artifacts/) for review and sharing
 
-## What I Implemented
-
-| Area | Implementation |
-|---|---|
-| Tokenization | Parallel BPE tokenizer training + dataset tokenization to `.npy` |
-| Model | Decoder-only `TransformerLM` with RoPE, pre-norm residual blocks, RMSNorm, SwiGLU FFN |
-| Optimization | Custom AdamW optimizer, LR scheduling, grad clipping |
-| Inference | Nucleus (`top-p`) sampling text generation |
-| Attention Kernels | `scaled_dot_prod_attention`, `vectorized_torch`, Triton `flash_attention_triton` (autotuned) with reference kernel validation |
-| Distributed Training | Naive per-parameter DDP, Torch DDP baseline, custom bucketed-overlapped `DDPOverlapBucketed` (`flashddp`) |
-| Profiling | NVIDIA Nsight Systems + PyTorch profiler workflow for kernel/runtime bottleneck analysis |
-| Experiment Infra | Unified JSON/CLI pipeline, checkpointing, optional model compilation with `torch.compile`, W&B logging |
-
-## Key Results
-
-### 1. Attention Forward Performance (Long Context)
-
-Representative tier: `Q=K=8192, head_dim=64, heads=12, batch=1`
-
-| Kernel | Avg Forward Time (ms) | Relative to Triton Flash |
-|---|---:|---:|
-| `scaled_dot_prod_attention` | 116.65 | 6.40x slower |
-| `vectorized_torch` | 97.83 | 5.36x slower |
-| `vectorized_torch_compiled` | 28.45 | 1.56x slower |
-| `flash_attention_triton` | **18.24** | 1.00x |
-
-Longer-context behavior (`Q=K=16384`, same tier family):
-
-- `flash_attention_triton`: **72.32 ms**
-- `vectorized_torch`: OOM in this sweep
-- `scaled_dot_prod_attention`: OOM in this sweep
-
-This matches the long-context objective in the resume entry: major forward-pass latency reduction and practical 16K-context execution where naive/vectorized baselines fail in the same benchmark family.
-
-![LM Throughput](artifacts/lm_matrix_throughput.png)
-![LM Peak Memory](artifacts/lm_matrix_memory.png)
-
-### 2. Multi-GPU Training Throughput (3x4 Matrix)
-
-![pdf](artifacts/lm_matrix_table_vectorized_torch.pdf)
-
-`Scaling Efficiency` for 2-GPU rows is measured against ideal 2x throughput over the same-kernel `none` baseline. `memory Overhead` is per-GPU peak memory increase vs the same-kernel `none` baseline.
-
-Summary:
-
-- Up to **81.8% (~82%)** scaling efficiency on 2 GPUs
-- **+18.0%** throughput (`flashddp` vs `naive`) for `flash_attention_triton`
-- **<10%** per-GPU memory overhead for overlapped bucketing
-
-## Figures
-
-### Attention Sweep
-
-![Attention Forward Benchmark](artifacts/attention_sweep_forward.png)
-![Attention Heatmap](artifacts/attention_sweep_heatmap.png)
-
-### LM Matrix Benchmarks
+This repo shows both algorithm-level and systems-level engineering: I did not just train a model, I also optimized how efficiently the machine runs it.
 
 
+## Achievements Summary
 
-## Reproduce Main Experiments
+| Summary | Achievements | Implication |
+|---|---|---|
+| Flash Attention speed | At **sequence length 8,192**, Triton FlashAttention is **6.54×** faster than PyTorch vectorized attention (**27.20 ms** vs **177.82 ms**) | Faster attention directly reduces response/training latency |
+| Flash Attention long-context feasibility | At **sequence length 16,384**, **only** Triton FlashAttention completes (**116.60 ms**); other kernels hit OOM | Longer context improves the model’s ability to handle long prompts |
+| Multi-GPU training pipeline | On 2× GPUs, **Bucketed + Overlapped gradient DDP training** , reaching **85.9% scaling efficiency** with only **+3.3%** peak per-GPU memory overhead, and is **+9.4%** faster than ***Naive DDP*** (**25,336.7 → 27,719.1 tok/s**) | More tokens/sec without a big memory penalty → better utilization and scalability |
 
-### Environment
+#### Environment Specifics
+
+Benchmarks were run on a rented SSH VM with **2× RTX 3090**, dual **Xeon E5-2680 v4**, **193 GB RAM**.
+
+
+## Dicussion of Benchmark Highlights
+---
+### 1) FlashAttention Performance
+
+In the attention sweep (**head_dim=64, heads=12, batch=4**), Triton FlashAttention is fastest at every measured sequence length, **6~7×** faster than Attention kernels, and is the only kernel that completed **sequence length 16,384** in this benchmark family, while alternatives hit OOM at that length. 
+
+The following plot shows the forward pass time for the different attention kernels across sequence lengths configs, where the x-axis is the sequence length (Q=K) and the y-axis is the forward pass time in milliseconds. We see that FlashAttention is significantly faster than the other kernels, and is the only one that can handle the longest sequence length without running out of memory.
+
+![Attention Sweep Forward Time][fig-attn-sweep]
+
+FlashAttention improves memory efficiency by fusing the attention computation and reducing intermediate activations to gain efficiency, and compute on smaller tiles to fit longer contexts in memory. 
+
+This optimization keeps the system responsive and able to run where baselines fail.
+
+---
+### 2) Multi-GPU Scaling with DDP
+
+DDP trains one model replica per GPU and synchronizes gradients each step. Compared to Naive DDP implementation, **Bucketed + Overlapped DDP** improved throughput from **25,336.7** to **27,719.1 tok/s** (**+9.4%**). It achieves **85.9%** scaling efficiency and only **+498.8 MB** (**+3.3%**) peak per-GPU memory overhead versus local 1-GPU.
+
+The following plot shows the training throughput (tokens/sec) for the FlashAttention kernel across different DDP strategies. The x-axis is the DDP strategy and the y-axis is the training throughput in tokens/sec. We see that the Bucketed + Overlapped DDP strategy achieves the on par throughput with PyTorch DDP, and is significantly faster than the Naive DDP strategy.
+
+![FlashAttention DDP Throughput][fig-ddp-throughput]  
+![FlashAttention DDP Summary Table][fig-ddp-table]
+
+Practical interpretation: this is a systems efficiency gain, not just a benchmark trick; more useful work is completed per second without a large memory penalty.
+
+---
+
+## Reproduce Key Results
 
 ```bash
 uv sync
 source .venv/bin/activate
-export WANDB_API_KEY=...
 ```
 
-### End-to-End Pipeline
-
 ```bash
-# Default single-GPU run
-uv run python cs336_systems/experiments/run_pipeline.py \
-  --config cs336_systems/experiments/default_pipeline_config.json
-
-# Override kernel + DDP wrapper
+# End-to-end pipeline runner (configurable via JSON)
+# DDP wrapper options: none | naive | flashddp
 uv run python cs336_systems/experiments/run_pipeline.py \
   --config cs336_systems/experiments/default_pipeline_config.json \
   --attention_kernel flash_attention_triton \
-  --ddp_wrapper Bucketed\ Overlapping\ DDP \
+  --ddp_wrapper flashddp \
   --skip_data
 ```
 
-Supported attention kernels:
-
-- `scaled_dot_prod_attention`
-- `vectorized_torch`
-- `flash_attention_triton`
-
-Supported wrappers:
-
-- `Local No DDP`
-- `Naive DDP`
-- `Bucketed Overlapping DDP`
-- `Pytorch DDP`
-
-### LM Kernel x DDP Matrix
-
 ```bash
-source .venv/bin/activate
-
-uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
-  --train_path data/tokenized/ts_train.npy \
-  --val_path data/tokenized/ts_valid.npy \
-  --epochs 3 --tr_batch_size 20 --context_length 512 \
-  --vocab_size 10000 \
-  --d_model 768 --d_ff 3072 --num_layers 12 --num_heads 12 \
-  --kernels scaled_dot_prod_attention vectorized_torch flash_attention_triton \
-  --wrappers Bucketed\ Overlapping\ DDP Local\ No\ DDP Naive\ DDP Pytorch\ DDP 
-```
-
-Outputs:
-
-- `artifacts/lm_matrix_results.csv`
-- `artifacts/lm_matrix_report.md`
-- `artifacts/lm_matrix_time.png`
-- `artifacts/lm_matrix_memory.png`
-- `artifacts/lm_matrix_throughput.png`
-
-### Attention Forward Sweep
-
-```bash
+# Attention forward benchmark sweep (sequence length scaling + latency)
 uv run python cs336_systems/experiments/benchmark_attention_sweep.py
 ```
 
-Outputs:
+```bash
+# LM benchmark matrix (kernel × DDP strategy) with throughput/memory artifacts
+uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
+  --train_path data/tokenized/ts_train.npy \
+  --val_path   data/tokenized/ts_valid.npy \
+  --kernels scaled_dot_prod_attention vectorized_torch flash_attention_triton \
+  --wrappers "Local No DDP" "Naive DDP" "Bucketed Overlapping DDP" "Pytorch DDP"
+```
 
-- `artifacts/attention_sweep_results.csv`
-- `artifacts/attention_sweep_report.md`
-- `artifacts/attention_sweep_forward.png`
-- `artifacts/attention_sweep_heatmap.png`
-- `artifacts/attention_sweep_scaling.png`
+## Coursework Attribution
 
-## Repository Pointers
+This project extends **Stanford CS336** assignment scaffolding with my own systems implementation and benchmarking workflow. Source handouts:
+- [CS336 Assignment 1 (Basics) handout](./cs336-basics/cs336_spring2025_assignment1_basics.pdf)
+- [CS336 Assignment 2 (Systems) handout](./cs336_spring2025_assignment2_systems.pdf)
 
-- `cs336-basics/cs336_basics`: core LM, tokenizer, optimizer, trainer
-- `cs336_systems/FlashAttention`: Triton FlashAttention kernel + tuning scripts
-- `cs336_systems/Parallelization/FlashDDP`: custom bucketed-overlapped DDP wrapper
-- `cs336_systems/experiments`: pipeline + benchmark entrypoints
-- `artifacts`: generated reports and figures
+---
 
-## References (Coursework Origin)
-
-This project was developed on top of CS336 coursework scaffolding; assignment-specific details are archived here for reference only.
-
-- CS336 systems handout: [`cs336_spring2025_assignment2_systems.pdf`](./cs336_spring2025_assignment2_systems.pdf)
-- Assignment packaging script: `./test_and_make_submission.sh`
-- Original assignment directory split: `cs336-basics` (assignment-1 baseline module) and `cs336_systems` (systems/optimization implementation)
+<!-- Figure references (keeps the main text clean while preserving exact paths) -->
+[fig-attn-sweep]: artifacts/attention_sweep_forward.png
+[fig-ddp-throughput]: artifacts/flash_attention_triton_lm_matrix_throughput.png
+[fig-ddp-table]: artifacts/lm_matrix_table_flash_attention_triton.png
