@@ -40,6 +40,7 @@ DEFAULT_TIERS = [
     
     # ==========================================
     # A XS-size LM with 64 per-head dimension (d_model=768/heads=12), 12 heads, batch size 4
+    # NOTE: Heads number is not in used and kept for API consitency.
     # ==========================================
     ("XS-seq2048-hd64-12h-8b",   2048,   2048,   64, 12, 4),
     ("XS-seq4096-hd64-12h-8b",    4096,   4096,   64, 12, 4),
