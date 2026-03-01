@@ -44,7 +44,7 @@ Benchmarks were run on a rented SSH VM with **2× RTX 3090**, dual **Xeon E5-268
 ---
 ### 1) FlashAttention Performance
 
-In the attention sweep (**head_dim=64, heads=12, batch=4**), Triton FlashAttention is fastest at every measured sequence length, **6~7×** faster than Attention kernels, and is the only kernel that completed **sequence length 16,384** in this benchmark family, while alternatives hit OOM at that length. 
+In the attention sweep (**head_dim=64, heads=12, batch=4**), Triton FlashAttention is fastest at every measured sequence length, **2~7×** faster than Compiled/Standard Attention kernels, and is the only kernel that completed **sequence length 16,384** in this benchmark family, while alternatives hit OOM at that length. 
 
 The following plot shows the forward pass time for the different attention kernels across sequence lengths configs, where the x-axis is the sequence length (Q=K) and the y-axis is the forward pass time in milliseconds. We see that FlashAttention is significantly faster than the other kernels, and is the only one that can handle the longest sequence length without running out of memory.
 
@@ -57,7 +57,7 @@ This optimization keeps the system responsive and able to run where baselines fa
 ---
 ### 2) Multi-GPU Scaling with DDP
 
-DDP trains one model replica per GPU and synchronizes gradients each step. Compared to Naive DDP implementation, **Bucketed + Overlapped DDP** improved throughput from **25,336.7** to **27,719.1 tok/s** (**+9.4%**). It achieves **85.9%** scaling efficiency and only **+498.8 MB** (**+3.3%**) peak per-GPU memory overhead versus local 1-GPU.
+DDP trains one model replica per GPU and synchronizes gradients each step. Compared to Naive DDP implementation, **Bucketed + Overlapped DDP** improved throughput from **25,336.7** to **27,719.1 tok/s** (**+9.4%**). It achieves **85.9%** scaling efficiency and only **+498.8 MB** (**+3%**) peak per-GPU memory overhead versus local 1-GPU.
 
 The following plot shows the training throughput (tokens/sec) for the FlashAttention kernel across different DDP strategies. The x-axis is the DDP strategy and the y-axis is the training throughput in tokens/sec. We see that the Bucketed + Overlapped DDP strategy achieves the on par throughput with PyTorch DDP, and is significantly faster than the Naive DDP strategy.
 
