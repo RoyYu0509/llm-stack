@@ -193,12 +193,9 @@ def flash_fwd_kernel(
     o_dtype = OUTPUT_DTYPE
 
     # ------------------------------------------------------------
-    # Online Statistics
+    # Online Statistics (Accumulate in high percision)
+    # NOTE: QKV them-selves are still in low percision, no need to upcast them
     # ------------------------------------------------------------
-    # Move Q_i to high precision once since it will be reused across all K_TILE blocks
-    Q_i_hp = Q_i.to(hp_dtype)
-
-    # Online Staitics (Initialized in High Precision)
     m_i = tl.zeros((Q_TILE_SIZE,), dtype = hp_dtype) - 1e20    # "Q_TILE_SIZE, "
     l_i = tl.zeros((Q_TILE_SIZE,), dtype = hp_dtype)          # "Q_TILE_SIZE, "
     o_i = tl.zeros((Q_TILE_SIZE, D), dtype = hp_dtype)        # "Q_TILE_SIZE, D"
@@ -208,8 +205,7 @@ def flash_fwd_kernel(
     for start_k_B_idx in range(0, N_KEYS, K_TILE_SIZE):
         # 1. Compute pre-softmax
         K_j = tl.load(K_block_ptr, boundary_check=(0,1), padding_option="zero")  # "K_TILE_SIZE, D"
-        K_j_hp = K_j.to(hp_dtype) # Upcast K to high precision
-        S_ij = tl.dot(Q_i_hp, tl.trans(K_j_hp), out_dtype=hp_dtype) * scale  # "Q_TILE_SIZE, K_TILE_SIZE"
+        S_ij = tl.dot(Q_i, tl.trans(K_j), out_dtype=hp_dtype) * scale  # "Q_TILE_SIZE, K_TILE_SIZE"
        
         # 2.  Masking
         # 2.1 Mask the out of bound entries to be -inf, so that row_max & Softmax is correct
@@ -238,8 +234,7 @@ def flash_fwd_kernel(
 
         # 5. Update OUT with ValueMatrix
         V_j = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")  # "K_TILE_SIZE, D"
-        V_j_hp = V_j.to(hp_dtype) 
-        o_i = o_i * max_correct_scale[:,None] + tl.dot(P_ij, V_j_hp, out_dtype=hp_dtype)  # "Q_TILE_SIZE, D"
+        o_i = o_i * max_correct_scale[:,None] + tl.dot(P_ij, V_j, out_dtype=hp_dtype)  # "Q_TILE_SIZE, D"
 
         # Advance pointers
         K_block_ptr = K_block_ptr.advance((K_TILE_SIZE,0))

@@ -39,13 +39,17 @@ torch.set_float32_matmul_precision('high')
 DEFAULT_TIERS = [
     
     # ==========================================
-    # A XS-size LM with 64 per-head dimension (d_model=768/heads=12), 12 heads, batch size 4
-    # NOTE: Heads number is not in used and kept for API consitency.
+    # XS LM-style attention config:
+    # - d_model=768 and num_heads=12 => per-head dimension is 64.
+    # - This benchmark runs per-head attention kernels on tensors shaped
+    #   (batch_size * num_heads, seq_len, head_dim), so heads are flattened
+    #   into the batch axis (no cross-head mixing in the kernel itself).
+    # - With batch_size=4 and num_heads=12, each run evaluates 48 independent heads.
     # ==========================================
-    ("XS-seq2048-hd64-12h-8b",   2048,   2048,   64, 12, 4),
-    ("XS-seq4096-hd64-12h-8b",    4096,   4096,   64, 12, 4),
-    ("XS-seq8192-hd64-12h-8b",    8192,   8192,   64, 12, 4),
-    ("XS-seq16384-hd64-12h-8b",  16384,  16384,   64, 12, 4),
+    ("XS-seq2048-hd64-12h-4b",   2048,   2048,   64, 12, 4),
+    ("XS-seq4096-hd64-12h-4b",    4096,   4096,   64, 12, 4),
+    ("XS-seq8192-hd64-12h-4b",    8192,   8192,   64, 12, 4),
+    ("XS-seq16384-hd64-12h-4b",  16384,  16384,   64, 12, 4),
 ]
 
 KERNEL_NAMES = [
@@ -94,12 +98,18 @@ def bench_one(
     dtype: torch.dtype,
 ) -> dict:
     """Forward-only benchmark. Returns timing dict."""
+    # Per-head attention benchmark:
+    # each slice in the leading dimension is one (batch, head) pair.
+    # For d_model=768, num_heads=12 => head_dim=64; we benchmark those 64-dim heads,
+    # not a single 768-dim monolithic attention.
     shape_q = (batch_size * num_heads, q_n, head_dim)
     shape_kv = (batch_size * num_heads, k_n, head_dim)
 
     q = torch.randn(shape_q, device=device, dtype=dtype)
     k = torch.randn(shape_kv, device=device, dtype=dtype)
     v = torch.randn(shape_kv, device=device, dtype=dtype)
+    track_cuda_mem = device.startswith("cuda") and torch.cuda.is_available()
+    cuda_device = torch.device(device) if track_cuda_mem else None
 
     # Warmup
     for _ in range(warmup):
@@ -109,13 +119,29 @@ def bench_one(
 
     # Timed iterations
     times = []
+    peak_allocated_mb = 0.0
+    peak_reserved_mb = 0.0
+    peak_allocated_delta_mb = 0.0
     for _ in range(iters):
+        if track_cuda_mem:
+            # Measure steady-state memory for each timed forward pass.
+            torch.cuda.reset_peak_memory_stats(cuda_device)
+            baseline_allocated = torch.cuda.memory_allocated(cuda_device)
         _sync()
         t0 = timeit.default_timer()
         _ = kernel_fn(q, k, v, True)
         _sync()
         t1 = timeit.default_timer()
         times.append(t1 - t0)
+        if track_cuda_mem:
+            iter_peak_allocated = torch.cuda.max_memory_allocated(cuda_device)
+            iter_peak_reserved = torch.cuda.max_memory_reserved(cuda_device)
+            peak_allocated_mb = max(peak_allocated_mb, iter_peak_allocated / (1024 ** 2))
+            peak_reserved_mb = max(peak_reserved_mb, iter_peak_reserved / (1024 ** 2))
+            peak_allocated_delta_mb = max(
+                peak_allocated_delta_mb,
+                (iter_peak_allocated - baseline_allocated) / (1024 ** 2),
+            )
 
     avg_ms = 1000.0 * sum(times) / len(times)
     std_ms = 1000.0 * (sum((t - sum(times) / len(times)) ** 2 for t in times) / len(times)) ** 0.5
@@ -137,6 +163,9 @@ def bench_one(
         "avg_ms": round(avg_ms, 4),
         "std_ms": round(std_ms, 4),
         "min_ms": round(min_ms, 4),
+        "peak_allocated_mb": round(peak_allocated_mb, 2) if track_cuda_mem else None,
+        "peak_reserved_mb": round(peak_reserved_mb, 2) if track_cuda_mem else None,
+        "peak_allocated_delta_mb": round(peak_allocated_delta_mb, 2) if track_cuda_mem else None,
     }
 
 
@@ -264,16 +293,21 @@ def _plot_results(results: list[dict], out_dir: Path) -> None:
 
 
 def _write_markdown(results: list[dict], out_dir: Path) -> None:
+    def _fmt_opt(v):
+        return "N/A" if v is None else f"{float(v):.2f}"
+
     md = out_dir / "attention_sweep_report.md"
     with open(md, "w") as f:
         f.write("# Attention Forward Benchmark Sweep\n\n")
-        f.write("| Kernel | Tier | Q_N | K_N | head_dim | heads | batch | avg_ms | std_ms | min_ms |\n")
-        f.write("|--------|------|-----|-----|----------|-------|-------|--------|--------|--------|\n")
+        f.write("| Kernel | Tier | Q_N | K_N | head_dim | heads | batch | avg_ms | std_ms | min_ms | peak_alloc_mb | peak_reserved_mb | peak_alloc_delta_mb |\n")
+        f.write("|--------|------|-----|-----|----------|-------|-------|--------|--------|--------|---------------|------------------|---------------------|\n")
         for r in results:
             f.write(
                 f"| {r['kernel']} | {r['tier']} | {r['Q_N']} | {r['K_N']} "
                 f"| {r['head_dim']} | {r['num_heads']} | {r['batch_size']} "
-                f"| {r['avg_ms']} | {r['std_ms']} | {r['min_ms']} |\n"
+                f"| {r['avg_ms']} | {r['std_ms']} | {r['min_ms']} "
+                f"| {_fmt_opt(r.get('peak_allocated_mb'))} | {_fmt_opt(r.get('peak_reserved_mb'))} "
+                f"| {_fmt_opt(r.get('peak_allocated_delta_mb'))} |\n"
             )
         f.write("\n![Forward Time](attention_sweep_forward.png)\n")
         f.write("\n![Heatmap](attention_sweep_heatmap.png)\n")
@@ -293,6 +327,7 @@ def _write_pdf_tables(results: list[dict], out_dir: Path) -> None:
       - Kernel
       - Avg Forward Time (ms)
       - Relative to Triton Flash
+      - Peak CUDA Allocated (MiB)
     """
     try:
         import matplotlib
@@ -336,6 +371,7 @@ def _write_pdf_tables(results: list[dict], out_dir: Path) -> None:
             if row.get("error") or row.get("avg_ms", 0) <= 0:
                 avg_text = "ERROR"
                 rel_text = "N/A"
+                peak_mem_text = "N/A"
             else:
                 avg_ms = float(row["avg_ms"])
                 avg_text = f"{avg_ms:.2f}"
@@ -349,8 +385,10 @@ def _write_pdf_tables(results: list[dict], out_dir: Path) -> None:
                         rel_text = f"{ratio:.2f}x slower"
                     else:
                         rel_text = f"{(1.0 / ratio):.2f}x faster"
+                peak_val = row.get("peak_allocated_mb")
+                peak_mem_text = "N/A" if peak_val is None else f"{float(peak_val):.2f}"
 
-            table_rows.append([kernel, avg_text, rel_text])
+            table_rows.append([kernel, avg_text, rel_text, peak_mem_text])
 
         if not table_rows:
             continue
@@ -363,14 +401,14 @@ def _write_pdf_tables(results: list[dict], out_dir: Path) -> None:
         )
         ax.set_title(title, fontsize=11, pad=8)
 
-        col_labels = ["Kernel", "Avg Forward Time (ms)", "Relative to Triton Flash"]
+        col_labels = ["Kernel", "Avg Forward Time (ms)", "Relative to Triton Flash", "Peak CUDA Allocated (MiB)"]
         table = ax.table(
             cellText=table_rows,
             colLabels=col_labels,
             loc="center",
             cellLoc="center",
             colLoc="center",
-            colWidths=[0.34, 0.24, 0.42],
+            colWidths=[0.29, 0.2, 0.35, 0.16],
         )
         table.auto_set_font_size(False)
         table.set_fontsize(10)
@@ -383,7 +421,8 @@ def _write_pdf_tables(results: list[dict], out_dir: Path) -> None:
             cell.set_facecolor("#f2f2f2")
 
         # Highlight flash row values to mirror emphasis in README
-        for r_i, (kernel, _, _) in enumerate(table_rows, start=1):
+        for r_i, row_vals in enumerate(table_rows, start=1):
+            kernel = row_vals[0]
             if kernel == "flash_attention_triton":
                 for c in range(len(col_labels)):
                     table[(r_i, c)].set_text_props(weight="bold")
@@ -463,13 +502,21 @@ def main() -> None:
                 row = bench_one(kernel_name, kernel_fn, label, q_n, k_n, hd, nh, bs,
                                 args.warmup, args.iters, args.device, dtype)
                 results.append(row)
-                print(f"  avg={row['avg_ms']:.3f} ms  std={row['std_ms']:.3f} ms")
+                msg = f"  avg={row['avg_ms']:.3f} ms  std={row['std_ms']:.3f} ms"
+                if row.get("peak_allocated_mb") is not None:
+                    msg += (
+                        f"  peak_alloc={row['peak_allocated_mb']:.2f} MiB"
+                        f"  peak_reserved={row['peak_reserved_mb']:.2f} MiB"
+                        f"  peak_delta={row['peak_allocated_delta_mb']:.2f} MiB"
+                    )
+                print(msg)
             except Exception as e:
                 print(f"  ERROR: {e}")
                 results.append({
                     "kernel": kernel_name, "tier": label, "Q_N": q_n, "K_N": k_n,
                     "head_dim": hd, "num_heads": nh, "batch_size": bs,
                     "avg_ms": 0, "std_ms": 0, "min_ms": 0, "error": str(e),
+                    "peak_allocated_mb": None, "peak_reserved_mb": None, "peak_allocated_delta_mb": None,
                 })
 
     # Save CSV
