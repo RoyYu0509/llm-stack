@@ -35,7 +35,7 @@ class Bucket:
     The communicative tensor bucket object.
 
     Instance Attributes:
-        - offsets:      the starting offset of the bucket in the global flattened gradient vector (for correct slicing)
+        - offsets (Not Used):      the starting offset of the bucket in the global flattened gradient vector (for correct slicing)
         - numel:        the number of elements in the bucket (for global tensor slicing)
         - bkt_size_mb:  the fixed bucket size threshold in MB
 
@@ -46,6 +46,10 @@ class Bucket:
         - _updated_grad_para_set: the set of parameters that have received gradients (for checking if the bucket is ready for synchronization)
         
         - para_list: the list of bucketed parameters (for correct flattening/unflattening order)
+    
+    NOTE: `Bucket.offsets` is not used in the current implementation, as we don't need to slice into a 
+    global flat gradient tensor for synchronization. We keep it here for reference and potential future 
+    use if we want to maintain a global flat gradient view.
     """
     def __init__(self, bucket_size_mb: float, offsets: int):
         self.offsets = offsets
@@ -186,6 +190,23 @@ class DDPOverlapBucketed(nn.Module):
         param.grad = g
         ```
 
+    Overlapping Communication and Computation (2 CUDA streams + CUDA events):
+
+        We need two CUDA streams:
+            1. A default compute stream for the forward and backward computation.
+            2. A dedicated comm stream for launching the NCCL all-reduce communication.
+        
+        Then, we compute the grads on the compute stream and accumualte grads into the bucket grad_buffer
+        
+        When the last parameter's grad is accumulated into the buffer, we first record a CUDA event 
+        after the grad accumulation on the compute stream.
+
+        Then, we make the comm stream wait for this event, so that when the comm stream see the event,
+        it is guaranteed that all grads in this bucket have finished writing into the bucket's grad_buffer.
+
+        After that, we can launch the all-reduce on the dedicated comm stream, which overlaps with the 
+        whatever remains on the compute stream.
+
     NOTE: optimizer.zero_grad(set_to_none=False) MUST be used. set_to_none=True sets param.grad = None,
     which breaks the param.grad → grad_buffer view links so the next backward accumulates into a fresh
     independent tensor, making all subsequent all_reduce calls operate on stale/zero buffers.
@@ -210,6 +231,9 @@ class DDPOverlapBucketed(nn.Module):
         # preventing NCCL deadlocks from out-of-order ready-time firing.
         self.next_bucket_to_reduce: int = 0
 
+        # Dedicated CUDA stream for NCCL communication, for overlapping comm & comp.
+        self._comm_stream = torch.cuda.Stream(device=self.device)
+
         # Initialize the bucket 
         self._build_bucket()
 
@@ -219,6 +243,10 @@ class DDPOverlapBucketed(nn.Module):
     def _build_bucket(self):
         """
         Build model's parameters buckets for bucketed communication.
+
+        NOTE: `Bucket.offsets` is not used in the current implementation, as we don't need to slice into a 
+        global flat gradient tensor for synchronization. We keep it here for reference and potential future 
+        use if we want to maintain a global flat gradient view.
         """
         # Initialize an empty bucket
         offsets = 0
@@ -273,27 +301,54 @@ class DDPOverlapBucketed(nn.Module):
         copy.  We divide in-place (pre-scale before the sum all-reduce to get
         the mean) and issue an async all-reduce directly on grad_buffer.
 
+        Stream / event ordering guarantee:
+            1. Record a CUDA event on the current (compute) stream to capture
+               all gradient writes into this bucket's grad_buffer.
+            2. Pass the event to the dedicated comm stream so that the comm stream waits for the event.
+            3. Launch div_ and all_reduce on _comm_stream.
+
+        This ensures the dependency chain:
+            compute-stream grad writes  →  event  →  comm-stream all_reduce
+        is enforced at the CUDA level, eliminating the race between the
+        compute stream and the NCCL internal stream.
+
         NOTE: The `input_bucket` must be ready, i.e. all paras have received their gradients.
         """
         assert input_bucket.grad_ready(), "The gradient is not ready"
 
         log_dist(f"Syncing bucket at offset {input_bucket.offsets}, numel {input_bucket.numel}")
-        # Average bucket's gradient tensor in-place before All-Reduce
-        input_bucket.grad_buffer.div_(dist.get_world_size())
-        # All-reduce the bucket's buffer, which is already linked to the parameter gradients through views(.) method.
-        work = dist.all_reduce(input_bucket.grad_buffer, op=dist.ReduceOp.SUM, async_op=True)
-        self.comm_work_handles.append(work)
+
+        # 1. Record an event on the current (compute) stream to capture grad writes
+        grad_event = torch.cuda.Event()
+        grad_event.record()  # recorded on the current stream (compute stream)
+
+        # 2. pass the handle to the comm stream to wait on
+        self._comm_stream.wait_event(grad_event)
+
+        # 3. Launch div + all_reduce on the comm stream (overlaps with remaining backward on compute stream)
+        with torch.cuda.stream(self._comm_stream):
+            input_bucket.grad_buffer.div_(dist.get_world_size())
+            work = dist.all_reduce(input_bucket.grad_buffer, op=dist.ReduceOp.SUM, async_op=True)
+            self.comm_work_handles.append(work)
 
     def _schedule_bucket_sync(self):
         """
         Scheduler: launch all-reduce for buckets that are ready AND in-order based on their bucket index.
+        
+        It will keeps looping, until there is no bucket, or the 原本的 bucket in line is not ready.
+        
+        Then it will be called again when the next bucket is ready, then check again if 原本的 bucket
+        in line is ready or not. If ready, then launch and increase the next_bucket_to_reduce index, 
+        if not ready, then just return and wait for the next call when a bucket is ready.
 
-        Preventing Bucket[1] para's sync hook fn triggered before Bucket[0] is triggered, No out-of-order error from NCCL.
+        Preventing Bucket[1] para's sync hook fn triggered before Bucket[0] is triggered, 
+        No out-of-order error from NCCL.
         """
         while (
-            self.next_bucket_to_reduce < len(self.buckets) and 
-            self.buckets[self.next_bucket_to_reduce].ready
+            self.next_bucket_to_reduce < len(self.buckets) and # If there is reminaing bucket
+            self.buckets[self.next_bucket_to_reduce].ready # If the next in line bucket is ready
         ):
+            # Fire bucket sync and move to the next bucket
             self._sync_grad_bucket(self.buckets[self.next_bucket_to_reduce])
             self.next_bucket_to_reduce += 1
 
@@ -331,12 +386,19 @@ class DDPOverlapBucketed(nn.Module):
         A barrier Fn to wait for synchronization to finish.
 
         Procedures:
-            1. Wait for all communication work to finish (if any).
+            1. Wait for all async NCCL work handles (CPU-side).
+            2. Make the default (compute) stream wait on the comm stream,
+               so that the subsequent optimizer.step() only reads gradients
+               after all_reduce results have landed in grad_buffer.
         """
-        # Wait for all comm to finish
+        # Wait for all comm to finish (CPU-side handle wait)
         for handle in self.comm_work_handles:
             handle.wait()
         assert self.next_bucket_to_reduce == len(self.buckets), "Not all buckets have been synchronized"
+
+        # Ensure the default (compute) stream sees the all_reduce results
+        # before optimizer.step() reads param.grad.
+        torch.cuda.current_stream(self.device).wait_stream(self._comm_stream)
         
         self.comm_work_handles.clear()
 
@@ -347,5 +409,3 @@ class DDPOverlapBucketed(nn.Module):
             bucket.ready = False
             # Remove the para_grad_has_updated records 
             bucket._updated_grad_para_set.clear()
-
-        

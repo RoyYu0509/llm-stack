@@ -318,7 +318,6 @@ def _write_markdown(results: list[dict], out_dir: Path) -> None:
 def _slugify(s: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "_", s).strip("_")
 
-
 def _write_pdf_tables(results: list[dict], out_dir: Path) -> None:
     """
     Export one PDF table per attention configuration.
