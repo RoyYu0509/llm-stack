@@ -39,9 +39,11 @@ This repo shows both algorithm-level and systems-level engineering: I did not ju
 
 Benchmarks were run on a rented SSH VM with **2× RTX 3090**, dual **Xeon E5-2680 v4**, **193 GB RAM**.
 
+***NOTE: absolute performance may vary on different hardware, but the relative improvements should hold across similar GPU architectures.***
 
-## Dicussion of Benchmark Highlights
----
+
+## Benchmark Highlights
+  
 ### 1) FlashAttention Performance
 
 In the attention sweep (**head_dim=64, heads=12, batch=4**), Triton FlashAttention is fastest at every measured sequence length, **2~7×** faster than Compiled/Standard Attention kernels, and is the only kernel that completed **sequence length 16,384** in this benchmark family, while alternatives hit OOM at that length. 
@@ -54,7 +56,7 @@ FlashAttention improves memory efficiency by fusing the attention computation an
 
 This optimization keeps the system responsive and able to run where baselines fail.
 
----
+
 ### 2) Multi-GPU Scaling with DDP
 
 DDP trains one model replica per GPU and synchronizes gradients each step. Compared to Naive DDP implementation, **Bucketed + Overlapped DDP** improved throughput from **25,336.7** to **27,719.1 tok/s** (**+9.4%**). It achieves **85.9%** scaling efficiency and only **+498.8 MB** (**+3%**) peak per-GPU memory overhead versus local 1-GPU.
@@ -66,7 +68,6 @@ The following plot shows the training throughput (tokens/sec) for the FlashAtten
 
 Practical interpretation: this is a systems efficiency gain, not just a benchmark trick; more useful work is completed per second without a large memory penalty.
 
----
 
 ## Reproduce Key Results
 
@@ -97,7 +98,7 @@ uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
   --train_path data/tokenized/ts_train.npy \
   --val_path   data/tokenized/ts_valid.npy \
   --timed_epochs 3 \
-  --kernels scaled_dot_prod_attention vectorized_torch flash_attention_triton \
+  --kernels flash_attention_triton \
   --wrappers "Local No DDP" "Naive DDP"  "Pytorch DDP" "Bucketed Overlapping DDP"
 ```
 
