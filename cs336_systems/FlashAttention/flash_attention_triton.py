@@ -16,7 +16,7 @@ except Exception:
     SDPBackend = None
     sdpa_kernel = None
 
-# Check for TF32 support (Ampere+ GPUs) for stable softmax computation in FlashAttention
+# Check GPU compute capability (informational, no longer a hard gate)
 major, minor = torch.cuda.get_device_capability()
 if major < 8:
     raise RuntimeError("TF32 is only supported on NVIDIA Ampere (compute capability 8.0+) or newer GPUs.")
@@ -116,6 +116,9 @@ def flash_fwd_kernel(
     Flash Attention Forward Pass Kernel, with mannual autocasting to FP32 for stable softmax computation.
     
     Parallelize over `Batch` and `Q_ROW`.
+
+    NOTE: It is a mixed percision Triton kernel, QKV is keep in the original dtype (FP16/BF16) for memory bandwidth saving,
+    unless the operations is explicitly requires compute with another higher percision tensor (ie. P@V where P is accum in FP32).
     """
     # ------------------------------------------------------------
     # Program IDs (Lunch grid: each Program owns a Q_TILE & O_TILE shape = [Q_TILE_SIZE, D]
@@ -234,6 +237,7 @@ def flash_fwd_kernel(
 
         # 5. Update OUT with ValueMatrix
         V_j = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")  # "K_TILE_SIZE, D"
+        V_j = V_j.to(hp_dtype) # Upcast since it is forced
         o_i = o_i * max_correct_scale[:,None] + tl.dot(P_ij, V_j, out_dtype=hp_dtype)  # "Q_TILE_SIZE, D"
 
         # Advance pointers

@@ -29,6 +29,7 @@ import math
 import re
 import time
 import timeit
+import traceback
 from pathlib import Path
 
 import torch
@@ -96,6 +97,7 @@ def bench_one(
     iters: int,
     device: str,
     dtype: torch.dtype,
+    is_causal: bool,
 ) -> dict:
     """Forward-only benchmark. Returns timing dict."""
     # Per-head attention benchmark:
@@ -113,7 +115,7 @@ def bench_one(
 
     # Warmup
     for _ in range(warmup):
-        _ = kernel_fn(q, k, v, True)
+        _ = kernel_fn(q, k, v, is_causal)
     _sync()
     print("finished warmup, starting timed iterations...")
 
@@ -129,7 +131,7 @@ def bench_one(
             baseline_allocated = torch.cuda.memory_allocated(cuda_device)
         _sync()
         t0 = timeit.default_timer()
-        _ = kernel_fn(q, k, v, True)
+        _ = kernel_fn(q, k, v, is_causal)
         _sync()
         t1 = timeit.default_timer()
         times.append(t1 - t0)
@@ -466,6 +468,7 @@ def main() -> None:
     parser.add_argument("--custom_tiers", nargs="*", default=None,
                         help="Custom tiers as Q_N:K_N or Q_N (square). Must be powers of 2.")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--causal", action="store_true", help="Benchmark in causal mode (default: non-causal).")
     args = parser.parse_args()
 
     if not torch.cuda.is_available() and args.device.startswith("cuda"):
@@ -493,13 +496,17 @@ def main() -> None:
     results: list[dict] = []
     for kernel_name in kernels:
         kernel_fn = _get_kernel_fn(kernel_name)
+        print(
+            f"[kernel] {kernel_name}: fn={getattr(kernel_fn, '__qualname__', str(kernel_fn))} "
+            f"module={getattr(kernel_fn, '__module__', 'unknown')}"
+        )
         for tier in tiers:
             label, q_n, k_n, hd, nh, bs = tier
-            tag = f"{kernel_name} / {label} (Q={q_n}, K={k_n})"
+            tag = f"{kernel_name} / {label} (Q={q_n}, K={k_n}, causal={args.causal})"
             print(f"\n--- {tag} ---")
             try:
                 row = bench_one(kernel_name, kernel_fn, label, q_n, k_n, hd, nh, bs,
-                                args.warmup, args.iters, args.device, dtype)
+                                args.warmup, args.iters, args.device, dtype, args.causal)
                 results.append(row)
                 msg = f"  avg={row['avg_ms']:.3f} ms  std={row['std_ms']:.3f} ms"
                 if row.get("peak_allocated_mb") is not None:
@@ -510,11 +517,15 @@ def main() -> None:
                     )
                 print(msg)
             except Exception as e:
-                print(f"  ERROR: {e}")
+                tb = traceback.format_exc()
+                print(f"  ERROR: {type(e).__name__}: {e}")
+                print("  Full traceback:")
+                print(tb)
                 results.append({
                     "kernel": kernel_name, "tier": label, "Q_N": q_n, "K_N": k_n,
                     "head_dim": hd, "num_heads": nh, "batch_size": bs,
-                    "avg_ms": 0, "std_ms": 0, "min_ms": 0, "error": str(e),
+                    "avg_ms": 0, "std_ms": 0, "min_ms": 0,
+                    "error": f"{type(e).__name__}: {e}\n{tb}",
                     "peak_allocated_mb": None, "peak_reserved_mb": None, "peak_allocated_delta_mb": None,
                 })
 

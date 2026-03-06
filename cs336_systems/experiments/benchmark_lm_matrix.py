@@ -64,7 +64,7 @@ KERNELS = [
 
 DDP_WRAPPERS = ["Local No DDP", "Naive DDP", "Bucketed Overlapping DDP", "Pytorch DDP"]
 BENCH_STEPS_PER_EPOCH = 51
-WARMUP_EPOCHS = 2  # untimed warmup epochs before timed epochs
+WARMUP_EPOCHS = 3  # untimed warmup epochs before timed epochs
 
 
 def _get_kernel_fn(name: str):
@@ -182,7 +182,7 @@ def _ddp_worker(
     dtype: torch.dtype,
     result_dict,
     loss_list,
-    bucket_size_mb: int = 25,
+    bucket_size_mb: int = 20,
 ):
     os.environ.setdefault("MASTER_ADDR", "localhost")
     os.environ.setdefault("MASTER_PORT", "29500")
@@ -225,6 +225,7 @@ def _ddp_worker(
     t0 = None  # set after warmup epochs
 
     for epoch in tqdm(range(total_epochs), desc=f"Rank {rank} Epochs", disable=(rank != 0)):
+        print(f"")
         sampler.set_epoch(epoch)
 
         # After warmup epochs finish, reset timer and memory stats
@@ -320,6 +321,7 @@ def _bench_ddp(
     epochs: int,
     model_cfg: dict,
     dtype: torch.dtype,
+    bucket_size_mb: int = 20,
 ) -> dict | None:
     world_size = torch.cuda.device_count()
     if world_size < 2:
@@ -352,7 +354,7 @@ def _bench_ddp(
         _ddp_worker,
         args=(world_size, wrapper_name, kernel_name, train_path, context_length,
               local_batch_size, steps_per_epoch,
-              epochs, model_cfg, dtype, result_dict, loss_list),
+              epochs, model_cfg, dtype, result_dict, loss_list, bucket_size_mb),
         nprocs=world_size,
         join=True,
     )
@@ -639,22 +641,26 @@ def _write_kernel_table_pdfs(results: list[dict], out_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Config loading
+# ---------------------------------------------------------------------------
+def _load_config(path: str) -> dict:
+    """Load the JSON pipeline config file."""
+    with open(path) as f:
+        return json.load(f)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 def main() -> None:
+    _DEFAULT_CFG = str(Path(__file__).parent / "default_pipeline_config.json")
+
     parser = argparse.ArgumentParser(description="LM Training Benchmark Matrix")
+    parser.add_argument("--config", type=str, default=_DEFAULT_CFG,
+                        help="Path to pipeline config JSON (default: default_pipeline_config.json)")
     parser.add_argument("--train_path", type=str, required=True)
     parser.add_argument("--val_path", type=str, required=True)
-    parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--tr_batch_size", type=int, default=8)
-    parser.add_argument("--context_length", type=int, default=256)
-    parser.add_argument("--vocab_size", type=int, default=10_000)
-    parser.add_argument("--num_layers", type=int, default=4)
-    parser.add_argument("--d_model", type=int, default=256)
-    parser.add_argument("--num_heads", type=int, default=8)
-    parser.add_argument("--d_ff", type=int, default=1024)
-    parser.add_argument("--rope_theta", type=float, default=10_000.0)
-    parser.add_argument("--dtype", type=str, default="float32", choices=["float32", "float16", "bfloat16"])
+    parser.add_argument("--timed_epochs", type=int, required=True, help="Number of timed epochs (default: 3)")
     parser.add_argument("--out_dir", type=str, default="artifacts")
     parser.add_argument("--kernels", nargs="*", default=None,
                         help="Subset of kernels to benchmark (default: all)")
@@ -665,18 +671,33 @@ def main() -> None:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA required")
 
+    # ── Load all model / training / infra params from config JSON ──
+    cfg = _load_config(args.config)
+    model_sec = cfg["model"]
+    train_sec = cfg["training"]
+
+    epochs          = args.timed_epochs
+    tr_batch_size   = train_sec["tr_batch_size"]
+    context_length  = model_sec["context_length"]
+    bucket_size_mb  = cfg.get("bucket_size_mb", 25)
+
     dtype_map = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
-    dtype = dtype_map[args.dtype]
+    dtype = dtype_map[train_sec.get("dtype", "float32")]
 
     model_cfg = dict(
-        vocab_size=args.vocab_size,
-        context_length=args.context_length,
-        num_layers=args.num_layers,
-        d_model=args.d_model,
-        heads_num=args.num_heads,
-        d_ff=args.d_ff,
-        theta=args.rope_theta,
+        vocab_size=model_sec["vocab_size"],
+        context_length=context_length,
+        num_layers=model_sec["num_layers"],
+        d_model=model_sec["d_model"],
+        heads_num=model_sec["num_heads"],
+        d_ff=model_sec["d_ff"],
+        theta=model_sec.get("rope_theta", 10_000.0),
     )
+
+    print(f"[config] Loaded from {args.config}")
+    print(f"  model:  {model_cfg}")
+    print(f"  epochs={epochs}  batch={tr_batch_size}  ctx={context_length}  "
+          f"dtype={train_sec.get('dtype','float32')}  bucket_mb={bucket_size_mb}")
 
     kernels = args.kernels or KERNELS
     wrappers = args.wrappers or (["Local No DDP"] + (["Naive DDP", "Bucketed Overlapping DDP", "Pytorch DDP"] if torch.cuda.device_count() >= 2 else []))
@@ -693,12 +714,13 @@ def main() -> None:
             try:
                 if wrapper == "Local No DDP":
                     row = _bench_single_gpu(kernel, args.train_path, args.val_path,
-                                            args.epochs, args.tr_batch_size,
-                                            args.context_length, model_cfg, dtype)
+                                            epochs, tr_batch_size,
+                                            context_length, model_cfg, dtype)
                 else:
                     row = _bench_ddp(wrapper, kernel, args.train_path,
-                                     args.context_length, args.tr_batch_size,
-                                     args.epochs, model_cfg, dtype)
+                                     context_length, tr_batch_size,
+                                     epochs, model_cfg, dtype,
+                                     bucket_size_mb=bucket_size_mb)
                 if row:
                     results.append(row)
                     # Collect loss curve for CSV
@@ -721,8 +743,8 @@ def main() -> None:
                 print(f"  ✗ {tag}: {e}")
                 results.append({
                     "kernel": kernel, "ddp": wrapper, "gpus": 0,
-                    "epochs": args.epochs, "steps_per_epoch": BENCH_STEPS_PER_EPOCH,
-                    "global_batch_size": args.tr_batch_size, "local_batch_size": 0,
+                    "epochs": epochs, "steps_per_epoch": BENCH_STEPS_PER_EPOCH,
+                    "global_batch_size": tr_batch_size, "local_batch_size": 0,
                     "samples_per_epoch": 0,
                     "wall_sec": 0, "sec_per_epoch": 0,
                     "tokens_per_sec": 0, "peak_gpu_mb": 0,

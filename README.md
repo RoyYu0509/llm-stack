@@ -91,12 +91,14 @@ uv run python cs336_systems/experiments/benchmark_attention_sweep.py
 ```
 
 ```bash
-# LM benchmark matrix (kernel × DDP strategy) with throughput/memory artifacts
+# LM benchmark matrix (kernel × DDP strategy) with throughput/memory artifacts, with bucket size 20 MB 
 uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
+  --config cs336_systems/experiments/default_pipeline_config.json \
   --train_path data/tokenized/ts_train.npy \
   --val_path   data/tokenized/ts_valid.npy \
+  --timed_epochs 3 \
   --kernels scaled_dot_prod_attention vectorized_torch flash_attention_triton \
-  --wrappers "Local No DDP" "Naive DDP" "Bucketed Overlapping DDP" "Pytorch DDP"
+  --wrappers "Local No DDP" "Naive DDP"  "Pytorch DDP" "Bucketed Overlapping DDP"
 ```
 
 ## Coursework Attribution
