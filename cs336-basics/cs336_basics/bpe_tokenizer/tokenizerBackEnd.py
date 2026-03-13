@@ -40,6 +40,11 @@ class BBPE(AbstractPreTokenizer):
     - special_tokens:   List[str] A list of special tokens that should not be break into sinlge bytes while pretokenizaiotn and encoding
 
     - merge_sequence:   List[Tuple(bytes, bytes)] A List of bytes tuple, recording the resulted sequence of merging bytes pairs from training phase.
+
+
+
+    Process:
+    
     """
     def __init__(self, max_vocab_size, special_tokens):
         super().__init__()
@@ -123,7 +128,7 @@ class BBPE(AbstractPreTokenizer):
     def train(self, input_path, vocab_size,
               num_processes = 3, split_special_token = b"<|endoftext|>") -> Tuple[Dict, List]:
         """
-        Train a BPE Tokenizer, return the resulted vocabular and merges sequence.
+        Train a BPE Tokenizer, return the resulted vocabulary and merges sequence.
 
         Parameters:
             input_path: str Path to a text file with BPE tokenizer training data.
@@ -212,6 +217,7 @@ class BBPE(AbstractPreTokenizer):
         merged_bytes = bt1 + bt2 # b"l" + b"o" -> b"lo"
         # print(self.pretok_dict)
         new_pretok_dict = Counter()
+        # Go through the pretokenization dictionary and update the byte sequence based on the merged pair
         for byte_id_seq, count in self.pretok_dict.items():
             # print(byte_id_seq)
             new_seq = []
@@ -330,6 +336,7 @@ class BBPE(AbstractPreTokenizer):
         """Decode a bytes sequence back to string using tokenizer's vocabulary"""
         # Build byte chunks first
         byte_chunks = []
+        # For each token id, look up the corresponding byte sequence in the vocabulary and append to byte_chunks
         for tid in byte_id_seq:
             bs = self.id_2_bytes.get(tid)
             if bs is None:

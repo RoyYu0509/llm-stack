@@ -64,6 +64,10 @@ def find_chunk_boundaries(
     return sorted(set(chunk_boundaries))
 
 def intialize_b2id_dict(special_tokens):
+    """
+    Initialize the byte-to-id dictionary with the 256 possible byte values and (optionally) 
+    several special tokens.
+    """
     byte_2_id = {}
     i = 0
     if special_tokens is not None:
@@ -78,9 +82,13 @@ def intialize_b2id_dict(special_tokens):
 # Parallelize the processing
 def process_chunk(start_end:tuple[int, int], file_path, split, pat, special_tokens_bytes):
     """
-    Process the text bytes file in the chunk [start:end]
+    Process a chunk of the file, counting the occurrences of byte pairs and (optionally) 
+    special tokens.
 
-    Return the pretokenizer counter for this chunk
+    We read the chunk, split it based on the provided `split` (if any) to avoid splitting in 
+    the middle of special tokens, and then apply the regex pattern to find substrings to count. 
+    
+    We also check for the presence of special tokens in the chunk and treat them as single tokens.
     """
     with open(file_path, "rb") as f:
         # build counter

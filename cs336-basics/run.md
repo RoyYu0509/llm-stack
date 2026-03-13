@@ -1,4 +1,5 @@
 # 1. Train the tokenizer
+```
 uv run python ./cs336-basics/cs336_basics/build_tokenizer.py \
     --input ./cs336-basics/data/ts.txt \
     --vocab-size 10000 \
@@ -6,6 +7,7 @@ uv run python ./cs336-basics/cs336_basics/build_tokenizer.py \
     --num-processes 8 \
     --vocab-output ./cs336-basics/cs336_basics/bpe_tokenizer/vocab_id2b_dict.pkl \
     --merges-output ./cs336-basics/cs336_basics/bpe_tokenizer/merges_seq.pkl
+```
 
 # 2. Build the NumPy data from the raw text (train + valid)
 ```

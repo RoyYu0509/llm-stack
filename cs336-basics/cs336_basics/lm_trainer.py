@@ -281,7 +281,7 @@ def local_train(
         lr = lr_scheduler(
             it=iteration,
             max_learning_rate=LR,
-            min_learning_rate=LR * 0.2,
+            min_learning_rate=LR * 0.1,
             warmup_iters=WARMUP_ITERS,
             cosine_cycle_aiters=MAX_ITERS,
         )

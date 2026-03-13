@@ -83,7 +83,8 @@ uv run python cs336_systems/experiments/run_pipeline.py \
   --config cs336_systems/experiments/default_pipeline_config.json \
   --attention_kernel flash_attention_triton \
   --ddp_wrapper flashddp \
-  --skip_data
+  --skip_data \
+  --override training.epochs=5000
 ```
 
 ```bash

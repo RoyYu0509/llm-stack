@@ -39,6 +39,10 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 torch.set_float32_matmul_precision('high')
 
+# Profiling
+import cProfile
+import time
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -352,6 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Path to a .pt checkpoint file to resume training from.")
     p.add_argument("--skip_data", action="store_true",
                    help="Skip download/tokenizer/dataset stages (assume data exists).")
+
     return p
 
 
@@ -373,7 +378,7 @@ def main() -> None:
         cfg.setdefault("checkpointing", {})["checkpointing_interval"] = args.checkpoint_interval
     if getattr(args, "resume_from", None):
         cfg["resume_from"] = args.resume_from
-
+    
     kernel = cfg.get("attention_kernel", "scaled_dot_prod_attention")
     ddp = cfg.get("ddp_wrapper", "none")
 
@@ -399,4 +404,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # print("Profiling the pipeline with cProfile...")
+    # cProfile.run("main()", sort="cumtime")
     main()
