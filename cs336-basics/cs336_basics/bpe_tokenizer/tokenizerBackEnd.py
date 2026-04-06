@@ -44,6 +44,24 @@ class BBPE(AbstractPreTokenizer):
 
 
     Process:
+    --------
+    Pretokenize: 把整个文本按空格/标点切成小块 (pretokens), 每个 pretoken 拆成单字节序列，统计每个 pretoken 出现多少次
+
+        "the" 出现了 5000 次 → (b"t", b"h", b"e"): 5000
+        "cat" 出现了 200 次  → (b"c", b"a", b"t"): 200
+
+    Build freq dict: 统计所有相邻 pair 的频率
+
+        (b"t", b"h"): 5000    ← "the" 贡献
+        (b"h", b"e"): 5000    ← "the" 贡献
+        (b"c", b"a"): 200     ← "cat" 贡献
+
+    Merge: 找频率最高的 pair, 合并成新 token
+
+        (b"t", b"h") 最高 → 创建新 token b"th", id=257
+        pretok_dict 更新: (b"t", b"h", b"e"): 5000 → (b"th", b"e"): 5000
+
+    重复 2-3, 直到 vocab 达到目标大小。下一轮可能合并 (b"th", b"e") → b"the", id=258。
     
     """
     def __init__(self, max_vocab_size, special_tokens):
@@ -301,7 +319,7 @@ class BBPE(AbstractPreTokenizer):
             return pretok_sequence
 
         prev_encode = pretok_sequence
-        # Encode the byte sequence using self.merges seqeuence
+        # Encowe the byte sequence using self.merges seqeuence
         for merge in self.merge_sequence:
             i = 0
             j = 0

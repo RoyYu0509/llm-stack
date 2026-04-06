@@ -209,19 +209,16 @@ def flash_fwd_kernel(
         # 1. Compute pre-softmax
         K_j = tl.load(K_block_ptr, boundary_check=(0,1), padding_option="zero")  # "K_TILE_SIZE, D"
         S_ij = tl.dot(Q_i, tl.trans(K_j), out_dtype=hp_dtype) * scale  # "Q_TILE_SIZE, K_TILE_SIZE"
-       
         # 2.  Masking
         # 2.1 Mask the out of bound entries to be -inf, so that row_max & Softmax is correct
         KT_col_mask = start_k_B_idx + tl.arange(0, K_TILE_SIZE)             # ", K_TILE_SIZE" - Along the KT cols
         Q_row_mask = Q_i_TILE_idx * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE)     # "Q_TILE_SIZE, " - Along the Q rows
         boundary_mask = (KT_col_mask[None, :] < N_KEYS) & (Q_row_mask[:, None] < N_QUERIES)  # "Q_TILE_SIZE, K_TILE_SIZE"
-
         # 2.2 Causal Mask (Avoiding If Else logics branch)
         not_causal = tl.full(boundary_mask.shape, not IS_CAUSAL, dtype=tl.int1) # Initialize, set the dtype as bool int
         causal_mask = (Q_row_mask[:, None] >= KT_col_mask[None, :]) | not_causal  # True when IS_CAUSAL=False, else row>=col
         mask = boundary_mask & causal_mask
         S_ij = tl.where(mask, S_ij, -1e20)  # Use large negative value for masking
-
         # 2. Update max (No need Boundary Mask)
         curr_max = tl.max(S_ij, axis = 1)               # "Q_TILE_SIZE, "
         prev_max = m_i  # "Q_TILE_SIZE"
