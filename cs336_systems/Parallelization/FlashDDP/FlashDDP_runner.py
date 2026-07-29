@@ -1,15 +1,12 @@
 import argparse
+import glob
+import itertools
+import math
 import os
 import time
+from datetime import timedelta
 from typing import Callable
 
-import argparse
-import os
-import time
-from typing import Callable
-from xml.parsers.expat import model
-
-from jax.ad_checkpoint import checkpoint
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -24,7 +21,7 @@ import wandb
 from cs336_basics.train.checkpointing import save_checkpoint_and_log, save_checkpoint, load_checkpoint
 from cs336_basics.lm import TransformerLM
 from cs336_basics.train.loss import cross_entropy
-from cs336_basics.train.optimizer import AdamW
+from cs336_basics.train.optimizer import AdamW, grad_clip, lr_scheduler
 from cs336_basics.transfromer.scaled_dot_prod_attention import (
     flash_attention_my_triton,
     scaled_dot_product_attention,
@@ -58,6 +55,23 @@ def _synchronize_if_cuda(device: torch.device) -> None:
         torch.cuda.synchronize(device)
 
 
+def _prune_old_checkpoints(checkpoint_dir: str, tag: str, keep_last: int) -> None:
+    """Delete all but the `keep_last` newest ``checkpoint_{tag}_*.pt`` files.
+
+    Each checkpoint here is model + AdamW state (~2.3GB at 190M params) and the
+    rented instance only has ~10GB free, so an unattended multi-hour run that
+    checkpoints periodically will fill the disk and die unless old ones are pruned.
+    Pruning is per-tag so that "step" rotation never eats the final "epoch" file.
+    """
+    existing = sorted(glob.glob(os.path.join(checkpoint_dir, f"checkpoint_{tag}_*.pt")))
+    for stale in existing[:-keep_last]:
+        try:
+            os.remove(stale)
+            print(f"[Checkpoint] pruned old checkpoint {stale}")
+        except OSError as e:
+            print(f"[Checkpoint] WARNING: could not prune {stale}: {e}")
+
+
 def save_ddp_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -65,6 +79,10 @@ def save_ddp_checkpoint(
     checkpoint_dir: str,
     rank: int,
     wandb_run = None,
+    tag: str = "epoch",
+    keep_last: int = 2,
+    global_step: int | None = None,
+    epoch_index: int | None = None,
 ) -> None:
     """
     Save a DDP training checkpoint. Only rank 0 performs the actual save to
@@ -85,10 +103,36 @@ def save_ddp_checkpoint(
     """
     if rank == 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
-        ckpt_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch:04d}.pt")
+        ckpt_path = os.path.join(checkpoint_dir, f"checkpoint_{tag}_{epoch:04d}.pt")
         raw_model = model.module if hasattr(model, "module") else model
-        save_checkpoint_and_log(raw_model, optimizer, epoch, ckpt_path, wandb_run)
-        print(f"[Checkpoint] Rank {rank} saved checkpoint to {ckpt_path}")
+        # Unwrap torch.compile too, so checkpoints are written with plain module keys and
+        # stay loadable by anything that builds a bare TransformerLM (the sampler, the
+        # serving adapter). Otherwise every key carries an "_orig_mod." prefix.
+        raw_model = getattr(raw_model, "_orig_mod", raw_model)
+        # Deliberately save_checkpoint (local only), NOT save_checkpoint_and_log:
+        # uploading each ~2.3GB checkpoint as a W&B artifact parks rank 0 inside a
+        # blocking upload while rank 1 sits in the barrier below, which is what blew
+        # the NCCL watchdog and SIGABRT'd the 2026-07-27 calibration run. Checkpoints
+        # are rsync'd off the instance instead.
+        # Written directly rather than via save_checkpoint(): that helper's schema has a
+        # single "iter" field, but this function is called with a *step* count when
+        # tag="step" and an *epoch* count when tag="epoch". One ambiguous field cannot
+        # drive a correct resume -- see load_ddp_checkpoint for what that cost. "iter" is
+        # still written so old checkpoints and cs336_basics' load_checkpoint keep working.
+        torch.save(
+            {
+                "model": raw_model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "iter": epoch,
+                "global_step": global_step,
+                "epoch": epoch_index,
+            },
+            ckpt_path,
+        )
+        print(f"[Checkpoint] Rank {rank} saved checkpoint to {ckpt_path} "
+              f"(global_step={global_step}, epoch={epoch_index})")
+        if keep_last is not None and keep_last > 0:
+            _prune_old_checkpoints(checkpoint_dir, tag, keep_last)
     dist.barrier()  # Ensure all ranks wait until checkpoint is saved before proceeding
 
 def load_ddp_checkpoint(
@@ -114,10 +158,30 @@ def load_ddp_checkpoint(
     """
     checkpoint = torch.load(resume_from, map_location=device)
     raw_model = model.module if hasattr(model, "module") else model
-    raw_model.load_state_dict(checkpoint["model"])
+    # Checkpoints written by a compile=True run carry torch.compile's "_orig_mod." key
+    # prefix (OptimizedModule wraps the real module). Strip it so such a checkpoint loads
+    # into either a compiled or an uncompiled model; a no-op on uncompiled checkpoints.
+    state = {k.removeprefix("_orig_mod."): v for k, v in checkpoint["model"].items()}
+    raw_model.load_state_dict(state)
     optimizer.load_state_dict(checkpoint["optimizer"])
-    print(f"[Checkpoint] Loaded checkpoint from {resume_from} with epoch {checkpoint['iter']}")
-    return checkpoint["iter"]
+
+    # Prefer the unambiguous fields. Older checkpoints only have "iter", which was written
+    # with a *step* count for tag="step" files and an *epoch* count for tag="epoch" files;
+    # feeding either into `range(start_epoch, epochs)` produced an EMPTY range
+    # (range(15000, 100) and range(100, 100) alike), so resuming silently trained for zero
+    # steps and exited looking like a successful run. global_step was never restored at
+    # all, so even a non-empty range would have restarted the LR warmup from scratch.
+    epoch = checkpoint.get("epoch")
+    global_step = checkpoint.get("global_step")
+    if epoch is None or global_step is None:
+        raise RuntimeError(
+            f"{resume_from} predates the checkpoint schema fix and records only "
+            f"iter={checkpoint.get('iter')}, which is ambiguous between a step count and "
+            f"an epoch count -- resuming from it cannot be done correctly. Use --init_from "
+            f"to start a fresh run from its weights instead."
+        )
+    print(f"[Checkpoint] Loaded {resume_from}: resuming at epoch {epoch}, global_step {global_step}")
+    return epoch, global_step
 
 
 def parallel_train(
@@ -144,21 +208,29 @@ def parallel_train(
     seed: int = 0,
     wandb_project: str | None = None,
     wandb_run_name: str | None = None,
+    max_iters: int | None = None,
+    checkpoint_every_n_steps: int | None = None,
+    eval_every_n_steps: int | None = None,
+    log_every_n_steps: int | None = None,
+    grad_clip_max_norm: float | None = None,
+    val_bat_num: int | None = None,
+    warmup_iters: int | None = None,
+    init_from: str | None = None,
 ):
     """
     Training TransformerLM with with same `model_args` using DDP-style gradient sync and lazy data loading.
-    
+
     Important: Only supports GPU training with NCCL backend for now.
-    
+
     Args:
         - rank: the rank of the current process (0 to world_size-1)
         - world_size: total number of processes participating in the training
-        
+
         - context_length: the context length for the language model
         - model_args: a dict of arguments to initialize the TransformerLM
         - optimizer_args: a dict of arguments to initialize the AdamW optimizer
         - loss_fn: the loss function to use for training (e.g. cross_entropy)
-        - epochs: total number of training epochs
+        - epochs: total number of training epochs (upper bound; training also stops early if max_iters is hit)
         - eval_interval: how many epochs to wait before running evaluation on the validation set
         - tr_batch_size: batch size for training
         - val_batch_size: batch size for validation
@@ -171,6 +243,31 @@ def parallel_train(
         - seed: random seed for reproducibility.
         - wandb_project: Weights & Biases project name (only rank 0 logs). None disables W&B.
         - wandb_run_name: optional W&B run name override.
+        - max_iters: optional total (per-rank) training-step budget across all epochs combined.
+          None means run every batch of every epoch with no step cap.
+        - checkpoint_every_n_steps: optional step-granularity safety checkpoint, independent of
+          checkpoint_interval's epoch granularity. Useful when max_iters caps training well
+          short of one full epoch, so at least a few intermediate checkpoints exist for a
+          long-running job. None disables step-based checkpointing.
+        - eval_every_n_steps: optional step-granularity validation pass, independent of
+          eval_interval's epoch granularity. Same motivation as checkpoint_every_n_steps.
+        - log_every_n_steps: optional step-granularity train-loss W&B log point, so a run that
+          never completes a full epoch still produces a real loss curve, not a single point.
+        - grad_clip_max_norm: optional global-norm gradient clipping threshold, applied after
+          finish_gradient_synchromnization() (so every rank clips the same, already-synced
+          gradients) and before optimizer.step(). None disables clipping.
+        - val_bat_num: caps each evaluation pass to this many batches instead of iterating the
+          entire (sliding-window, so potentially huge) val_loader. Matters a lot once
+          eval_every_n_steps triggers eval frequently -- an unbounded full pass over a
+          multi-hundred-thousand-batch val_loader can single-handedly take hours. None means
+          no cap (iterate the whole val_loader, matching the original behavior).
+        - warmup_iters: if set (together with max_iters), applies cosine-with-linear-warmup
+          LR scheduling (reusing cs336_basics.train.optimizer.lr_scheduler) instead of the
+          fixed LR this loop previously used unconditionally. This loop has no LR schedule
+          at all otherwise, which is a real risk for a from-scratch model at this scale --
+          jumping straight to the full LR at step 0 is a well-known cause of early training
+          divergence (NaN loss), which is exactly what was observed in this project's own
+          calibration run without warmup. None keeps the old fixed-LR behavior.
     """
     # Seed for reproducibility
     torch.manual_seed(seed + rank)
@@ -220,6 +317,20 @@ def parallel_train(
     # Boardcast the initial model parameters from rank 0 to other ranks
     model = TransformerLM(**model_kwargs)
     model = model.to(device)
+
+    # init_from vs resume_from: resume_from continues an interrupted run (weights +
+    # optimizer moments + step counter). init_from starts a NEW run from pretrained
+    # weights only -- fresh AdamW state and a fresh LR schedule -- which is what
+    # fine-tuning wants: the pretraining run ended with its cosine decayed to the
+    # minimum and its moments tuned to that regime, and inheriting either would fight
+    # the fine-tune's own (much smaller) schedule.
+    if init_from is not None:
+        ckpt = torch.load(init_from, map_location=device)
+        state = {k.removeprefix("_orig_mod."): v for k, v in ckpt["model"].items()}
+        model.load_state_dict(state)
+        print(f"Rank {rank} initialized weights from {init_from} "
+              f"(pretraining iter {ckpt.get('iter')}); optimizer state NOT restored.")
+
     print(f"Rank {rank} broadcasting initial model parameters...")
     for p in model.parameters():
         dist.broadcast(p.data, src=0)
@@ -260,12 +371,57 @@ def parallel_train(
     # Init optimizer
     optimizer = AdamW(model.parameters(), **optimizer_args)
 
+    peak_lr = optimizer_args.get("lr", optimizer.param_groups[0]["lr"])
+    use_lr_schedule = warmup_iters is not None and max_iters is not None
+
     # Resume from checkpoint if provided
     start_epoch = 0
+    resume_global_step = 0
     if resume_from is not None:
-        start_epoch = load_ddp_checkpoint(resume_from, model, optimizer, device)
-        print(f"Rank {rank} resuming training from epoch {start_epoch + 1}")
+        start_epoch, resume_global_step = load_ddp_checkpoint(resume_from, model, optimizer, device)
+        print(f"Rank {rank} resuming training from epoch {start_epoch + 1}, "
+              f"global_step {resume_global_step} (LR schedule continues from there)")
 
+    def _run_eval(step_label: int) -> float:
+        """Run a (optionally capped, via val_bat_num) validation pass on every rank
+        (all_reduce is collective) and, on rank 0 only, print + log to W&B. Restores
+        model.train() before returning."""
+        print(f"Rank {rank} starting evaluation on validation set (step {step_label})...")
+        model.eval()
+        val_loss = 0.0
+        n_batches = 0
+        val_iter = iter(val_loader)
+        if val_bat_num is not None:
+            val_iter = itertools.islice(val_iter, val_bat_num)
+        with torch.no_grad():
+            for val_bat_X, val_bat_y_ref in tqdm.tqdm(
+                val_iter, desc=f"Rank {rank} Evaluating (step {step_label})", unit="batch",
+                total=val_bat_num,
+            ):
+                val_bat_X = val_bat_X.to(device, non_blocking=True)
+                val_bat_y_ref = val_bat_y_ref.to(device, non_blocking=True)
+                val_bat_y_pred = model(val_bat_X)
+                val_loss += loss_fn(val_bat_y_pred, val_bat_y_ref).item()
+                n_batches += 1
+
+        val_loss_tensor = torch.tensor(val_loss, device=device)
+        dist.all_reduce(val_loss_tensor, op=dist.ReduceOp.SUM)
+        avg_val_loss = val_loss_tensor.item() / (n_batches * world_size)
+        print(f"Rank {rank} | step {step_label:06d} | Val loss: {avg_val_loss:.4f}")
+
+        if wandb_run is not None:
+            wandb_run.log({"val/loss": avg_val_loss}, step=step_label)
+
+        model.train()
+        return avg_val_loss
+
+    # Continue the step counter across a resume, so the LR schedule picks up where it left
+    # off instead of re-running warmup on an already-trained model.
+    global_step = resume_global_step
+    reached_max_iters = False
+    # Defined up front because the final checkpoint save below reads it: if the epoch range
+    # is empty (already at `epochs`), the loop variable would otherwise never be bound.
+    epoch = start_epoch - 1
     for epoch in range(start_epoch, epochs):
         # Set up DDP sampler, ensuring no data leaks across ranks
         print(f"Rank {rank} starting epoch {epoch + 1}/{epochs}")
@@ -294,6 +450,20 @@ def parallel_train(
             # wait for grad tensor sync
             model.finish_gradient_synchromnization()
 
+            if grad_clip_max_norm is not None:
+                grad_clip(list(model.parameters()), grad_clip_max_norm)
+
+            if use_lr_schedule:
+                current_lr = lr_scheduler(
+                    it=global_step,
+                    max_learning_rate=peak_lr,
+                    min_learning_rate=peak_lr * 0.1,
+                    warmup_iters=warmup_iters,
+                    cosine_cycle_aiters=max_iters,
+                )
+                for pg in optimizer.param_groups:
+                    pg["lr"] = current_lr
+
             # # Inspect gradients
             # if print_every is not None and (i + 1) % print_every == 0:
             #     j = 0
@@ -305,18 +475,56 @@ def parallel_train(
             #             break
 
             # Step optimizer after gradient sync
-            optimizer.step()    
-            acc_loss += loss.item()
+            optimizer.step()
+            loss_value = loss.item()
+            acc_loss += loss_value
 
             i += 1
-            if i == 100:  # TODO: Remove it
+            global_step += 1
+
+            # Fail fast on divergence. Without this the job happily burns its whole
+            # wall-clock budget multiplying NaNs, and nothing in stdout says so until the
+            # next eval -- which can be thousands of steps away.
+            if not math.isfinite(loss_value):
+                raise RuntimeError(
+                    f"Rank {rank}: training DIVERGED -- non-finite loss ({loss_value}) at "
+                    f"global_step {global_step} (lr={current_lr if use_lr_schedule else peak_lr:.3e}). "
+                    f"Aborting instead of burning the rest of the budget."
+                )
+
+            if log_every_n_steps is not None and global_step % log_every_n_steps == 0:
+                # Also to stdout, not just W&B: the run log is the only thing available when
+                # reconnecting over SSH, and previously it showed nothing but a tqdm bar.
+                lr_str = f" | lr {current_lr:.3e}" if use_lr_schedule else ""
+                print(f"Rank {rank} | step {global_step:06d} | train loss {loss_value:.4f}{lr_str}", flush=True)
+                if wandb_run is not None:
+                    log_payload = {"train/loss": loss_value, "epoch": epoch + 1}
+                    if use_lr_schedule:
+                        log_payload["train/lr"] = current_lr
+                    wandb_run.log(log_payload, step=global_step)
+
+            if (
+                checkpoint_dir is not None
+                and checkpoint_every_n_steps is not None
+                and global_step % checkpoint_every_n_steps == 0
+            ):
+                save_ddp_checkpoint(model, optimizer, global_step, checkpoint_dir, rank, wandb_run,
+                                    tag="step", global_step=global_step, epoch_index=epoch)
+
+            if eval_every_n_steps is not None and global_step % eval_every_n_steps == 0:
+                _run_eval(global_step)
+
+            if max_iters is not None and global_step >= max_iters:
+                reached_max_iters = True
                 break
 
-        # W&B: log average training loss for the epoch
+        # W&B: log average training loss for the epoch (best-effort step marker; may repeat
+        # global_step if the epoch ended exactly on a log_every_n_steps boundary, which W&B
+        # tolerates as a duplicate point rather than an error).
         avg_train_loss = acc_loss / max(i, 1)
         if wandb_run is not None:
-            wandb_run.log({"epoch": epoch + 1, "train/loss": avg_train_loss}, step=epoch + 1)
-        
+            wandb_run.log({"epoch": epoch + 1, "train/epoch_avg_loss": avg_train_loss}, step=global_step)
+
         # # Log Timing Info
         # _synchronize_if_cuda(device)
         # t3 = time.perf_counter()
@@ -333,31 +541,9 @@ def parallel_train(
 
         # Evaluation on validation set every eval_interval epochs
         if eval_interval > 0 and (epoch + 1) % eval_interval == 0:
-            print(f"Rank {rank} starting evaluation on validation set...")
-            model.eval()
-            val_loss = 0.0
-            with torch.no_grad():
-                for val_bat_X, val_bat_y_ref in tqdm.tqdm(val_loader, desc=f"Rank {rank} Evaluating Epoch {epoch + 1}", unit="batch"):
-                    val_bat_X = val_bat_X.to(device, non_blocking=True)
-                    val_bat_y_ref = val_bat_y_ref.to(device, non_blocking=True)
-                    val_bat_y_pred = model(val_bat_X)
-                    val_loss += loss_fn(val_bat_y_pred, val_bat_y_ref).item()
-
-            # Average validation loss across all batches and ranks.
-            val_loss_tensor = torch.tensor(val_loss, device=device)
-            dist.all_reduce(val_loss_tensor, op=dist.ReduceOp.SUM)
-            avg_val_loss = val_loss_tensor.item() / (len(val_loader) * world_size)
-            # Print eval info
-            print(
-                f"Rank {rank} | "
-                f"Epoch {epoch + 1:04d}"
-                f"Local loss sum: {acc_loss:.4f} | Val loss: {avg_val_loss:.4f}"
-            )
+            avg_val_loss = _run_eval(global_step)
+            print(f"Rank {rank} | Epoch {epoch + 1:04d} | Local loss sum: {acc_loss:.4f} | Val loss: {avg_val_loss:.4f}")
             print(f"Inspect parameters sample (rank {rank}): {model.parameters().__next__()[0, :5].tolist()}")
-
-            # W&B: log validation loss
-            if wandb_run is not None:
-                wandb_run.log({"epoch": epoch + 1, "val/loss": avg_val_loss}, step=epoch + 1)
 
         # ---- Checkpoint Save ----
         if (
@@ -372,13 +558,25 @@ def parallel_train(
                 checkpoint_dir,
                 rank,
                 wandb_run,
+                global_step=global_step,
+                epoch_index=epoch + 1,
             )
 
         # ---- Epoch End ----
+        if reached_max_iters:
+            print(f"Rank {rank} reached max_iters={max_iters} at epoch {epoch + 1}, stopping early.")
+            break
+
+    # One last validation pass so the run always ends with a final val number, even when
+    # it stopped on max_iters rather than on an eval_every_n_steps boundary.
+    if eval_every_n_steps is not None or eval_interval > 0:
+        final_val_loss = _run_eval(global_step)
+        print(f"Rank {rank} | FINAL | global_step {global_step} | Val loss: {final_val_loss:.4f}")
 
     # Save a final checkpoint at the end of training
     if checkpoint_dir is not None:
-        save_ddp_checkpoint(model, optimizer, epochs, checkpoint_dir, rank, wandb_run)
+        save_ddp_checkpoint(model, optimizer, epochs, checkpoint_dir, rank, wandb_run,
+                            global_step=global_step, epoch_index=epoch + 1)
 
     # Finished Training, print final timing results averaged across ranks.
     if rank == 0:

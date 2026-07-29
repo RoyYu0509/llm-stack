@@ -315,12 +315,22 @@ def stage_train_ddp(cfg: dict, wrapper: str) -> None:
         w = cfg.get("wandb", {})
         wandb_project = w.get("project", None)
         wandb_run_name = w.get("run_name", None)
+        max_iters = t.get("max_iters", None)
+        checkpoint_every_n_steps = c.get("checkpoint_every_n_steps", None)
+        eval_every_n_steps = c.get("eval_every_n_steps", None)
+        log_every_n_steps = c.get("log_every_n_steps", c.get("log_interval", None))
+        grad_clip_max_norm = t.get("grad_clip", None)
+        val_bat_num = t.get("val_bat_num", None)
+        warmup_iters = t.get("warmup_iters", None)
+        init_from = cfg.get("init_from", None)
 
         print(
             f"[stage:train] DDP=flashddp  kernel={kernel_name}  GPUs={world_size}  "
             f"bucket={bucket_mb}MB  compile={do_compile}  seed={seed}  "
             f"ckpt_dir={checkpoint_dir}  ckpt_interval={checkpoint_interval}  "
-            f"resume={resume_from}  wandb={wandb_project}"
+            f"ckpt_every_n_steps={checkpoint_every_n_steps}  eval_every_n_steps={eval_every_n_steps}  "
+            f"log_every_n_steps={log_every_n_steps}  "
+            f"resume={resume_from}  init_from={init_from}  wandb={wandb_project}  max_iters={max_iters}"
         )
         mp.spawn(
             fn=parallel_train,
@@ -328,7 +338,9 @@ def stage_train_ddp(cfg: dict, wrapper: str) -> None:
                   optim_kwargs, cross_entropy, epochs, eval_interval, tr_bs, val_bs,
                   backend, None, None, bucket_mb,
                   checkpoint_dir, checkpoint_interval, resume_from,
-                  do_compile, seed, wandb_project, wandb_run_name),
+                  do_compile, seed, wandb_project, wandb_run_name, max_iters,
+                  checkpoint_every_n_steps, eval_every_n_steps, log_every_n_steps,
+                  grad_clip_max_norm, val_bat_num, warmup_iters, init_from),
             nprocs=world_size, join=True,
         )
     else:
