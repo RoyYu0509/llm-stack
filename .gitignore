@@ -182,3 +182,11 @@ wandb-debug.log
 # we normally ignore JSON files for submissions.
 !cs336_systems/experiments/default_pipeline_config.json
 
+# Experiment configs and eval results are the record of what was actually run --
+# they are small, hand-written or hand-checkable, and the docs reference them by
+# path. Blanket-ignoring *.json was hiding them.
+!cs336_systems/experiments/real_pretrain_config.json
+!cs336_systems/experiments/smoke_pipeline_config.json
+!configs_sft/*.json
+!artifacts/eval/*.json
+
