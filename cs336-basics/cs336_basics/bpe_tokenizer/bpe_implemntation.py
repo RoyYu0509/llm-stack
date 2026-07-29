@@ -1,5 +1,8 @@
 """
 最小 BPE Tokenizer — 从零开始，每一步都解释
+
+⚠️ 注意 !!!!!!
+要配合 “bpe_tokenizer/bpe_structure.md” 注释文件来看
 """
 
 # =============================================================================
@@ -26,6 +29,7 @@
 def pretokenize(text: str) -> list[list[bytes]]:
     """
     把文本切成 pretokens，每个 pretoken 是一个 list of single bytes。
+    ⚠️注意: 返回的是 byte representation, 不是 literal char
     
     简化版: 按空格切分 (GPT-2 用复杂的 regex，原理一样)
     
@@ -40,6 +44,7 @@ def pretokenize(text: str) -> list[list[bytes]]:
     words = text.split(' ')
     pretokens = []
     for i, word in enumerate(words):
+        # 除了第一个词，其他词都加前导空格
         if i > 0:
             word = ' ' + word  # 前导空格附到词上
         # 拆成单字节
@@ -71,7 +76,7 @@ def build_pretok_dict(text: str) -> dict[tuple, int]:
         (b' ', b'c', b'a', b't'):  1,
     }
     """
-    pretokens = pretokenize(text)
+    pretokens = pretokenize(text) # 返回 [[b't', b'h', b'e'], [b' ', b't', b'h', b'e'], [b' ', b't', b'h', b'e'], [b' ', b'c', b'a', b't']]
     pretok_dict = {}
     for pretoken in pretokens:
         key = tuple(pretoken)  # list 不能做 dict key, 转成 tuple
@@ -103,6 +108,7 @@ def build_freq_dict(pretok_dict: dict) -> dict[tuple, int]:
     """
     freq_dict = {}
     for byte_seq, count in pretok_dict.items():
+        # 对每一个 pretoken, 用 sliding window 统计 相邻pair 数量
         for i in range(len(byte_seq) - 1):
             pair = (byte_seq[i], byte_seq[i + 1])
             freq_dict[pair] = freq_dict.get(pair, 0) + count
@@ -110,9 +116,9 @@ def build_freq_dict(pretok_dict: dict) -> dict[tuple, int]:
 
 
 # =============================================================================
-# 第五步: Merge — 合并最高频 pair
+# 第五步: (先找到最 frequent 的 byte-pair) 然后把这两个 byte merge 成一个 — Helper Function: 合并pair
 # =============================================================================
-# 找到频率最高的 pair，在所有 pretoken 中合并它
+# 输入一个 pair, 在 pretoken dictionary 中合并它
 
 def merge_in_pretok_dict(pretok_dict: dict, pair: tuple) -> dict:
     """
@@ -130,6 +136,7 @@ def merge_in_pretok_dict(pretok_dict: dict, pair: tuple) -> dict:
     
     new_pretok_dict = {}
     for byte_seq, count in pretok_dict.items():
+        # 还是笨方法, loop over pretoken keys, 用 sliding window, 找到 pair[0], pair[1] 出现的地方, 然后合并他们
         new_seq = []
         i = 0
         while i < len(byte_seq):
@@ -156,7 +163,7 @@ def train(text: str, target_vocab_size: int):
         vocab:  dict[int, bytes]     id -> bytes 的映射
         merges: list[tuple]          merge 历史记录
     """
-    # --- 初始化 vocab: 256 个单字节 ---
+    # --- 初始化 vocab: 256 个单字节 (是基础的 token) ---
     vocab = {i: bytes([i]) for i in range(256)}  # {0: b'\x00', 1: b'\x01', ..., 255: b'\xff'}
     byte_2_id = {bytes([i]): i for i in range(256)}
     next_id = 256
@@ -166,14 +173,16 @@ def train(text: str, target_vocab_size: int):
     
     print("=== Initial pretok_dict ===")
     for seq, cnt in pretok_dict.items():
+        # 对每一个 pretoken, 把 bytes 转成 char (utf-8), 方便visualize打印
         readable = [s.decode('utf-8', errors='replace') for s in seq]
         print(f"  {readable}: {cnt}")
     
     # --- Merge loop ---
     merges = []
     
+    # 训练循环: 不断找最频繁的 pair, 合并, 直到 vocab 达到目标大小
     while len(vocab) < target_vocab_size:
-        # 建频率表
+        # 新建频率表
         freq_dict = build_freq_dict(pretok_dict)
         
         if not freq_dict:
@@ -226,6 +235,7 @@ def apply_merges(pretoken: list[bytes], merges: list[tuple]) -> list[bytes]:
         new_seq = []
         i = 0
         while i < len(current):
+            # 如果: 接下来两个 byte 还在范围内 + 当前和下一个 byte 是要 merge 的 pair; 就: 合并
             if i + 1 < len(current) and current[i] == bt1 and current[i + 1] == bt2:
                 new_seq.append(bt1 + bt2)
                 i += 2
@@ -234,8 +244,9 @@ def apply_merges(pretoken: list[bytes], merges: list[tuple]) -> list[bytes]:
                 i += 1
         current = new_seq
         
+        # 如果已经合并成单个 token 了, 那就终止掉
         if len(current) <= 1:
-            break  # 已经合并成一个 token, 不需要继续
+            break  
     
     return current
 
@@ -253,7 +264,9 @@ def encode(text: str, byte_2_id: dict, merges: list) -> list[int]:
     
     result = []
     for pretoken in pretokens:
+        # 对于每个 pretoken, 按顺序应用 merges 其中的 bytes
         merged = apply_merges(pretoken, merges)
+        # 然后对于最终 merged 完的 byte sequence, 查 byte_2_id 得到 id
         for token_bytes in merged:
             result.append(byte_2_id[token_bytes])
     

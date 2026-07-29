@@ -341,7 +341,7 @@ Apply merge_1 = (b"th", b"e"):
 Apply merge_2 = (b" ", b"the"):
     current 长度只有 1，没有相邻 pair，跳过
 
-pretoken_0_result = [b"the"]
+pretoken_0_result = [b" the"]
 ```
 
 **处理 pretoken_1 = [b" ", b"c", b"a", b"t"]**
