@@ -180,9 +180,50 @@ class TransformerLM(nn.Module):
         self.head = Linear(d_model, vocab_size, device=device, dtype=dtype)
 
     
+    def forward_with_cache(self, x, past_kv=None):
+        """Incremental forward for autoregressive decoding. Inference only.
+
+        `forward` is left untouched -- it is the training path, and this is additive.
+
+        Args:
+            x: `(batch, seq_new)` token ids. The whole prompt on prefill, then one token
+                per decode step.
+            past_kv: list of per-layer `(K, V)` from the previous call, or None.
+
+        Returns:
+            `(logits, past_kv)` where logits covers only the tokens passed in (so on decode
+            it is `(batch, 1, vocab)`), and past_kv should be fed back on the next step.
+
+        Cost: O(prefix) per step instead of the O(prefix^2) of re-running `forward` over the
+        whole sequence each time -- see cs336_systems/experiments/bench_serving.py, which
+        measures the difference rather than asserting it.
+        """
+        past_len = 0 if past_kv is None else past_kv[0][0].shape[-2]
+        seq_new = x.shape[1]
+        if past_len + seq_new > self.token_positions.shape[0]:
+            raise RuntimeError(
+                f"cached decode would reach position {past_len + seq_new}, beyond the "
+                f"model's context length {self.token_positions.shape[0]}"
+            )
+
+        x = self.in_embedding(x)
+        # Absolute positions continuing past the cache, so RoPE stays consistent with what
+        # the cached keys were rotated by.
+        positions = self.token_positions[past_len:past_len + seq_new]
+        positions = positions.unsqueeze(0).expand(x.shape[0], -1).to(x.device)
+
+        new_past = []
+        for i, tf_block in enumerate(self.tf_layers):
+            layer_past = None if past_kv is None else past_kv[i]
+            x, kv = tf_block.forward_with_cache(x, token_positions=positions, past_kv=layer_past)
+            new_past.append(kv)
+
+        x = self.norm(x)
+        return self.head(x), new_past
+
     def forward(self, x):
         """
-        Input: 
+        Input:
             - x: A batched sequence of integer token IDs, (batch_size, sequence_length)
 
         Output:

@@ -74,6 +74,19 @@ class PreNormTransformer(nn.Module):
         self.RMSN2 = Rmsnorm(d_model, eps, device, dtype)
         self.FNN = PointwiseSGLUactFFN(d_model, dim_ff, latent_exp_factor, device, dtype)
 
+    def forward_with_cache(self, x: torch.Tensor, token_positions, past_kv=None):
+        """Pre-norm block with an incremental attention cache. Inference only.
+
+        Only attention carries state across steps; the FFN and both norms are per-token, so
+        they run on the new tokens exactly as in `forward`.
+        """
+        attn_out, new_kv = self.MHA.forward_with_cache(
+            self.RMSN1(x), token_positions=token_positions, past_kv=past_kv
+        )
+        x = x + attn_out
+        x = x + self.FNN(self.RMSN2(x))
+        return x, new_kv
+
     @nvtx.range("PreNormTransformer_forward")
     def forward(self,x:torch.Tensor, token_positions=None):
         """

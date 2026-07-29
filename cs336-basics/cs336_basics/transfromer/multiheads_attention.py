@@ -124,6 +124,56 @@ class MultiHeadsAttention(torch.nn.Module):
         
         return multi_head
     
+    def forward_with_cache(self, x, token_positions, past_kv=None):
+        """Incremental attention for autoregressive decoding. Inference only.
+
+        Deliberately a separate method rather than a branch inside `forward`: the training
+        path is the hot path and stays byte-identical.
+
+        Args:
+            x: `(batch, seq_new, d_model)` -- only the NEW tokens, not the whole prefix.
+            token_positions: their ABSOLUTE positions, so RoPE rotates by true position
+                rather than by offset-within-this-chunk.
+            past_kv: `(K, V)` from the previous step, each `(batch, heads, seq_past, d)`,
+                or None on prefill.
+
+        Returns:
+            `(out, (K, V))` where K/V include both the past and the new tokens.
+        """
+        W_Q = rearrange(self.W_Q, "(h d_k) d_model -> h d_k d_model", h=self.heads_num, d_k=self.d_k)
+        W_K = rearrange(self.W_K, "(h d_k) d_model -> h d_k d_model", h=self.heads_num, d_k=self.d_k)
+        W_V = rearrange(self.W_V, "(h d_v) d_model -> h d_v d_model", h=self.heads_num, d_v=self.d_v)
+        Q = einsum(W_Q, x, "h d_k d_model, ... seq d_model -> ... h seq d_k")
+        K = einsum(W_K, x, "h d_k d_model, ... seq d_model -> ... h seq d_k")
+        V = einsum(W_V, x, "h d_v d_model, ... seq d_model -> ... h seq d_v")
+
+        if self.pos_encod is not None and token_positions is not None:
+            Q = self.pos_encod(Q, token_positions)
+            K = self.pos_encod(K, token_positions)
+
+        # Append to the cache AFTER rotating: RoPE is applied once, at each token's own
+        # absolute position, so cached keys must already carry their rotation.
+        if past_kv is not None:
+            past_k, past_v = past_kv
+            K = torch.cat([past_k, K], dim=-2)
+            V = torch.cat([past_v, V], dim=-2)
+
+        Q_packed = rearrange(Q, "... h seq d_k -> (... h) seq d_k")
+        K_packed = rearrange(K, "... h seq d_k -> (... h) seq d_k")
+        V_packed = rearrange(V, "... h seq d_v -> (... h) seq d_v")
+
+        # Causal masking only applies when queries and keys are the same block (prefill).
+        # During decode the queries are the newest tokens and every cached key strictly
+        # precedes them, so the triangular mask is not just unnecessary but wrong: it is
+        # built as tril(seq_q, seq_k), which for a single query would expose only key 0.
+        is_causal = Q_packed.shape[-2] == K_packed.shape[-2]
+        out_packed = scaled_dot_product_attention(Q_packed, K_packed, V_packed, is_causal=is_causal)
+
+        out = rearrange(out_packed, "(b h) seq d_v -> b h seq d_v", h=self.heads_num)
+        out = rearrange(out, "... h seq d_v -> ... seq (h d_v)")
+        out = einsum(self.W_O, out, "d_model (h_d_v), ... seq (h_d_v) -> ... seq d_model")
+        return out, (K, V)
+
     @nvtx.range("MultiHeadsAttention_forward")
     def forward(self, x, token_positions=None):
         """
