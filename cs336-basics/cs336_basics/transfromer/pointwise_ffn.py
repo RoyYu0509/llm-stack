@@ -10,9 +10,18 @@ class PointwiseSGLUactFFN(torch.nn.Module):
         # Round down to the nearest dimension of the multiple of 64
         if dim_ff is None:
             dim_ff = (latent_exp_factor * dim_model // 64) * 64
-        self.W1: Float[torch.Tensor, "dim_ff, d_model"]= torch.nn.Parameter(trunct_normal_para_init(dim_ff, dim_model, device=device, dtype=dtype))
-        self.W3: Float[torch.Tensor, "dim_ff, d_model"]= torch.nn.Parameter(trunct_normal_para_init(dim_ff, dim_model, device=device, dtype=dtype))
-        self.W2: Float[torch.Tensor, "d_model, dim_ff"]= torch.nn.Parameter(trunct_normal_para_init(dim_model, dim_ff, device=device, dtype=dtype))
+        # Xavier variance, matching Linear (linear_module.py) and the attention projections
+        # (multiheads_attention.py). Passing it explicitly matters: trunct_normal_para_init's
+        # `var` defaults to 1, and these three calls used to omit it, so every FFN matrix was
+        # initialized at std=1.0 instead of ~0.027. Pre-norm hides that at step 0 (RMSNorm
+        # renormalizes, so initial loss is still exactly ln(vocab_size)), but the FFN branch
+        # writes values with RMS ~2.5e4 into a residual stream whose branches should be
+        # contributing ~0.4 -- a ~65,000x overshoot that reliably diverges to NaN a few
+        # hundred steps in, once the LR is high enough to actually move those weights.
+        ffn_var = 2 / (dim_ff + dim_model)
+        self.W1: Float[torch.Tensor, "dim_ff, d_model"]= torch.nn.Parameter(trunct_normal_para_init(dim_ff, dim_model, 0, ffn_var, 3, device, dtype))
+        self.W3: Float[torch.Tensor, "dim_ff, d_model"]= torch.nn.Parameter(trunct_normal_para_init(dim_ff, dim_model, 0, ffn_var, 3, device, dtype))
+        self.W2: Float[torch.Tensor, "d_model, dim_ff"]= torch.nn.Parameter(trunct_normal_para_init(dim_model, dim_ff, 0, ffn_var, 3, device, dtype))
 
     def SiLU(self, x: torch.Tensor):
         """
