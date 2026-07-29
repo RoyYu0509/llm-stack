@@ -51,7 +51,18 @@ uv run python cs336_systems/experiments/benchmark_lm_matrix.py \
 ```bash
 DEBUG_DDP=1 uv run python ...
 TRITON_PRINT_AUTOTUNING=1 uv run python ...
+CS336_DISABLE_TF32=1 uv run python ...   # TF32 is on by default on Ampere; this turns it
+                                          # off so the speedup can be measured, not assumed
 ```
+
+**Resuming vs starting from pretrained weights** — two different config keys, and the
+distinction matters:
+- `resume_from`: continue an interrupted run (weights + optimizer moments + `global_step`,
+  so the LR schedule picks up where it stopped). Requires a checkpoint written after the
+  schema fix; older ones store a single ambiguous `iter` field and are rejected explicitly.
+- `init_from`: start a **new** run from pretrained weights only — fresh optimizer state and
+  a fresh LR schedule. This is what fine-tuning wants, since the pretraining run ended with
+  its cosine decayed to the minimum.
 
 ## Architecture
 
@@ -77,11 +88,42 @@ TRITON_PRINT_AUTOTUNING=1 uv run python ...
   - `BucketedOverlapDDP.py`: groups params into size-bounded buckets, overlaps all-reduce with backward pass (85.9% scaling efficiency, 9.4% throughput gain)
   - `FlashDDP_runner.py`: training wrapper
 
+- **`data_harvest/`**: corpus construction for the real-data pretraining run
+  - `build_mixed_corpus.py`: streams C4 / Wikipedia / Alpaca from HuggingFace into one
+    70/20/10 mixed corpus (`data/mixed_corpus/`) plus a `manifest.json` recording the
+    ratios actually achieved and Alpaca's oversample factor
+  - `build_sft_corpus.py`: Alpaca-only corpus for instruction fine-tuning, plus an
+    `alpaca_replay` variant mixing in 25% pretraining data to measure forgetting
+  - `build_domain_valid.py`: three separate validation streams (web / wiki / instruction),
+    so per-domain effects of the mixture can be measured rather than assumed
+
 - **`experiments/`**: orchestration and benchmarking
   - `run_pipeline.py`: full pipeline (download → tokenize → train) with JSON config + CLI overrides
   - `benchmark_attention_sweep.py`: sweeps seq_len 128→16384, outputs to `artifacts/`
   - `benchmark_lm_matrix.py`: kernel × DDP strategy grid, outputs to `artifacts/`
+  - `eval_checkpoint.py`: score one checkpoint against any number of `.npy` token streams.
+    Uses a fixed seed so every checkpoint sees **identical batches** — the comparison is
+    paired, which is what makes 0.05-scale differences between runs detectable
+  - `sample_from_checkpoint.py`: qualitative generation. Use this rather than
+    `cs336_basics/text_gen.py`, which rebuilds a custom BPE tokenizer this project no
+    longer trains (see `real_pretrain_config.json`'s `_NOTE_tokenizer_swap`)
+  - `bench_serving.py`: TTFT / decode latency / throughput through `llm-serving`'s real
+    `LMEngine` path; `--modes recompute cache` measures the KV cache's benefit directly
+  - `kv_cache_gate.py`: correctness gate for the inference KV cache — cached decode must
+    be token-identical to recompute before any cached number is reported
+  - `make_night_report.py`: collapses eval JSONs, per-arm logs and benchmark artifacts
+    into a single `artifacts/NIGHT_REPORT.md`
   - `default_pipeline_config.json`: 12-layer, d_model=768, 12-head model; batch_size=8, lr=6e-4
+  - `real_pretrain_config.json`: the real 0.19B pretraining run. Its `_NOTE_*` fields record
+    the failures that shaped it (FFN init bug, OOM, tokenizer swap, W&B artifact hang) —
+    read them before changing model size, batch size, or LR
+
+**Inference KV cache**: `TransformerLM.forward_with_cache(x, past_kv)` (plus
+`forward_with_cache` on `PreNormTransformer` / `MultiHeadsAttention`) is an **additive**
+inference-only path — `forward` is untouched and remains the training path. Two invariants
+it must preserve: decode passes `is_causal=False` (the causal mask is built as
+`tril(seq_q, seq_k)` and would expose only key 0 to a single query), and RoPE is applied at
+absolute positions *before* keys enter the cache. `tests/test_kv_cache.py` enforces both.
 
 ### Data flow
 ```
