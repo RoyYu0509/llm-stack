@@ -1,9 +1,9 @@
 import torch
-from jaxtyping import Float, Array
+from jaxtyping import Float
 from torch import Tensor
 from einops import rearrange, reduce, repeat, einsum
 import torch.nn as nn
-import torch.cuda.nvtx as nvtx
+from cs336_basics import nvtx_compat as nvtx
 
 class RoPE:
     """

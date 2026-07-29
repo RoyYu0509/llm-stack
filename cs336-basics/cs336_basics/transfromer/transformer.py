@@ -8,7 +8,7 @@ from cs336_basics.transfromer.positionalNencoding import PosEncod
 from cs336_basics.transfromer.rmsnorm import Rmsnorm
 import torch.nn as nn
 import torch
-import torch.cuda.nvtx as nvtx
+from cs336_basics import nvtx_compat as nvtx
 from cs336_basics.transfromer.scaled_dot_prod_attention import scaled_dot_product_attention
 
 class PreNormTransformer(nn.Module):

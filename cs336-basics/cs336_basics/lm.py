@@ -7,9 +7,9 @@ from cs336_basics.transfromer.rmsnorm import Rmsnorm
 from cs336_basics.transfromer.transformer import PreNormTransformer
 from cs336_basics.transfromer.scaled_dot_prod_attention import scaled_dot_product_attention, softmax
 import torch.nn as nn
-import torch.cuda.nvtx as nvtx
+from cs336_basics import nvtx_compat as nvtx
 import torch
-import torch.cuda.nvtx as nvtx
+from cs336_basics import nvtx_compat as nvtx
 
 class TransformerLM(nn.Module):
     """

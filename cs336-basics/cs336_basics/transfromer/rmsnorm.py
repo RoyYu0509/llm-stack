@@ -2,7 +2,7 @@ import torch
 from einops import reduce, einsum
 from jaxtyping import Float, Int
 from einops import rearrange
-import torch.cuda.nvtx as nvtx
+from cs336_basics import nvtx_compat as nvtx
 
 
 class Rmsnorm(torch.nn.Module):

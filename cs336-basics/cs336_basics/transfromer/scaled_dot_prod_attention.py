@@ -1,8 +1,8 @@
 import torch
-from jaxtyping import Float, Array
+from jaxtyping import Float
 from torch import Tensor
 from einops import rearrange, reduce, repeat, einsum
-import torch.cuda.nvtx as nvtx
+from cs336_basics import nvtx_compat as nvtx
 
 
 def softmax(input: torch.Tensor, axis: int = -1):
@@ -70,9 +70,24 @@ from cs336_systems.FlashAttention.flash_attention_torch_vectorized import vector
 def vectorized_attention_torch(query, key, value, is_causal: bool = False):
     return vectorized_attn_torch_fn(query, key, value, is_causal)  # Positional args only
 
-from cs336_systems.FlashAttention.flash_attention_triton import flash_attn_triton_fn
+# Triton kernel requires a CUDA GPU (compute capability 8.0+) and the `triton` package,
+# neither of which exists on Apple Silicon / other non-CUDA machines. Import defensively
+# so the rest of this module (and everything depending on it, e.g. TransformerLM) stays
+# importable for local CPU/MPS development; only calling flash_attention_my_triton on
+# such a machine raises, with the original import error attached.
+try:
+    from cs336_systems.FlashAttention.flash_attention_triton import flash_attn_triton_fn
+    _TRITON_IMPORT_ERROR = None
+except Exception as e:
+    flash_attn_triton_fn = None
+    _TRITON_IMPORT_ERROR = e
+
 @nvtx.range("FlashAttention-MyTriton")
 def flash_attention_my_triton(query, key, value, is_causal: bool = False):
+    if flash_attn_triton_fn is None:
+        raise RuntimeError(
+            "flash_attention_triton kernel unavailable on this machine (requires a CUDA GPU + triton)."
+        ) from _TRITON_IMPORT_ERROR
     return flash_attn_triton_fn(query, key, value, is_causal)  # Positional args only
 
 

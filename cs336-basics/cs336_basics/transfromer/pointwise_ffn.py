@@ -2,7 +2,7 @@ from cs336_basics.transfromer.para_init import trunct_normal_para_init
 import torch
 from jaxtyping import Float
 from einops import einsum
-import torch.cuda.nvtx as nvtx
+from cs336_basics import nvtx_compat as nvtx
 
 class PointwiseSGLUactFFN(torch.nn.Module):
     def __init__(self, dim_model, dim_ff=None, latent_exp_factor = 8/3 , device="cpu", dtype=torch.float16):

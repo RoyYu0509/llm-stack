@@ -7,7 +7,7 @@ from cs336_basics.transfromer.rmsnorm import Rmsnorm
 from cs336_basics.transfromer.transformer import PreNormTransformer
 from cs336_basics.transfromer.scaled_dot_prod_attention import softmax
 from einops import reduce
-from jaxtyping import Float, Array
+from jaxtyping import Float
 import torch.nn as nn
 import torch
 from torch import logsumexp

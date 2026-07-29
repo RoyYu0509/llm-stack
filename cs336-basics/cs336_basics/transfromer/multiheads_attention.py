@@ -1,10 +1,10 @@
 import torch
-from jaxtyping import Float, Array
+from jaxtyping import Float
 from torch import Tensor
 from einops import rearrange, reduce, repeat, einsum
 from cs336_basics.transfromer.para_init import trunct_normal_para_init
 from cs336_basics.transfromer.scaled_dot_prod_attention import softmax, scaled_dot_product_attention, flash_attention_my_triton, vectorized_attention_torch
-import torch.cuda.nvtx as nvtx
+from cs336_basics import nvtx_compat as nvtx
 
 
 class MultiHeadsAttention(torch.nn.Module):

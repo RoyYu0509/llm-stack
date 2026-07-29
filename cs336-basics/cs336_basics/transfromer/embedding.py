@@ -2,7 +2,7 @@ from cs336_basics.transfromer.para_init import trunct_normal_para_init
 import torch
 from jaxtyping import Float, Int
 from einops import rearrange, einsum
-import torch.cuda.nvtx as nvtx
+from cs336_basics import nvtx_compat as nvtx
 
 class Embedding(torch.nn.Module):
     def __init__(self, num_embeddings, embedding_dim, device=None, dtype=None):
