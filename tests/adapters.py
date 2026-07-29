@@ -4,7 +4,17 @@ from typing import Type
 
 import torch
 
-from cs336_systems.FlashAttention.flash_attention_triton import FlashAttentionTorchFunctionTriton
+# Triton requires a CUDA GPU + the `triton` package, neither present on Apple Silicon /
+# other non-CUDA machines. Import defensively so the rest of this test-adapter module (and
+# any test file that imports it) stays collectible for local CPU/MPS runs; only calling
+# get_flashattention_autograd_function_triton() on such a machine raises.
+try:
+    from cs336_systems.FlashAttention.flash_attention_triton import FlashAttentionTorchFunctionTriton
+    _TRITON_IMPORT_ERROR = None
+except Exception as e:
+    FlashAttentionTorchFunctionTriton = None
+    _TRITON_IMPORT_ERROR = e
+
 from cs336_systems.FlashAttention.flash_attention_torch_naive import FlashAttentionTorchFunctionTorch
 def get_flashattention_autograd_function_pytorch() -> Type:
     """
@@ -30,6 +40,10 @@ def get_flashattention_autograd_function_triton() -> Type:
     Returns:
         A class object (not an instance of the class)
     """
+    if FlashAttentionTorchFunctionTriton is None:
+        raise RuntimeError(
+            "flash_attention_triton kernel unavailable on this machine (requires a CUDA GPU + triton)."
+        ) from _TRITON_IMPORT_ERROR
     return FlashAttentionTorchFunctionTriton
 
 def get_ddp_individual_parameters(module: torch.nn.Module) -> torch.nn.Module:
@@ -100,8 +114,7 @@ def ddp_bucketed_on_after_backward(ddp_model: torch.nn.Module, optimizer: torch.
         optimizer: torch.optim.Optimizer
             Optimizer being used with the DDP-wrapped model.
     """
-    # For example: ddp_model.finish_gradient_synchronization()
-    raise NotImplementedError
+    ddp_model.finish_gradient_synchromnization()
 
 
 def ddp_bucketed_on_train_batch_start(ddp_model: torch.nn.Module, optimizer: torch.optim.Optimizer):
@@ -114,7 +127,9 @@ def ddp_bucketed_on_train_batch_start(ddp_model: torch.nn.Module, optimizer: tor
         optimizer: torch.optim.Optimizer
             Optimizer being used with the DDP-wrapped model.
     """
-    raise NotImplementedError
+    # DDPOverlapBucketed's grad buffers rely on .grad staying a view into them
+    # (see FlashDDP.py's docstring); zero in place rather than set_to_none.
+    optimizer.zero_grad(set_to_none=False)
 
 
 def get_sharded_optimizer(params, optimizer_cls: Type[torch.optim.Optimizer], **kwargs) -> torch.optim.Optimizer:
