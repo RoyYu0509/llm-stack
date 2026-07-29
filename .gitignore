@@ -23,3 +23,24 @@ dist/
 
 # Benchmark results (large files)
 benchmarks/results/
+
+# LaTeX build artifacts (docs/handout/). The .pdf is deliberately NOT ignored --
+# it is the readable deliverable and is committed alongside its source.
+docs/handout/*.aux
+docs/handout/*.log
+docs/handout/*.out
+docs/handout/*.toc
+docs/handout/*.bbl
+docs/handout/*.bcf
+docs/handout/*.blg
+docs/handout/*.run.xml
+docs/handout/*.fls
+docs/handout/*.fdb_latexmk
+docs/handout/*.synctex.gz
+docs/handout/*.xrefs
+docs/handout/*.xdv
+docs/handout/*.bbl-SAVE-ERROR
+docs/handout/sections/*.aux
+# The quiz edition is derived from the same source; the build command is in
+# docs/handout/README.md. Committing two PDFs of the same text is noise.
+docs/handout/*-quiz.pdf

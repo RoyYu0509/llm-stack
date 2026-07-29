@@ -1,0 +1,477 @@
+\section{请求的形状：数据模型与系统边界}
+\label{sec:a-shape}
+
+一个 serving 系统的第一个真正的设计决定，不是"用哪个模型"，也不是"用不用 continuous
+batching"。第一个决定是：\cnemph{request 在这个系统里到底是什么}。
+
+这问题看起来随手就能答——建一个类，把用户给的东西都装进去，需要什么再加字段。代价要过几周才
+显形：全塞进一个类，engine 层就会开始知道 \code{user_id} 和 \code{timestamp}；等到要 batch 的
+时候，你在 batch 一堆和 forward pass 毫无关系的字段，而真正要拼在一起的那点东西（token 列表和
+它的长度）被埋在中间。到那时再拆，拆的不是一个类，是所有已经写好的调用点。
+
+Week 2 在这里选了\cnemph{两个类，不是一个}。这一节看它买到了什么、代价是什么、以及它在类型
+系统里留下的疤。涉及的代码在 \code{inferenceLM/data/} 和 \codeb{inferenceLM/request_receiver/}
+下面，不到一百行；分量不在行数上，在于它决定了后面每一层能看见什么。
+
+% ---------------------------------------------------------------------------
+\subsection{两个类而不是一个}
+\label{sec:a-shape-two-classes}
+
+\code{RequestData} 是一个 pydantic \code{BaseModel}：
+
+\lstinputlisting[style=hlnum, firstline=21, lastline=28, firstnumber=21]%
+  {../../inferenceLM/data/request.py}
+
+\code{TokenizedData} 是裸的 Python class，连 \code{@dataclass} 都没用：
+
+\lstinputlisting[style=hlnum, firstline=12, lastline=20, firstnumber=12]%
+  {../../inferenceLM/data/tokenized_data.py}
+
+差别不只是"一个大一个小"。分界线是\cnemph{谁进 queue}：\code{submit_request()} 把
+\code{RequestData} 存进 \code{request_store}
+（\codeat{inferenceLM/request\_receiver/request\_receiver.py}{52}），往 \code{pending_queue}
+里放的却是另一个东西：
+
+\lstinputlisting[style=hlnum, firstline=42, lastline=60, firstnumber=42]%
+  {../../inferenceLM/request_receiver/request_receiver.py}
+
+engine 侧拿到的对象从头到尾只有两个属性。它拿不到 \code{user_id}，也拿不到 \code{timestamp}
+——不是因为有人拦着，是因为那个对象里根本没有。
+
+\paragraph{为什么进热路径的那个故意不用 pydantic。}
+pydantic 买到的是构造时的类型校验，加上 \code{model_dump_json()} / \code{model_validate_json()}
+这一对（\codeat{inferenceLM/data/request.py}{33--38}）；ADR-000 选它的理由就写了四个字，
+"自带 type checking"。问题是这两样好处对 \code{TokenizedData} 一个都不成立：它不过网络、不落盘、
+不序列化，生命周期是从 \code{submit_request} 里被造出来到 \code{LMEngine.inference()} 读完
+\code{tokens} 为止，全程同一个进程、同一个 event loop。为它付一次 validation，买到的是零。而它
+是唯一穿过 queue 的对象，也就是\cnemph{单位时间被构造次数最多}的类型——今天 QPS 是个位数所以
+看不出来，但把它做重没有理由。
+
+这不是态度不一致，是分工：pydantic 出现在\cnemph{系统边界}上，不出现在\cnemph{内部热路径}上。
+判据不是"它是不是数据"，而是"它有没有一条通向外部的边"。
+
+\paragraph{为什么重载 \codet{\_\_len\_\_} 而不加一个 length 字段。}
+ADR-000 明确拒掉了"加一个 token length field"，理由很短："直接 overwritten \code{__len__}
+method 就可以了"。值得多看一眼的是这个决定的\cnemph{到达距离}。
+\codeb{LMEngine.stopping_criteria()} 的第一个形参叫 \code{prompt_len}
+（\codeat{inferenceLM/engine/lm\_engine.py}{113}），而唯一的调用点
+（\codeat{inferenceLM/engine/lm\_engine.py}{105}）传的是 \code{len(tokenized_data)}——不是
+\codeb{len(tokenized_data.tokens)}，是对象本身取长度。所以 \code{TokenizedData.__len__}
+（\codeat{inferenceLM/data/tokenized\_data.py}{19}）不是方便的小糖，是\cnemph{跨层契约的一部分}：
+data 层的一个 dunder，被 engine 层的停止条件直接依赖。删掉它，坏的不是 data 层的测试，是 decode
+loop 的第一次迭代。这条线在 \secref{sec:a-loop} 继续。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+字段 & 所属类 & 写入点 & 生产代码里的读取点 \\
+\midrule
+\codet{user\_id}           & \codet{RequestData} & receiver:45 & 无（只有 \codet{\_\_str\_\_} 和测试） \\
+\codet{request\_id}        & \codet{RequestData} & receiver:46 & 无（engine 读的是副本） \\
+\codet{timestamp}         & \codet{RequestData} & receiver:47 & 无（只有 \codet{\_\_str\_\_} 和测试） \\
+\codet{status}            & \codet{RequestData} & receiver:48；engine:48,54,56 & 无（只有测试断言） \\
+\codet{prompt\_text}       & \codet{RequestData} & receiver:44 & receiver:56（喂给 tokenizer） \\
+\codet{max\_token\_length}  & \codet{RequestData} & receiver:49 & engine:52 \\
+\codet{do\_sample}         & \codet{RequestData} & receiver:50 & \cnemph{无人读取} \\
+\codet{generated\_tokens}  & \codet{RequestData} & engine:50（整体赋值） & 无（只有测试断言） \\
+\midrule
+\codet{request\_id}        & \codet{TokenizedData} & receiver:57 & engine:48,50,52,54,56,57 \\
+\codet{tokens}            & \codet{TokenizedData} & receiver:57 & lm\_engine:95 \\
+\codet{\_\_len\_\_}       & \codet{TokenizedData} & ——           & lm\_engine:105 \\
+\bottomrule
+\end{tabular}
+\caption{两个数据类的字段与它们的真实读写点，行号逐个 \codet{grep} 核对。\codet{receiver} 指
+  \codet{request\_receiver.py}，\codet{engine} 指 \codet{inference\_engine.py}。
+  \codet{timestamp} 和 \codet{user\_id} 没有读者不一定是错，它们留给 metrics 和多租户；
+  \codet{do\_sample} 是另一回事，见下面的撤回框。}
+\label{tab:field-owners}
+\end{table}
+
+\begin{retraction}{Week 2 没有暴露任何缺少实现支撑的 interface}
+week2-retro §1.4 把"不提前暴露 \codet{do\_sample}"列为本周守住的一条 design discipline，
+理由写得很好：public interface 是 promise 不是 wishlist，暴露未实现的开关只会得到 silent
+contract violation 或 delayed failure。
+
+代码里的事实是反过来的。\codet{do\_sample} 出现在 \codet{RequestData}
+（\codeat{inferenceLM/data/request.py}{27}）、\codet{submit\_request()} 签名
+（\codeat{inferenceLM/request\_receiver/request\_receiver.py}{29}）和 \codet{LMEngine} 的三个
+方法签名上。更糟的是它的下场：\codet{InferenceEngine} 调 \codet{lm\_engine.inference()} 时
+只传了 \codet{tokenized\_data} 和 \codet{max\_length}
+（\codeat{inferenceLM/engine/inference\_engine.py}{50--53}），\cnemph{没有传 \codet{do\_sample}}。
+用户提交 \codet{do\_sample=True} 时，字段被接收、被存、被序列化进 JSON，然后在进入 engine 的
+那一刻静默丢弃，拿到 greedy 结果——正好是 retro 自己点名的第一种失败模式。那两处
+\codet{NotImplementedError}（lm\_engine.py:45 和 :70）在这条路径上永远不会触发。
+撤回的是"这周守住了"，不是那条 discipline 本身。
+\end{retraction}
+
+\begin{checkpoint}{two_data_classes}{把两个类合并回一个，第一个坏掉的是什么}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 把 \codet{tokens} 直接挂到 \codet{RequestData} 上、删掉 \codet{TokenizedData}、
+        \codet{pending\_queue} 里改放 \codet{RequestData}。pipeline 还能跑通吗？如果能，
+        "坏掉"的是什么？
+  \item 合并之后 \codet{LMEngine} 会新拿到哪些信息？为什么这是个问题——它又不会去用。
+  \item \secref{sec:a-batching} 要做 continuous batching。合并之后，"batch 一个 request"
+        在内存里意味着什么？
+\end{enumerate}
+\hint 先看 \codet{pending\_queue} 的类型标注写在哪一层。
+\ifshowanswers
+\tcblower
+\answer (a) 能跑通，改动很小：\codet{lm\_engine.py:95} 一个字不用改，
+\codet{len(tokenized\_data)} 要改写。坏的不是运行，是\cnemph{边界}——从此 \codet{LMEngine} 的
+入参里带着 \codet{status}，"顺手更新一下 status"就变成一行能写出来的事，而 week2-retro §1.5
+花了整节论证这件事不能做。
+
+(b) \codet{user\_id}、\codet{timestamp}、\codet{status}、\codet{prompt\_text}、
+\codet{do\_sample}。"它不会去用"不是保护，保护来自"它想用也拿不到"。前者靠纪律，后者靠类型；
+这个项目很多地方靠纪律（\codet{request\_store} 就是），这一处选了类型。
+
+(c) 每个 batch slot 都拖着一个 pydantic 实例和原始 prompt 字符串，而真正要拼进 tensor 的只有
+\codet{tokens}。不是不能做，是每次组 batch 都要先把 \codet{tokens} 摘出来——摘的动作本身就是在
+\cnemph{事后重建今天已经有的这个边界}。
+\whereincode \codeat{inferenceLM/data/tokenized\_data.py}{12}、
+\codeat{inferenceLM/engine/inference\_engine.py}{22}、
+\codeat{inferenceLM/engine/lm\_engine.py}{95}
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{pydantic_or_not}{一个用 pydantic 一个不用，给两条不同的理由}
+不看代码回答：说明这不是随手写成的不一致，而是分工。
+\begin{enumerate}[label=(\alph*)]
+  \item 第一条理由从"这个对象有没有通向进程外的边"出发。
+  \item 第二条理由从"这个对象在单位时间里被构造多少次"出发。
+  \item 如果要给 \codet{TokenizedData} 加校验（token id 必须非负），应该加在哪里？
+\end{enumerate}
+\hint 看 \codet{RequestData} 有哪两个方法是 \codet{TokenizedData} 完全没有的。
+\ifshowanswers
+\tcblower
+\answer (a) \codet{RequestData} 有 \codet{serialization()} / \codet{deserialization()}
+（\codeat{inferenceLM/data/request.py}{33--38}），要被 dump 成 JSON 给外面看，反序列化时数据
+来源不可信。\codet{TokenizedData} 没有任何序列化方法，所有实例都由同一段代码在同一进程里造出来。
+
+(b) 每条 request 只造一个 \codet{RequestData}，但 \codet{TokenizedData} 是唯一穿过
+\codet{pending\_queue} 的类型，数量随吞吐量放大。边界上的对象数量由用户决定，热路径上的由
+吞吐量决定。
+
+(c) 加在\cnemph{构造它的地方}（\codet{Tokenizer.encode()} 的返回处或
+\codeat{inferenceLM/request\_receiver/request\_receiver.py}{57}），而不是给
+\codet{TokenizedData} 套 pydantic。这个校验只在"文本变成 token"这一次转换处有意义，之后每次
+传递重验一遍是纯浪费。校验属于\cnemph{转换点}，不属于\cnemph{类型}。
+\whereincode \codeat{inferenceLM/data/request.py}{33--38}、
+\codeat{docs/decisions/adr000-request.md}{52}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{状态枚举与它的两个死值}
+\label{sec:a-shape-dead-enum}
+
+\code{RequestStatus} 只有八行：
+
+\lstinputlisting[style=hlnum, firstline=3, lastline=10, firstnumber=3]%
+  {../../inferenceLM/data/request_status.py}
+
+把 \code{PREFILLING} 和 \code{DECODING} 在仓库的 \code{.py} 与 \code{.md} 里 \code{grep} 一遍
+（讲义自己的 \code{.tex} 不算），命中九行：枚举定义两行、\code{PROCESSING} 那行的注释一行、
+ADR-001 四行、week2-retro 一行、\code{CLAUDE.md} 一行。\cnemph{赋值点零处}。实际跑起来的状态机
+是 \code{PENDING} $\to$ \code{PROCESSING} $\to$ \code{DONE} / \code{FAILED}，转移点全在同一个
+函数里。而 ADR-000 的 Consequences 写的是 "pending $\to$ prefilling $\to$ decoding $\to$
+completed"：中间两态不存在，终态叫 \code{DONE} 不叫 \code{completed}，实际存在的
+\code{PROCESSING} 在 ADR 里根本没出现。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+枚举值 & 数值 & 赋值点 & 说明 \\
+\midrule
+\codet{PENDING}    & 0 & request.py:24（默认值）；receiver:48 & 唯一由 receiver 侧写入的状态 \\
+\codet{PREFILLING} & 1 & \cnemph{从未} & 只在枚举定义里存在 \\
+\codet{DECODING}   & 2 & \cnemph{从未} & 只在枚举定义里存在 \\
+\codet{DONE}       & 3 & engine:54 & \codet{inference()} 正常返回后 \\
+\codet{FAILED}     & 4 & engine:56 & \codet{except Exception} 分支 \\
+\codet{PROCESSING} & 5 & engine:48 & 后加的，所以数值排在 \codet{FAILED} 之后 \\
+\bottomrule
+\end{tabular}
+\caption{\codet{RequestStatus} 六个成员的实际赋值点。成员数是六个不是五个——
+  \codet{PROCESSING} 是 Week 2 补进来替代中间两态的，注释就写在
+  \codeat{inferenceLM/data/request\_status.py}{10}。}
+\label{tab:status-assignments}
+\end{table}
+
+教学点不是"枚举该怎么写"，是\cnemph{文档和代码不一致会在类型系统里留下什么形状的疤}。这里有三道。
+
+第一道在\cnemph{穷尽性}上。任何一处想覆盖全部 status 的分支（今天还没有，写 metrics 导出或
+\secref{sec:a-testing} 讲的差分测试时一定会有）都被迫处理两个不可达分支：写了是死代码，不写
+则类型检查器会报 non-exhaustive。这个成本每新增一个 status 消费者就重付一次。
+
+第二道在\cnemph{线上格式}里。pydantic 序列化 Enum 用值不用名字，实测
+\codeb{RequestData.serialization()} 输出的是 \code{"status":3}
+（\code{tests/request_test.py:71} 断言的是 \code{"status":0}）。于是对外暴露的状态码是
+$\{0,3,4,5\}$：中间空着 1 和 2，而 5 排在 4 后面。下游必须拿着枚举表才能解释，且会合理地
+怀疑自己漏了两种状态。\code{PROCESSING = 5} 排在最后，把"它是补上去的"这段历史直接写进了
+wire format。
+
+第三道在\cnemph{文档的约束力}上，作者自己诊断过。week2-retro 第 3 节把这条单列为"问题 3：
+ADR 和代码不一致"，后果是"文档失去约束力，最后变成历史遗迹"和"自己对 system 的 mental model
+被分裂成两套"，举的 concrete example 正是这个枚举
+（\codeat{docs/retro/week2-retro.md}{682}）：
+
+\begin{quote}
+"如果 ADR 写 \code{PREFILLING} $\to$ \code{DECODING} $\to$ \code{DONE}，但 Week 2 实际实现只是
+\code{PROCESSING} $\to$ \code{DONE}，那就要明确写出来：Week 2 collapses prefill/decode into
+\code{PROCESSING}; fine-grained states deferred to Week 3 because no scheduler exists yet."
+\end{quote}
+
+诊断对，处方也对。但这句话写在 retro 里，没有写回 ADR——今天去读 \code{adr000-request.md}，
+Consequences 仍是那条四态链，Status 仍是 Accepted。这类修复的真实成本就在这里：
+\cnemph{诊断几乎免费，同步不是}。
+
+\begin{checkpoint}{dead_enum_values}{两个从未被赋值的枚举成员，是 bug 还是设计}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 按 week2-retro §1.4 自己定的规则（"if abstraction solves no current problem: remove
+        it"），\codet{PREFILLING} 和 \codet{DECODING} 该不该删？
+  \item 如果不删，最小的补救动作是什么？落在代码里还是文档里？
+  \item \secref{sec:a-batching} 实现 continuous batching 之后，这两个值会自动变得有意义吗？
+\end{enumerate}
+\hint 先分清"这个值今天有没有 execution path"和"有没有 consumer"——不是同一个问题。
+\ifshowanswers
+\tcblower
+\answer (a) 按字面该删，但要注意 §1.4 那条规则针对的是 \cnemph{public interface}
+（\codet{do\_sample} 是暴露给用户的开关，暴露即承诺），而这两个是\cnemph{内部状态标签}，
+没有用户会去设置，撒不了谎。它更接近死代码，代价是认知负担和穷尽性检查，不是 contract violation。
+
+(b) 落在\cnemph{文档}：把 ADR-000 的 Consequences 改成实际的四态链，加一句
+"\codet{PREFILLING}/\codet{DECODING} reserved for Week 3, no execution path today"。
+这两个值不影响运行时行为，问题在于\cnemph{读代码的人会以为它们在用}。
+\codeat{inferenceLM/data/request\_status.py}{10} 的注释已经做了一半——解释了
+\codet{PROCESSING} 为什么存在，没解释另外两个为什么留着。
+
+(c) 不会自动。需要先有一个\cnemph{读者}：scheduler 要按 stage 分组，"这条 request 现在在哪一
+阶段"才第一次成为要被查询的问题。今天 \codet{LMEngine.inference()} 内部其实已经分了 prefill 和
+decode 两段，但没人需要从外面知道它在哪段。
+\whereincode \codeat{inferenceLM/data/request\_status.py}{5--6}、
+\codeat{docs/decisions/adr000-request.md}{65}、\codeat{docs/retro/week2-retro.md}{682}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{一个类变量当全局计数器}
+\label{sec:a-shape-index}
+
+\code{request_id} 是这么来的：\code{index = 0} 写在 \code{class RequestReceiver} 的类体里
+（\codeat{inferenceLM/request\_receiver/request\_receiver.py}{22}），是\cnemph{类变量}不是实例
+属性；读在 \codeat{inferenceLM/request\_receiver/request\_receiver.py}{46}，加在
+\codeat{inferenceLM/request\_receiver/request\_receiver.py}{53}。两处都显式写
+\code{RequestReceiver.index} 而不是 \code{self.index}——后者会在第一次赋值时悄悄创建实例属性，
+把类变量遮住，计数器就变成 per-instance 的了。这里写对了。
+
+买到的是进程内单调递增、无重复的 id，代价是零同步。这不是运气，是单线程 event loop 给的：
+\code{submit_request} 虽然是 \code{async def}，但从第 46 行读 \code{index} 到第 53 行 \code{+= 1}
+之间\cnemph{没有任何 \code{await}}，这段 read-modify-write 相对于 event loop 是原子的。换成
+线程池，\code{+=} 不是原子操作，这里就得上锁。
+
+这个不变量是\cnemph{隐式}的——源码里没有一句注释说"这几行之间不能加 await"。第 56 行的 tokenize
+排在 \code{index += 1} 之后读起来像随手的顺序，实际上被这个不变量约束着：哪天
+\code{Tokenizer.encode()} 变成 async（换成远程 tokenizer service），只要那个 await 挪到
+46--53 之间，十个并发 \code{submit_request} 就会拿到重复 id，而且是概率性的、测试里不一定复现。
+
+代价是跨实例共享：类变量属于类，同一进程里两个 \code{RequestReceiver} 共用一个计数器。这个代价
+在测试里立刻显形（见下面的 checkpoint）。生产上的代价还没到，但方向清楚：多进程部署时 id 会撞，
+进程重启后从 0 重新发号。今天不持久化、单进程，所以没爆。
+
+\begin{checkpoint}{class_var_index}{类变量计数器如何逼着测试改写法}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item \codeb{tests/request_receiver_test.py} 里三个测试各新建一个 \codet{RequestReceiver}
+        并并发提交 10 条。第二个测试拿到的 \codet{request\_id} 是 \codet{"0"}--\codet{"9"} 吗？
+  \item 测试因此不能硬编码期望 id。指出\cnemph{具体是哪一行}承担了这个补偿，以及为什么它必须
+        在 \codet{submit\_request} 之前执行。
+  \item 把 \codet{index} 改成实例属性，这三个测试会变绿还是变红？算修好了吗？
+\end{enumerate}
+\hint 三个测试共用 module 级的 queue 和 store（该文件第 5--6 行），但那不是关键——第三个共享物
+根本不在那两行里。
+\ifshowanswers
+\tcblower
+\answer (a) 不是。第一个测试已经把计数器推到 10，第二个拿到 \codet{"10"}--\codet{"19"}，第三个
+是 \codet{"20"}--\codet{"29"}；实际值还取决于 pytest 的收集顺序和同 session 里别的文件有没有
+先构造过 \codet{RequestReceiver}，这让它更脆。
+
+(b) 是 \codeat{tests/request\_receiver\_test.py}{16} 这一行先把计数器读出来当基准：
+
+\begin{lstlisting}[style=hlnum, firstnumber=16]
+    request_idx = RequestReceiver.index
+    request_ids = [f"{request_idx + i}" for i in range(10)]
+\end{lstlisting}
+
+同样的写法在 \codeat{tests/request\_receiver\_test.py}{54} 再出现一次。必须在
+\codet{submit\_request} 之前执行，因为它会把计数器推走，读晚了基准就偏 10。
+\codeat{tests/data\_flow\_test.py}{82} 有一句注释记了同一个坑（那句里"static method"的说法
+不准确，它是类变量）。
+
+(c) 会变绿，还能改回硬编码。但没修好：实例属性意味着两个 receiver 发出重复 id，而
+\code{request_store} 是共享的，后写的会\cnemph{直接覆盖}前一个
+（\codeat{inferenceLM/request\_receiver/request\_receiver.py}{52} 是无条件赋值，没有查重）。
+测试更绿、系统更坏。真正的修法是 UUID 或 \codet{(worker\_id, counter)}。
+\whereincode \codeat{inferenceLM/request\_receiver/request\_receiver.py}{22}、
+\codeat{tests/request\_receiver\_test.py}{16}、\codeat{tests/request\_receiver\_test.py}{54}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{整个系统只靠两个共享可变对象耦合}
+\label{sec:a-shape-shared}
+\anchor{a:two-shared-objects}
+
+Week 2 的系统有两个模块，\code{request_receiver} 和 \code{engine}。它们之间传数据、传状态、
+传完成信号，而两个源文件\cnemph{互不 import}——这一点值得亲手核实，它是整个分层的支点。
+
+\begin{lstlisting}[style=hlplain]
+# request_receiver.py:1-7   asyncio / time / TokenizedData / RequestData
+#                           / Tokenizer / RequestStatus / typing.Dict
+# inference_engine.py:1-9   asyncio / RequestStatus / TokenizedData
+#                           / typing.Dict / RequestData / transformers / LMEngine
+\end{lstlisting}
+
+两份清单的交集是 \code{inferenceLM/data/} 下的三个类，没有一边 import 另一边；四个
+\code{__init__.py} 全是空文件，所以也没有包级别的偷偷连线。（ADR-000 的 NOTE 说"Request 层和
+Engine 层都需要 import Request Class 和 TokenizedData Class"，这句是对的，但常被读成"两层互相
+依赖"——实际是两层\cnemph{共同依赖} data 层。）
+
+连起来靠两个对象，构造时从外面注入两端：
+
+\begin{lstlisting}[style=hlplain]
+pending_queue = asyncio.Queue()
+request_store = {}
+receiver = RequestReceiver("gpt2", pending_queue, request_store)
+inference_engine = InferenceEngine(model, pending_queue, request_store)
+\end{lstlisting}
+
+这四行是 \codeat{tests/data\_flow\_test.py}{20--23} 的原样。今天没有 \code{main()} 把它们串
+起来——根目录的 \code{main.py} 只打印一句 hello，所以\cnemph{测试就是唯一的 composition root}。
+
+\code{pending_queue} 兼三个职责：数据传递、背压（\code{Queue()} 无参数所以今天无界，背压其实
+没生效）、以及\cnemph{完成信号}（\code{join()} 配 \code{task_done()}，\secref{sec:a-loop} 会拆）。
+\code{request_store} 是普通 \code{dict}：receiver 写入新条目
+（\codeat{inferenceLM/request\_receiver/request\_receiver.py}{52}），engine 就地改
+\code{status} 和 \code{generated_tokens}（inference\_engine.py:48, 50, 54, 56）。两个 writer、
+一个 dict、没有锁，理由和 \code{index} 那节一样。
+
+\paragraph{代价：耦合没有消失，只是换了地方。}
+把依赖从 import graph 挪到 runtime object graph，好处是 import 期看不到彼此，坏处是
+\cnemph{类型检查器也看不到}。今天没有任何代码或类型标注能保证两边拿到的是同一个 queue；传错了
+不会报错，只表现为"提交了但永远不被处理"，而且因为 \code{join()} 一直挂着，症状是测试超时
+而不是断言失败。两边对同一个对象的标注还不一致：engine 侧是
+\codeb{asyncio.Queue[TokenizedData]}（\codeat{inferenceLM/engine/inference\_engine.py}{22}），
+receiver 侧是光秃秃的 \code{asyncio.Queue}
+（\codeat{inferenceLM/request\_receiver/request\_receiver.py}{19}）。
+
+还有一个没人管的问题：\code{request_store} 只增不删，请求做完后条目连同 prompt 文本一直留到
+进程结束。BACKLOG.md 的 P0 有一条讲 engine lifecycle 和潜在 memory leak，但说的是 dangling task
+和 queue drain，\cnemph{没有一条记着 store 的清理}。这是"共享可变状态没有明确 owner"的典型
+后果：两个模块都写，所以谁都不觉得该负责删。
+
+\begin{examplebox}{request_lifecycle_trace}{一条 request 的四个时刻}
+下面是一条真实 request 的 \codet{RequestData} 快照，用 \codet{gpt2} 实跑得到（挂一个 watcher
+coroutine 在每次 status 变化时打印）。prompt 是 \codet{"Yifan Yu is "}，\codet{max\_length=20}。
+
+\begin{lstlisting}[style=hlrepl]
+RequestReceiver.index before submit = 0 / after submit = 1
+
+[T1 submit_request (*@\rmfamily 返回@*)]  status=PENDING     generated_tokens=[]  qsize=1
+[T2 engine (*@\rmfamily 取走@*)]          status=PROCESSING  generated_tokens=[]  qsize=0
+[T3 inference() (*@\rmfamily 返回@*)]     status=DONE        generated_tokens=[1849, 64,
+        1849, 35465, 1849, 805, 508, 468, 587, 2877, 287, 262, 1748, 329]
+[T4 join() (*@\rmfamily 返回@*)]          (*@\rmfamily 与 T3 完全相同@*)
+
+timestamp=1785311490.085415  max_token_length=20  do_sample=False  user_id='user_0'
+len(prompt tokens)=6         len(generated_tokens)=14
+\end{lstlisting}
+
+\cnemph{T1 到 T2 之间 \codet{RequestData} 一个字节都没变，但 \codet{qsize} 从 1 变成 0。}
+request 的"位置"根本不记录在 \codet{RequestData} 里——它在不在 queue 里是 queue 的事。这是两个
+类拆开的直接结果。
+
+\cnemph{T2 和 T3 之间没有中间态。} \codet{generated\_tokens} 在整个 PROCESSING 期间一直是
+\codet{[]}，然后一次性变成 14 个。原因在 \codeat{inferenceLM/engine/inference\_engine.py}{50}：
+整个 \codet{inference()} 的返回值\cnemph{整体赋值}给字段，不是逐 token 追加。所以尽管
+\codeat{inferenceLM/data/request.py}{28} 的注释写着"提前准备 buffer"，它今天不是流式 buffer，
+只是终值槽——\cnemph{今天做不了 streaming 输出}，不是因为缺一个 endpoint，是因为中间结果压根
+没有出口。
+
+\cnemph{6 + 14 = 20。} \codet{max\_token\_length} 管的是 prompt 加生成的总长，语义写在
+\codeat{inferenceLM/data/request.py}{26} 的注释里，由 \codet{stopping\_criteria} 强制
+（\codeat{inferenceLM/engine/lm\_engine.py}{119}）。500 token 的 prompt 配
+\codet{max\_length=20} 不会生成 20 个 token，会直接 raise。
+
+序列化出来是（注意 \codet{status} 是数字 3，不是 \codet{"DONE"}）：
+
+\begin{lstlisting}[style=hlrepl]
+{"user_id":"user_0","request_id":"0","timestamp":1785311490.085415,"status":3,
+ "prompt_text":"Yifan Yu is ","max_token_length":20,"do_sample":false,
+ "generated_tokens":[1849,64,...,1748,329]}
+\end{lstlisting}
+\end{examplebox}
+
+\begin{checkpoint}{shared_mutable_coupling}{两个共享可变对象是不是一种耦合}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 两个模块互不 import，是否说明它们之间没有耦合？如果有，耦合具体写在哪里？
+  \item 把 \codet{request\_store} 换成 Redis 要改几行？换 \codet{pending\_queue} 呢？
+        为什么成本差这么多？
+  \item 有没有任何机制保证两边拿到的是\cnemph{同一个} queue？传错了症状是什么？
+\end{enumerate}
+\hint 数一数一共有几处代码会写 \codet{request\_store}，分别在哪个模块里。
+\ifshowanswers
+\tcblower
+\answer (a) 耦合有，只是不在 import graph 上，而写在\cnemph{两个对象的隐式契约}里：queue 的
+元素必须是 \codet{TokenizedData}；store 的 key 必须是同一个 \codet{request\_id}；store 里的
+条目必须先于 engine 取到它而存在。最后这条尤其脆——engine 在
+\codeat{inferenceLM/engine/inference\_engine.py}{48} 直接下标取值，没有 \codet{.get()} 兜底，
+缺了就是 \codet{KeyError}，而这个 \codet{KeyError} 会被 \codet{except Exception} 吞掉变成一条
+print。三条契约没有一条写在类型标注里。
+
+(b) 换 store 要改 5 处（receiver:52，engine:48/50/52/54/56），而且要处理"值不再是同一个对象
+引用、改完要写回"——今天 engine 是就地修改 pydantic 对象。换 queue 表面只有 put 和 get 两处，
+但 \codet{join()} / \codet{task\_done()} 这套完成信号语义大多数消息中间件不提供，所有测试的
+等待方式都要重写。差别在于\cnemph{一个是数据结构，一个还兼着控制流}。
+
+(c) 没有。传什么完全由调用方决定
+（\codeat{tests/data\_flow\_test.py}{20} 是唯一的 composition root）。传错了不报错也不抛异常，
+症状是 \codeb{await pending_queue.join()} 永远不返回——测试挂死而不是断言失败，最难读的一类失败。
+\whereincode \codeat{inferenceLM/engine/inference\_engine.py}{26--35}、
+\codeat{inferenceLM/request\_receiver/request\_receiver.py}{24--27}、
+\codeat{tests/data\_flow\_test.py}{20}
+\fi
+\end{checkpoint}
+
+\begin{tipbox}{用 dummy token 绕开 tokenizer}
+\codeb{tests/inference_engine_test.py} 里跑 10 条 request 的那个测试压根没有构造
+\codet{RequestReceiver}，直接拿整数当 token：
+
+\begin{lstlisting}[style=hlnum, firstnumber=32]
+    for i in range(10):
+        user_input = f"Prompt {i}"
+        input_ids = [i]  # dummy tokenized data, just use the index as the token(*@\dots@*)
+\end{lstlisting}
+
+\codet{TokenizedData} 对 \codet{tokens} 没有任何校验（它是裸 class，见
+\secref{sec:a-shape-two-classes}），所以 \codet{[3]} 是一个完全合法的一 token prompt。
+说清楚它省掉的是什么：省掉的是 \cnemph{tokenizer}，不是模型——同文件的 module 级 fixture 仍然
+\codeb{GPT2LMHeadModel.from_pretrained("gpt2")}
+（\codeat{tests/inference\_engine\_test.py}{14--16}），权重该下还是要下。真正的收益是测试的
+\cnemph{语义变干净}：它验的是 engine 的取件-处理-回写循环，不会因为 tokenizer 版本变化而失败。
+
+\resources CPU 即可，不需要 GPU/MPS。实测
+\codeb{pytest tests/request_receiver_test.py tests/inference_engine_test.py -q} 在本机
+（Apple Silicon，CPU 路径，权重已缓存）是 \codet{7 passed in 25.79s}。
+\end{tipbox}
+
+这一节定下来的东西——两个数据类、一个进程内计数器、两个共享可变对象——在 Week 2 的规模下几乎
+不产生可观测的差别。价值全在下游：\secref{sec:a-loop} 会看到 \code{LMEngine} 之所以能被写成
+pure compute unit，正是因为它的入参里没有 \code{status} 可改。边界是先划出来的，不是后来
+重构出来的。
