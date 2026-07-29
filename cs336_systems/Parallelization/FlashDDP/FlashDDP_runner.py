@@ -44,10 +44,21 @@ ATTN_KERNELS = [
 from cs336_systems.Parallelization.DDP.stream_dataset import TokenStreamDataset
 from cs336_systems.Parallelization.FlashDDP.FlashDDP import DDPOverlapBucketed
 
-def set_dist_env(rank: int, world_size: int, backend: str = "gloo") -> None:
+def set_dist_env(
+    rank: int, world_size: int, backend: str = "gloo", timeout_minutes: int = 60
+) -> None:
     os.environ.setdefault("MASTER_ADDR", "localhost")
     os.environ.setdefault("MASTER_PORT", "12355")
-    dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+    # NCCL's default collective timeout is 10 minutes. Any rank-0-only work that sits
+    # between two collectives (a multi-GB checkpoint write, W&B teardown) stalls the
+    # other ranks inside dist.barrier() and, past the timeout, the watchdog SIGABRTs
+    # the whole job -- which is exactly how the first long calibration run died.
+    dist.init_process_group(
+        backend=backend,
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(minutes=timeout_minutes),
+    )
 
 
 def _synchronize_if_cuda(device: torch.device) -> None:
@@ -277,6 +288,17 @@ def parallel_train(
     if backend == "nccl":
         torch.cuda.set_device(rank)
         device = torch.device(f"cuda:{rank}")
+        # Ampere (3090) TF32 matmuls: ~2x the fp32 matmul throughput at 10-bit mantissa
+        # with fp32 accumulation. The linear layers dominate this model's FLOPs, so this
+        # is the single cheapest way to buy more training tokens inside a fixed wall-clock
+        # budget; it is the standard setting for fp32 training on Ampere.
+        # CS336_DISABLE_TF32=1 turns it off, so the speedup can be measured rather than
+        # asserted (see the TF32 arm of the benchmark suite).
+        use_tf32 = os.environ.get("CS336_DISABLE_TF32", "0") != "1"
+        torch.backends.cuda.matmul.allow_tf32 = use_tf32
+        torch.backends.cudnn.allow_tf32 = use_tf32
+        if rank == 0:
+            print(f"TF32 matmul/cudnn: {'enabled' if use_tf32 else 'DISABLED'}")
     else:
         raise NotImplementedError("This function is only implemented for GPU training with NCCL backend.")
 
@@ -584,11 +606,13 @@ def parallel_train(
         print(f"Average communication time per epoch: {total_avg_comm_time / epochs:.4f} seconds")
         print(f"Average total time per epoch: {total_avg_epoch_time / epochs:.4f} seconds")
 
-    # Finalize W&B run
+    # Barrier BEFORE the W&B teardown, not after: wandb_run.finish() only exists on rank 0
+    # and can block for a long time flushing, so leaving a collective behind it means the
+    # other ranks burn their NCCL timeout waiting on rank 0's network I/O.
+    dist.barrier()
     if wandb_run is not None:
         wandb_run.finish()
 
-    dist.barrier()
     dist.destroy_process_group()
 
     
