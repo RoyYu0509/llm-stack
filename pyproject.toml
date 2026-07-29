@@ -16,7 +16,6 @@ dependencies = [
     "psutil>=6.1.1",
     "submitit>=1.5.2",
     "tiktoken>=0.9.0",
-    "jax >= 0.4.16",
     "hypothesis >= 6.80.0",
 
     # shared / general deps
@@ -33,6 +32,9 @@ dependencies = [
     "humanfriendly",
     "matplotlib",
     "pandas>=2",
+
+    # data mixing (cs336_systems/data_harvest)
+    "datasets>=2.19",
 ]
 
 [build-system]
