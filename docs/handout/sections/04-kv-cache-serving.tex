@@ -1,0 +1,958 @@
+% Chapter 4 -- KV cache and the serving seam.
+% Sources actually read for this chapter:
+%   llm-serving/inferenceLM/engine/{lm_engine.py,transformer_lm_adapter.py}
+%   llm-serving/tests/{transformer_lm_adapter_test.py,trained_model_integration_test.py}
+%   cs336-basics/cs336_basics/lm.py, transfromer/{transformer,multiheads_attention,
+%     scaled_dot_prod_attention}.py
+%   tests/test_kv_cache.py, cs336_systems/experiments/{kv_cache_gate,bench_serving}.py
+%   artifacts/serving_benchmark{,_kv}.json, artifacts/NIGHT_REPORT.md,
+%   run_logs/post_train_window.log
+% Cross-repo files are quoted by hand (never \lstinputlisting): the handout must build
+% from a standalone clone of LLM-system-project, where ../../../llm-serving/ does not exist.
+
+\section{KV cache 与 serving 集成：把两个仓库接起来}
+\label{sec:b-kv}
+
+到这一步为止，两个仓库互不相识。\code{LLM-system-project} 训出了一个 0.19B 的
+\code{TransformerLM}，它的公开接口就一个：\code{forward(x) -> logits}，
+输入 \code{(batch, seq)} 的 token id，输出 \code{(batch, seq, vocab)} 的 logits。
+\code{llm-serving} 那边的 \code{LMEngine} 是照着 HuggingFace 的形状写的：
+它调 \codeb{model(input_ids=..., past_key_values=..., use_cache=True)}，
+从返回值上取 \code{.logits} 和 \code{.past_key_values}，还会去读 \code{model.config}。
+两边一样都对不上。
+
+摆在面前的有两条路：改 \code{LMEngine} 让它容纳两种模型，或者造一个 adapter 把
+\code{TransformerLM} 包成 HF 的形状。这一章的第一件事，是说明\cnemph{"只补四样东西"这个约束
+是怎么把设计钉死的}——一旦确认 \code{LMEngine} 依赖的 HF 约定\cnemph{恰好只有四样}，
+adapter 就不再是"一个兼容层"这种含糊的东西，而是一个有明确边界、可以被逐条检查的对象。
+
+第二件事是 KV cache 本身：它怎么做成一个对训练路径零风险的纯增量改动，怎么被测，
+以及\cnemph{它实测的收益和我预期的完全不一样}（\secref{sec:b-kv-flat}，本章的重点）。
+
+\subsection{\codet{LMEngine} 到底依赖 HF 的什么}
+\label{sec:b-kv-four}
+
+\code{LMEngine} 是故意手动驱动模型的，不用 \code{.generate()}——这个决定和它的理由属于姊妹篇，
+见 \extref{a:why-not-generate}。副作用是它把 HF 的调用约定摊开写在了自己的代码里，
+于是可以被逐行数出来。数的结果是\cnemph{四样}，一样不多：
+
+\begin{table}[htbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.32\textwidth}p{0.09\textwidth}p{0.48\textwidth}}
+\toprule
+\codet{LMEngine} 要的 HF 约定 & 本项目 有无 & adapter 怎么补 \\
+\midrule
+\codet{model.eval()} & 有 &
+  不用补。\codet{TransformerLMAdapter} 继承 \codet{nn.Module}，
+  \codet{.eval()} 会递归到被包的模型。 \\
+\addlinespace
+\codeb{model(input_ids, past_key_values, use_cache)} 返回带 \codet{.logits} 的对象 & 部分有 &
+  \codet{forward} 接受这三个关键字参数（\codet{use\_cache} 收下但不使用），
+  把结果装进 \codet{CausalLMOutput} 这个 \codet{NamedTuple}。 \\
+\addlinespace
+返回值还要有 \codet{.past\_key\_values}，且能原样喂回下一步 & 没有 &
+  同一个 \codet{NamedTuple} 的第二个字段。默认模式下它装的是 token 前缀，
+  \codet{use\_kv\_cache=True} 时装的是逐层 $(K,V)$。 \\
+\addlinespace
+\codet{model.config.n\_positions} & 没有 &
+  \codet{AdapterConfig} 这个 dataclass 的字段，构造时由 \codet{context\_length} 参数填。 \\
+\addlinespace
+\codeb{model.config.eos_token_id} & 没有 &
+  同一个 dataclass 的字段，默认 50256（GPT-2 的 \codet{<|endoftext|>}）。 \\
+\bottomrule
+\end{tabular}
+\caption{\codet{LMEngine} 依赖的四样 HF 约定（第二和第三行是同一次调用的两个返回字段，
+所以数成四样）$\times$ \codet{TransformerLM} 有没有 $\times$ adapter 怎么补。
+出处：逐行读 \codeb{llm-serving/inferenceLM/engine/lm_engine.py}，
+四个依赖点分别在第 12 行（\codet{eval()}）、第 36 和 60 行（模型调用）、
+第 38 和 40 行（\codet{.logits} / \codet{.past\_key\_values}）、
+第 89 行（\codet{n\_positions}）、第 119 行（\codet{eos\_token\_id}）。}
+\label{tab:four-conventions}
+\end{table}
+
+这个"只有四样"的清单，以及为什么是这四样而不是别的，在姊妹篇里有完整的推导：
+\extref{a:lmengine-four-methods}。这一章只用它的结论。
+
+\begin{checkpoint}{four_hf_conventions}{为什么"数清楚是四样"比"写一个兼容层"重要}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 如果不先数清楚，最可能写出什么样的 adapter？
+  \item \code{use_cache} 这个参数 adapter 收下了却不用，为什么不干脆删掉？
+  \item 少补了其中一样，会在什么时候暴露？
+\end{enumerate}
+\hint 想想 \code{config} 这个对象在 HF 里有多少个字段。
+
+\ifshowanswers
+\tcblower
+\answer (a) 大概率会写成"尽量像 HF"——把 \code{PretrainedConfig} 的一堆字段照抄一遍，
+返回值也做成一个字段齐全的 dataclass。那样 adapter 的正确性就没有边界了：
+你没法回答"它够不够"，只能回答"它像不像"。数清楚之后，adapter 的规格变成一个五行的清单，
+每一行都能对应到 \code{lm_engine.py} 的一个具体行号，也就能被逐条测。
+\code{AdapterConfig} 的 docstring 里那句 "the subset of a HuggingFace \code{PretrainedConfig}
+that \code{LMEngine} actually reads" 就是这个意思。
+
+(b) 因为它是\cnemph{调用方的}约定，不是被调方的选择。\code{LMEngine.decode()} 里写死了
+\code{use_cache=True}；adapter 如果不接这个关键字，那一行就是 \code{TypeError}。
+收下但不使用，等于把"这个开关在我们这边没有意义"这件事写进签名里，
+而不是逼调用方为我们改代码。
+
+(c) 在\cnemph{请求时}，不是构造时。四样里三样是属性访问（\code{config.n_positions}、
+\code{config.eos_token_id}、\code{outputs.past_key_values}），Python 不会在
+\codeb{TransformerLMAdapter(model, ...)} 这一步检查它们，只会在第一次真的处理请求时抛
+\code{AttributeError}。这就是为什么 \codeb{transformer_lm_adapter_test.py} 里专门有一个
+只断言两个 config 字段的测试——它的 docstring 明说了这一点。
+
+\whereincode \codeat{llm-serving/inferenceLM/engine/lm\_engine.py}{89} 与 \codeat{llm-serving/inferenceLM/engine/lm\_engine.py}{119}；
+测试在 \codeat{llm-serving/tests/transformer\_lm\_adapter\_test.py}{86}。
+\fi
+\end{checkpoint}
+
+\subsection{三个类，和一条不 import 的规矩}
+\label{sec:b-kv-adapter}
+
+整个 adapter 是三个类，连同 39 行模块 docstring 一共 151 行。
+
+\begin{lstlisting}[style=hlplain]
+@dataclass
+class AdapterConfig:
+    """The subset of a HuggingFace `PretrainedConfig` that `LMEngine` actually reads."""
+    n_positions: int
+    eos_token_id: int
+    vocab_size: Optional[int] = None
+
+
+class CausalLMOutput(NamedTuple):
+    logits: torch.Tensor
+    past_key_values: torch.Tensor
+\end{lstlisting}
+\noindent 来源：\codeb{llm-serving/inferenceLM/engine/transformer_lm_adapter.py}:50--67，
+手抄（跨仓库文件，不能用 \codeb{\textbackslash lstinputlisting}）。\code{CausalLMOutput}
+的 docstring 已省略，正文在 \secref{sec:b-kv-recompute} 引用。
+
+第三个类 \code{TransformerLMAdapter} 继承 \code{nn.Module}，构造时收下一个已经建好的模型、
+一个 \code{context_length}、一个 \code{eos_token_id}，以及一个 \code{use_kv_cache} 开关。
+它的 \code{forward} 就是表~\ref{tab:four-conventions} 第二行那个签名。
+
+真正值得停一下的是它\cnemph{没有}做的一件事：\code{transformer_lm_adapter.py}
+从头到尾没有 \code{import cs336_basics}。它的类型标注是 \code{model: nn.Module}，
+docstring 写着 "Typed loosely on purpose"。这有三个后果，三个都是当初想要的：
+
+\begin{enumerate}[label=(\arabic*), leftmargin=1.8em]
+  \item \cnemph{\codet{inferenceLM} 对训练项目零依赖。} 装了 \code{llm-serving} 的人
+        不需要装 \code{cs336_basics}；两个仓库仍然可以各自独立 clone、独立测试。
+        唯一需要两边都在的是 \codeb{tests/trained_model_integration_test.py}，
+        它用 \code{pytest.importorskip} 在缺一半的环境里自己跳过
+        （\codeat{llm-serving/tests/trained\_model\_integration\_test.py}{37}）。
+  \item \cnemph{adapter 可以对着 stub 测。} 只要是 \code{(batch, seq) -> logits} 的
+        \code{nn.Module} 都能塞进去——\secref{sec:b-kv-stub} 会看到塞进去的其实是 GPT-2。
+  \item \cnemph{绕开了 \codet{llm-serving/CLAUDE.md} 的 Forbidden 约束。} 那份文件写着
+        "不许在 \code{inferenceLM/} 和 \code{tests/} 之外改文件"、
+        "不许不加论证地引入新依赖"。一个 import 训练项目的 adapter 会同时违反两条；
+        一个只收 \code{nn.Module} 的 adapter 一条都不违反。
+\end{enumerate}
+
+\begin{checkpoint}{adapter_not_branch}{为什么造 adapter，不是在 \codet{LMEngine} 里加分支}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 在 \code{LMEngine} 里加一个 \codeb{if isinstance(model, TransformerLM)} 分支，
+        会带来什么具体后果？
+  \item adapter 这个方案的代价是什么？（它不是免费的）
+\end{enumerate}
+
+\ifshowanswers
+\tcblower
+\answer (a) 三个后果。第一，\code{LMEngine} 要 import 训练项目，两个仓库从此绑死，
+\code{llm-serving} 的 \code{uv sync} 得把 \code{einops}/\code{tiktoken} 一起拉进来。
+第二，\code{prefill()}/\code{decode()}/\code{inference()} 三个方法里每一处碰
+\code{past_key_values} 或 \code{config} 的地方都要开分支，而这三个方法正是将来要改成
+continuous batching 的地方——分支会被复制到每一个新特性里。第三，
+"\code{LMEngine} 支持哪些模型"这个问题从此没有静态答案，只能靠读分支。
+
+(b) 代价是多了一层间接，以及\cnemph{一个字段名装了两种完全不同的东西}——
+\code{past_key_values} 在默认模式下是 token 前缀，在 \code{use_kv_cache=True} 下是逐层 $(K,V)$。
+这是真实的可读性代价，\secref{sec:b-kv-recompute} 的例子把两种模式并排放，就是为了让这一点无处可藏。
+它之所以可以接受，是因为 \code{LMEngine} 把这个字段当\cnemph{不透明}对象处理：
+它只负责把上一步的返回值原样传回去，从不解释里面装的是什么。
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{loose_typing_on_purpose}{松类型标注是偷懒还是设计}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item \code{model: nn.Module} 而不是 \code{model: TransformerLM}，放弃了什么？换来了什么？
+  \item 有没有一个地方，adapter 还是做了运行时检查？
+\end{enumerate}
+
+\ifshowanswers
+\tcblower
+\answer (a) 放弃的是静态类型检查——\code{mypy} 不会告诉你塞进去的东西有没有正确的 forward 签名，
+签名不对要到第一次 forward 才炸。换来的是 \secref{sec:b-kv-adapter} 里那三条：零依赖、
+可对 stub 测、不违反仓库约束。这是一次明确的取舍，不是忘了写标注：docstring 里
+"Typed loosely on purpose" 那半句就是在说这件事。
+
+(b) 有，而且只有一处：\code{use_kv_cache=True} 时会 \codeb{hasattr(model, "forward_with_cache")}，
+不满足就在\cnemph{构造时} \code{raise ValueError}，错误信息里直接告诉你正确的签名，
+以及"留 False 就能用任何 \code{(batch, seq) -> logits} 模块"。
+选择在这里做检查而不是别处，是因为这是唯一一个"松类型会导致运行到一半才失败"的地方——
+其余的能力缺失在第一次 forward 就会暴露。
+
+\whereincode \codeat{llm-serving/inferenceLM/engine/transformer\_lm\_adapter.py}{97}。
+\fi
+\end{checkpoint}
+
+\subsection{默认路径的 \codet{past\_key\_values} 不是 cache，是 token 前缀}
+\label{sec:b-kv-recompute}
+
+Day 3--4 的 adapter 刻意\cnemph{不}做真 KV cache。\code{past_key_values} 里装的是到目前为止的
+全部 token id，每一步 decode 都把这个前缀重新跑一遍完整前向。
+
+\begin{examplebox}{adapter_call_trace}{同一个字段名，两种完全不同的东西}
+把 \code{LMEngine} 驱动 adapter 的三步调用并排写出来。prompt 长度 5，生成 2 个 token。
+左边是默认的 recompute 模式，右边是 \code{use_kv_cache=True}。
+
+\begin{center}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llll}
+\toprule
+调用 & 参数 & recompute 模式 & cache 模式 \\
+\midrule
+prefill
+  & \codet{input\_ids} & \codet{(1,5)} 整个 prompt & \codet{(1,5)} 整个 prompt \\
+  & \codet{past\_key\_values} & \codet{None} & \codet{None} \\
+  & 模型内实际算 & 5 个位置 & 5 个位置 \\
+  & 返回 \codet{.logits} & \codet{(1,5,V)} & \codet{(1,5,V)} \\
+  & 返回 \codet{.past\_key\_values} & \codet{(1,5)} \cnemph{token id} & 16 层 $\times$ $(K,V)$，各 \codet{(1,12,5,64)} \\
+\addlinespace
+decode 1
+  & \codet{input\_ids} & \codet{(1,1)} 新 token & \codet{(1,1)} 新 token \\
+  & \codet{past\_key\_values} & \codet{(1,5)} & 上一步那 16 层 \\
+  & 模型内实际算 & \cnemph{6 个位置}（全部重算） & \cnemph{1 个位置} \\
+  & 返回 \codet{.logits} & \codet{(1,6,V)} & \codet{(1,1,V)} \\
+  & 返回 \codet{.past\_key\_values} & \codet{(1,6)} token id & 16 层，各 \codet{(1,12,6,64)} \\
+\addlinespace
+decode 2
+  & 模型内实际算 & \cnemph{7 个位置} & \cnemph{1 个位置} \\
+  & 返回 \codet{.logits} & \codet{(1,7,V)} & \codet{(1,1,V)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\medskip
+两件事一眼可见。第一，\code{.logits} 的形状在两种模式下\cnemph{不一样}：
+recompute 返回整个前缀的 logits，cache 只返回新 token 的。这不影响 \code{LMEngine}，
+因为它自己切 \code{[:, -1, :]}（\codeat{llm-serving/inferenceLM/engine/lm\_engine.py}{62}），
+两种模式下这一切都取到"最后一个位置的 logits"。第二，累计到第 $n$ 步，
+recompute 一共算了 $\sum_{i} (L{+}i) = O(n^2)$ 个位置，cache 是 $O(n)$。
+
+形状是 16 层 $\times$ 12 头 $\times$ $d_k{=}64$，来自 \codeb{configs_sft/lr1e5_replay.json}
+的 \codet{model} 段（\codet{num\_layers=16}, \codet{num\_heads=12}, \codet{d\_model=768}）。
+\end{examplebox}
+
+这个取舍是 \code{PLAN.md} 里就写好的，理由写进了模块 docstring。原话是：
+
+\begin{lstlisting}[style=hlrepl]
+Recompute keeps the two projects' seam small and honest: the serving layer is
+genuinely running the locally-trained weights, and the cost of not having a cache
+shows up as latency rather than as a correctness fudge.
+\end{lstlisting}
+\noindent 来源：\codeb{llm-serving/inferenceLM/engine/transformer_lm_adapter.py}:31--33，逐字手抄。
+
+"体现为延迟而不是正确性上的糊弄"这句话是有内容的，不是修辞。它说的是：
+recompute 解码和 cache 解码\cnemph{必须产生完全相同的 token 序列}，
+差别只能出现在时间上。这条等式后来变成了 \secref{sec:b-kv-tests} 里所有测试的共同断言，
+也变成了 \secref{sec:b-kv-flat} 那张对比表能被解释的前提——如果两条路径的输出会分叉，
+比较它们的 tok/s 就没有意义。
+
+\begin{checkpoint}{recompute_is_not_a_cache}{一个叫 cache 的字段里没有 cache}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item recompute 解码的复杂度是 $O(n^2)$，那 TTFT 会不会也受影响？
+  \item 为什么 recompute 版本在 \codeb{prefix.shape[1] > n_positions} 时是从\cnemph{左边}截断？
+  \item 这个设计在什么情况下会从"慢"变成"错"？
+\end{enumerate}
+
+\ifshowanswers
+\tcblower
+\answer (a) 不会。TTFT 是 prefill 那一次前向，两种模式下算的位置数完全相同
+（\secref{sec:b-kv-recompute} 的例子第一行）。实测也印证了：
+recompute 的 TTFT 是 61.3--65.7 ms，cache 是 59.3--63.0 ms，
+差别落在 run-to-run 波动里（表~\ref{tab:kv-bench}）。KV cache 从定义上就不改善 TTFT。
+
+(b) 因为 \code{LMEngine} 已经在 \code{inference()} 里拒绝了超过 \code{n_positions} 的
+\code{max_length}，所以这条路径只有在有人\cnemph{绕过 \codet{LMEngine} 直接驱动 adapter}
+时才会走到。这种情况下"丢掉最老的 token"是最不意外的行为——注释里写的是
+"the least surprising behaviour"。
+
+(c) 当 prefix 长到需要截断的时候。截断之后模型看到的位置从 0 重新开始编号，
+生成会和"完整上下文"的结果不同——但这不是 cache 与 recompute 的差别，
+是滑动窗口本身的语义。真 cache 路径在同样情况下的选择不一样：
+\codeb{TransformerLM.forward_with_cache} 直接 \code{raise RuntimeError}，
+理由是越界位置根本没有 RoPE 表项，静默回绕比报错糟糕得多
+（\codeat{cs336-basics/cs336\_basics/lm.py}{203}）。\cnemph{两条路径在越界这件事上行为不一致}，
+这是一个真实的不一致，讲义里记下来，没有修。
+
+\whereincode \codeat{llm-serving/inferenceLM/engine/transformer\_lm\_adapter.py}{146}（左截断）、
+\codeat{cs336-basics/cs336\_basics/lm.py}{203}（越界报错）。
+\fi
+\end{checkpoint}
+
+\subsection{验证：把 GPT-2 自己剥成裸签名}
+\label{sec:b-kv-stub}
+
+recompute 解码"只会更慢、不会不同"是一个可以被证伪的断言。怎么证？
+
+夜里用的办法是：拿 \code{GPT2LMHeadModel} 包一层，只暴露
+\codeb{(batch, seq) -> (batch, seq, vocab)}——把它的 config、它的 cache、
+它的输出 dataclass 全部剥掉，剥完之后它\cnemph{和我们自己的 \codet{TransformerLM} 长得一模一样}。
+然后把这个裸模型塞进 adapter，用 \code{LMEngine} 跑贪心解码，
+和 HuggingFace 自带的、\cnemph{带 KV cache 的} \code{generate()} 对拍。
+
+\begin{lstlisting}[style=hlplain]
+class _LogitsOnly(nn.Module):
+    """Reduce a HuggingFace causal LM to the bare `(batch, seq) -> (batch, seq, vocab)`
+    signature that a from-scratch `TransformerLM` has."""
+
+    def __init__(self, hf_model: GPT2LMHeadModel) -> None:
+        super().__init__()
+        self.hf_model = hf_model
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        return self.hf_model(input_ids=input_ids).logits
+\end{lstlisting}
+\noindent 来源：\codeb{llm-serving/tests/transformer_lm_adapter_test.py}:15--30，手抄，
+docstring 只保留了第一句。
+
+结果是 token 级完全一致，6 个测试全过。这个手法的正式名字和它的适用边界在姊妹篇里：
+\extref{a:differential-testing}。
+
+\begin{checkpoint}{gpt2_as_stub}{为什么 stub 要用 GPT-2，而不是一个随机小模型}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 用一个随机初始化的两层小模型当 stub，这个测试还成立吗？
+  \item 这个测试到底隔离出了什么？它\cnemph{不能}证明什么？
+\end{enumerate}
+\hint 参照物是"HuggingFace 自己带 cache 的 \code{generate()}"。
+
+\ifshowanswers
+\tcblower
+\answer (a) 部分成立但弱得多。随机小模型没有可信的参照实现——你只能拿它和它自己比，
+那测的是"recompute 循环写得对不对"，不是"recompute 语义对不对"。
+用 GPT-2 才能拿到一个\cnemph{独立实现的、带真 KV cache 的} \code{generate()} 当参照物：
+两边如果对上，说明 adapter 的 recompute 语义和工业界公认的 cached 语义等价。
+另外随机权重的 logits 很平，argmax 容易在数值噪声上翻转，会让测试变得又假阳又假阴。
+
+(b) 隔离出来的是\cnemph{adapter 的 recompute 逻辑}——前缀怎么拼、\code{[:, -1, :]} 怎么切、
+\code{past_key_values} 怎么传回去。因为模型两边都是同一个 GPT-2 权重，
+模型本身的正确性被消掉了。它\cnemph{不能}证明的是我们自己的 \code{TransformerLM} 是对的
+（那是训练那边的事），也不能证明真 KV cache 是对的——那是另一套测试，见
+\secref{sec:b-kv-tests}。这两件事很容易混，但它们用的是完全不同的参照物：
+这里的参照物是 HF 的 \code{generate()}，那边的参照物是我们自己的 \code{forward}。
+
+\whereincode \codeat{llm-serving/tests/transformer\_lm\_adapter\_test.py}{62}。
+\fi
+\end{checkpoint}
+
+\subsection{真 KV cache：三个新方法，\codet{forward} 一个字节没动}
+\label{sec:b-kv-impl}
+
+夜里第二轮才把真 cache 做出来，而且是刻意放在最后做的。实现方式是\cnemph{纯增量}：
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \codeb{MultiHeadsAttention.forward_with_cache}（\codeat{cs336-basics/cs336\_basics/transfromer/multiheads\_attention.py}{127}）
+  \item \codeb{PreNormTransformer.forward_with_cache}（\codeat{cs336-basics/cs336\_basics/transfromer/transformer.py}{77}）
+  \item \codeb{TransformerLM.forward_with_cache}（\codeat{cs336-basics/cs336\_basics/lm.py}{183}）
+\end{itemize}
+
+三个\cnemph{新}方法。原来的 \code{forward} 一个字节没动，也就是\cnemph{训练路径零风险}——
+改完之后在远端重跑 init check，输出和改之前逐位相同（W1 std 0.06533 / 初始 loss 7.0294 /
+global grad norm 2.151，记录在 \codeb{interview_prep/PROGRESS.md}；本机没有对应日志可核对）。
+把这条做成硬约束的代价是有一点重复代码（QKV 投影那几行在两个方法里各写了一遍），
+换来的是"这个改动不可能影响到已经跑完的 7 小时训练"这个可以直接说出口的性质。
+
+真 cache 为什么在数学上等价于重算——同一个位置的 $K$、$V$ 只依赖于它自己那个 token 的隐状态，
+所以算过一次就可以存下来——这个论证属于姊妹篇，不在这里重复：\extref{a:kv-cache-legality}。
+这一节只讲两个\cnemph{实现层面}的不变量，它们不是数学问题，是"写错了会静默出错"的问题。
+
+\subsubsection{不变量 1：\codet{is\_causal} 不是手写开关，是从 shape 推出来的}
+
+\lstinputlisting[style=hlnum, firstline=154, lastline=170, firstnumber=154]%
+  {../../cs336-basics/cs336_basics/transfromer/multiheads_attention.py}
+
+第 169 行是这一节的重点：
+
+\begin{center}
+\codeb{is_causal = Q_packed.shape[-2] == K_packed.shape[-2]}
+\end{center}
+
+没有 \code{if is_prefill:}，没有多传一个 \code{mode} 参数，也没有让调用方负责设对。
+"什么时候该 mask"被表达成了一个\cnemph{关于 shape 的性质}：
+query 和 key 数量相同 $\Leftrightarrow$ 它们是同一个 block $\Leftrightarrow$ 需要三角遮罩。
+prefill 时 $\text{seq}_q = \text{seq}_k = n$，自动为真；decode 时 $\text{seq}_q = 1$、
+$\text{seq}_k = n{+}1$，自动为假。
+
+\begin{checkpoint}{is_causal_from_shape}{decode 时为什么必须 \codet{is\_causal=False}}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 现有的 causal mask 是怎么构造的？单 query 时它会露出哪些 key？
+  \item 如果 decode 时错误地传了 \code{is_causal=True}，模型会崩溃、还是会输出看起来正常但错误的结果？
+  \item 用 shape 推导代替一个显式开关，除了少写一个参数，还买到了什么？
+\end{enumerate}
+\hint mask 的形状是 $(\text{seq}_q, \text{seq}_k)$，不是 $(\text{seq}_k, \text{seq}_k)$。
+
+\ifshowanswers
+\tcblower
+\answer (a) \codeb{causal_mask = torch.tril(torch.ones(seq_q, seq_k))}
+（\codeat{cs336-basics/cs336\_basics/transfromer/scaled\_dot\_prod\_attention.py}{49}）。
+这是一个\cnemph{左对齐}的下三角：第 $i$ 行露出 key $0 \ldots i$。
+decode 时 $\text{seq}_q = 1$，只有第 0 行，于是\cnemph{只露出 key 0}——
+整个缓存里除了第一个 token 全被 mask 掉。
+
+(b) \cnemph{不会崩溃}。形状全部合法，softmax 正常，输出的 logits 形状也对。
+模型会安静地生成一串"只看得见第一个 token"的续写。这正是这一类 bug 最危险的地方：
+它不产生任何异常，只产生更差的文本，而一个 190M 的欠训模型本来输出就不怎么样，
+很容易被解释成"模型就是这个水平"。
+
+(c) 买到的是\cnemph{这个 bug 不可能通过传错参数发生}。显式开关意味着每一个调用点
+（三层 \code{forward_with_cache} 逐层往下传）都是一次犯错的机会，而且传错了没有任何检查。
+shape 推导把它降级成一个局部的、不依赖调用方的判断。代价是它对"seq\_q 恰好等于 seq\_k
+但语义上不是同一个 block"这种情形会判错——本项目里不存在这种调用，
+但这是这个技巧的真实边界。
+
+\whereincode \codeat{cs336-basics/cs336\_basics/transfromer/multiheads\_attention.py}{169}（推导），
+\codeat{cs336-basics/cs336\_basics/transfromer/multiheads\_attention.py}{165} 起的三行注释写着为什么。
+mask 构造在 \codeat{cs336-basics/cs336\_basics/transfromer/scaled\_dot\_prod\_attention.py}{46}--50。
+\fi
+\end{checkpoint}
+
+\subsubsection{不变量 2：RoPE 必须按绝对位置旋转后再进 cache}
+
+上面那段代码的第 154--155 行注释说的就是这件事：
+"Append to the cache AFTER rotating: RoPE is applied once, at each token's own absolute
+position, so cached keys must already carry their rotation."
+
+绝对位置是在最外层算的：
+
+\lstinputlisting[style=hlnum, firstline=201, lastline=213, firstnumber=201]%
+  {../../cs336-basics/cs336_basics/lm.py}
+
+\code{past_len} 从缓存的形状里读出来（第 201 行），positions 从 \code{past_len} 开始切
+（第 212 行）。所以第 $n$ 步 decode 的那个 token 拿到的是位置 $n$，不是位置 0。
+
+\begin{checkpoint}{rope_before_cache}{把旋转和入缓存的顺序颠倒，哪个测试会抓到}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 如果 \code{positions} 写成 \codeb{self.token_positions[:seq_new]}（chunk 内相对位置），
+        \code{tests/test_kv_cache.py} 的 6 个测试里哪些会红？
+  \item 哪些\cnemph{不会}红？为什么？
+  \item 这个 bug 在 prefill 阶段会不会暴露？
+\end{enumerate}
+\hint prefill 时 \code{past_len} 是 0。
+
+\ifshowanswers
+\tcblower
+\answer 这三问是写讲义时\cnemph{真的注入这个 bug 跑了一遍}得到的，不是推理
+（做法见表~\ref{tab:kv-mutation} 的 caption）。
+
+(a) 两个会红：\codeb{test_greedy_decoding_is_token_identical} 和
+\codeb{test_incremental_logits_match_full_forward_at_each_step}。
+
+(b) 四个不会红。\codeb{test_prefill_matches_plain_forward} 不红是因为 prefill 时
+\code{past_len=0}，\code{[:seq_new]} 和 \code{[0:seq_new]} 是同一个切片——
+\cnemph{bug 在 prefill 路径上根本不激活}。
+\codeb{test_cache_grows_by_one_key_per_step} 和
+\codeb{test_rejects_decoding_past_the_context_length} 只断言形状和边界，位置旋转对它们不可见。
+\codeb{test_batched_decoding_matches_per_sequence_decoding} 不红最值得注意：
+批量和逐条\cnemph{犯的是同一个错}，两边一起错、错得一样，所以它们仍然相等。
+\cnemph{一个测试只能抓到破坏它所断言的那个对称性的 bug}。
+
+(c) 不会。这就是 (b) 的第一句。这个 bug 只在"缓存非空"时激活，
+所以任何只测 prefill 的检查都是安全通过的——包括
+\code{kv_cache_gate.py} 的第一项 \code{check_logits_match}。
+门禁能挡住它，靠的是第二项 \code{check_greedy_match}。
+
+\whereincode 位置切片在 \codeat{cs336-basics/cs336\_basics/lm.py}{212}；
+旋转-再入缓存的顺序在 \codeat{cs336-basics/cs336\_basics/transfromer/multiheads\_attention.py}{150}--159。
+\fi
+\end{checkpoint}
+
+\subsection{怎么测一个 cache}
+\label{sec:b-kv-tests}
+
+\code{tests/test_kv_cache.py} 有 6 个测试。它们不是六件事，是\cnemph{同一件事的六个角度}：
+cache 是一个优化，所以唯一可接受的结果是\cnemph{它只改变速度}。参照物是 \code{forward}，
+理由写在文件的 docstring 里：那是模型被训练时跑的那条代码，是唯一可信的基准。
+
+写这份讲义时，我把这 6 个测试拿去做了一次\cnemph{变异测试}：往 cache 实现里逐个注入
+五类真实的 bug，看哪些测试会红。结果如下。
+
+\begin{table}[htbp]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lccccc}
+\toprule
+注入的 bug & T1 & T2 & T3 & T4 & T5/T6 \\
+\midrule
+RoPE 按 chunk 内相对位置旋转 & --- & 抓到 & 抓到 & --- & ---/--- \\
+\codet{is\_causal} 硬编码 \codet{True} & --- & 抓到 & 抓到 & --- & ---/--- \\
+\codet{is\_causal} 硬编码 \codet{False} & 抓到 & 抓到 & 抓到 & --- & ---/--- \\
+缓存 key 跨 batch 行串用 & --- & --- & --- & --- & ---/抓到 \\
+缓存 key 有 0.1\% 数值偏差 & --- & --- & 抓到 & --- & ---/--- \\
+\bottomrule
+\end{tabular}
+\caption{五类注入 bug $\times$ 6 个测试。
+T1 $=$ \codeb{test_prefill_matches_plain_forward}，
+T2 $=$ \codeb{test_greedy_decoding_is_token_identical}，
+T3 $=$ \codeb{test_incremental_logits_match_full_forward_at_each_step}，
+T4 $=$ \codeb{test_cache_grows_by_one_key_per_step}，
+T5 $=$ \codeb{test_rejects_decoding_past_the_context_length}，
+T6 $=$ \codeb{test_batched_decoding_matches_per_sequence_decoding}。
+出处：\cnemph{写这份讲义时现做的实验，夜里没有做过}——用 monkeypatch 替换
+\codeb{MultiHeadsAttention.forward_with_cache} 和 \codeb{TransformerLM.forward_with_cache}
+注入每一类 bug，再对\cnemph{未经修改的} \codet{tests/test\_kv\_cache.py} 跑 pytest。
+本机 CPU，每轮约 0.15 秒。未注入时 6 passed。}
+\label{tab:kv-mutation}
+\end{table}
+
+从这张表能读出三件事，其中两件是设计时想到的，一件不是。
+
+\cnemph{T4 和 T5 没有抓到任何一个注入的 bug。} 这不是它们没用——它们守的是形状和边界，
+而我注入的五类 bug 全是数值/语义的。一个把缓存拼错方向（\code{dim=-1} 而不是 \code{dim=-2}）
+的 bug 会立刻被 T4 抓到。但这张表确实说明：\cnemph{这套测试的实际防线是 T3 和 T6}。
+
+\cnemph{T6 是唯一能抓到批内串 key 的测试。} 其他五个测试全部用 batch=1，
+在那个维度上没有任何断言。
+
+\cnemph{T3 比 T2 严格。} 最后一行是专门为验证这一点造的：给缓存里的 key 乘 1.001，
+logits 会动，但动得不足以翻转任何一个 argmax——于是 T2（比 token）全过，T3（比 logits）红。
+
+\begin{checkpoint}{stepwise_comparison}{为什么要逐步比对，而不是只看最终状态}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item T3 每一步都拿 \code{model(ids)} 重跑一遍完整前向来对照。这很慢，为什么值得？
+  \item 表~\ref{tab:kv-mutation} 最后一行说明 T3 比 T2 敏感在哪？
+  \item 如果只留一个测试，留哪个？
+\end{enumerate}
+\hint T3 的 docstring 自己给了答案的一半。
+
+\ifshowanswers
+\tcblower
+\answer (a) 因为"陈旧的 key"和"错位置的旋转"这两类 bug 的共同特点是\cnemph{要解码若干步之后才显形}。
+只检查最终状态、而且是在一个短序列上检查，很可能整段都还没进入 bug 激活的区间。
+T3 的 docstring 原话是 "a cache bug that only shows up deep into decoding
+(a stale key, a mis-rotated position) would pass an end-state check on a short run"。
+慢是真的慢（10 步就要跑 11 次完整前向），但这是一个 3 层 $d_{\text{model}}{=}64$ 的
+CPU 模型，整份文件跑完不到 1 秒。
+
+(b) 敏感在\cnemph{比较的对象是连续量而不是离散量}。T2 比的是 argmax 之后的 token id，
+一个小到不足以翻转 argmax 的数值误差它看不见；T3 比的是 logits 本身，
+\code{atol=1e-4}。注入 0.1\% 的 key 偏差时 T2 全过、T3 红，就是这个差别的直接证据。
+反过来说 T2 也不是多余的：它断言的是\cnemph{用户真正看得到的那个性质}——
+两条路径生成的文本必须一模一样。T3 red 而 T2 green 时，你知道有数值漂移但输出还没变；
+两个都 red 时，问题已经跑到用户面前了。
+
+(c) 留 T3。它是唯一一个既覆盖 prefill 又覆盖多步 decode、又比较连续量的测试。
+但留了 T3 之后就没有任何测试守着 batch 维度（表~\ref{tab:kv-mutation} 第四行），
+所以实际上不能只留一个。
+
+\whereincode \codeat{tests/test\_kv\_cache.py}{66}。
+\fi
+\end{checkpoint}
+
+\lstinputlisting[style=hlnum, firstline=66, lastline=77, firstnumber=66]%
+  {../../tests/test_kv_cache.py}
+
+\begin{checkpoint}{batched_decode_leak}{批内串 key 是什么样的 bug}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item T6 拿 batch=2 的解码结果和逐条解码的结果比。这能抓到什么？
+  \item 为什么其他五个测试抓不到？
+  \item 本项目的 \code{LMEngine} 目前一次只处理一个请求，为什么还要写这个测试？
+\end{enumerate}
+
+\ifshowanswers
+\tcblower
+\answer (a) 抓到任何"缓存记账不是逐序列的"错误：把一行的 $K$ 广播给整批、
+reshape 时把 batch 和 head 两个维度搞混、cache 拼接用错了 dim。
+这一类 bug 的表现是 batch 里第 $i$ 条请求看到了第 $j$ 条请求的历史——
+在真实 serving 里这既是错误也是数据泄漏。变异实验里我注入的是最直白的一种
+（\codeb{past_k[0:1].expand_as(past_k)}），只有 T6 变红。
+
+(b) 因为其他五个都是 batch=1。batch=1 时"跨行串用"和"不串用"是同一件事，
+没有可以被破坏的对称性。这是表~\ref{tab:kv-mutation} 想说的核心：
+\cnemph{测试能抓到的，只有它所断言的那个不变量被破坏的情形}，
+再多的测试也不会自动覆盖一个没人断言过的维度。
+
+(c) 因为这是给\cnemph{还没写的那个调度器}提前立的规矩。
+\code{llm-serving} 的路线图上 continuous batching 是明确的下一步
+（见姊妹篇 \extref{a:continuous-batching-def} 和 \extref{a:stage-homogeneous}）。
+到那时候 batch 维度会突然变成热路径，而那时再补这个测试，
+就得先在一个已经变复杂的系统里定位 bug。现在写，成本是十几行。
+
+\whereincode \codeat{tests/test\_kv\_cache.py}{104}。
+\fi
+\end{checkpoint}
+
+\begin{tipbox}{不用 GPU 也能验 cache}
+\code{tests/test_kv_cache.py} 整份文件用的是 CPU 上一个
+\codeb{vocab_size=257, context_length=64, num_layers=3, d_model=64} 的模型。
+本机实测 \code{6 passed in 0.96s}（首次运行含 import；变异实验里热跑是 0.15 秒）。
+
+这不是"降配将就"，这是这类测试的\cnemph{正确规模}：
+\cnemph{cache 的正确性和模型规模无关}。它断言的是一个代数等式——
+带缓存的前向必须和不带缓存的前向给出同样的数——而这个等式在
+$d_{\text{model}}{=}64$ 和 $d_{\text{model}}{=}768$ 上是同一个等式。
+规模只影响\cnemph{性能}结论（\secref{sec:b-kv-flat} 那张表就必须在真 GPU、真权重上测），
+不影响正确性结论。
+
+顺带说，这条性质是免费拿到的吗？不是。\code{cs336_basics} 里有 8 个文件
+无条件 \codeb{import torch.cuda.nvtx as nvtx} 并用 \code{@nvtx.range(...)} 标注 forward，
+在非 CUDA build 上导入正常、一调用就 \code{RuntimeError}。
+是先加了 \codeb{cs336_basics/nvtx_compat.py}（import 时探测一次，不可用就退化成 no-op），
+\code{TransformerLM} 才能在这台笔记本上跑起来。
+\resources CPU 即可；\codeb{uv run pytest tests/test_kv_cache.py}，约 1 秒。
+\end{tipbox}
+
+除了进常规测试套件的这 6 个测试，还有一个一次性的门禁脚本
+\codeb{cs336_systems/experiments/kv_cache_gate.py}：缓存解码必须和重算解码
+\cnemph{logits 逐位相同 + 贪心 token 完全一致}，否则 \code{sys.exit(1)}，
+调用方不许启用 cache。
+
+\begin{examplebox}{kv_gate_output}{门禁的真实输出}
+夜间窗口 stage 7 的日志原文（\codeb{run_logs/post_train_window.log}:1123--1132）：
+
+\begin{lstlisting}[style=hlshell]
+[kv] gating against checkpoints_pretrain_v1/checkpoint_epoch_0100.pt
+=== gate 1: small random model ===
+  prefill logits max|delta| = 0.000e+00  -> PASS
+  greedy tokens identical    -> PASS
+
+=== gate 2: real trained model ===
+  prefill logits max|delta| = 0.000e+00  -> PASS
+  greedy tokens identical    -> PASS
+
+GATE PASSED: cached decode is token-identical to recompute.
+\end{lstlisting}
+
+\code{0.000e+00} 是逐位相同，不是"在容差内"。这比预期更强：
+门禁自己的容差是 \code{tol=2e-4}，脚本 docstring 里也写着"不同的 reduction order
+产生微小 logit 差异是预期的"。实际拿到 0 是因为 prefill 路径上
+\code{forward_with_cache} 和 \code{forward} 做的是\cnemph{同样顺序的同样运算}
+（\code{past_kv=None} 时那两个分支的算子序列一致），所以浮点结果逐位一致。
+真正需要容差的是 decode 步——但那里比的是 token 不是 logits。
+\end{examplebox}
+
+\begin{checkpoint}{gate_with_final_weights}{为什么门禁要拿最终权重再跑一次}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 小随机模型已经过了，为什么还要拿 190M 的真 checkpoint 再过一次？
+  \item 门禁脚本和 \code{tests/test_kv_cache.py} 有什么分工？为什么不合并？
+\end{enumerate}
+
+\ifshowanswers
+\tcblower
+\answer (a) 因为\cnemph{拿别的权重过的门禁不算这批权重的门禁}。原则上 cache 的正确性
+和权重无关（\secref{sec:b-kv-tests} 的 tipbox 就是这么论证的），但"原则上无关"
+和"这批要被报告数字的权重上确实无关"是两个命题，后者只要 30 秒就能验，没有理由不验。
+更实际的理由是：真 checkpoint 会额外走一遍 \codeb{k.removeprefix("_orig_mod.")} 的加载路径、
+真实的 \code{context_length=1024} 的 RoPE 表、真实的 16 层深度——
+这些都是小模型上不存在的东西。门禁通过之后才允许 benchmark 报缓存的数字，
+顺序在夜间脚本里是硬的：gate 失败则 \code{sys.exit(1)}，后面的 \code{bench_serving.py} 不会跑。
+
+(b) 分工是"常驻回归"与"一次性放行"。\code{test_kv_cache.py} 进常规套件，
+每次 \code{uv run pytest} 都跑，用小模型、跑得起，防的是\cnemph{将来的改动}打破 cache。
+\code{kv_cache_gate.py} 是一个带 \code{--checkpoint} 参数的脚本，用真权重、
+在 GPU 机器上跑，防的是\cnemph{这一次要报的数字}建立在没验过的路径上。
+合并的话要么让常规套件依赖一个 2.3GB 的 checkpoint（跑不起来），
+要么让门禁失去"针对特定权重"的语义。
+
+\whereincode \codeat{cs336\_systems/experiments/kv\_cache\_gate.py}{94}（gate 2 分支）、
+\codeat{cs336\_systems/experiments/kv\_cache\_gate.py}{118}（失败即退出）。
+\fi
+\end{checkpoint}
+
+\subsection{KV cache 的收益和预期完全不一样}
+\label{sec:b-kv-flat}
+
+门禁过了，可以报数字了。
+
+\begin{table}[htbp]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{rrrrrrrr}
+\toprule
+& \multicolumn{3}{c}{recompute} & \multicolumn{3}{c}{cache} & \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+prompt tokens & TTFT ms & p50 ms & tok/s & TTFT ms & p50 ms & tok/s & 加速比 \\
+\midrule
+16  & 61.3 & 63.03 & 15.9 & 62.3 & 52.45 & 19.2 & $1.20\times$ \\
+64  & 65.7 & 61.25 & 16.4 & 63.0 & 48.06 & 21.0 & $1.28\times$ \\
+128 & 61.8 & 62.79 & 15.7 & 59.3 & 52.78 & 18.9 & $1.20\times$ \\
+256 & 65.3 & 64.08 & 15.6 & 61.2 & 51.80 & 19.8 & $1.27\times$ \\
+512 & 64.5 & 64.82 & 15.6 & 61.5 & 52.12 & 19.2 & $1.23\times$ \\
+\bottomrule
+\end{tabular}
+\caption{recompute 与真 KV cache 的完整对照。
+出处：\codeb{artifacts/serving_benchmark_kv.json}，
+单卡 \codet{cuda:0}、0.19B 模型、fp32、batch 1、\codet{new\_tokens=64}（即每格 63 个 decode 步）、
+两种模式用同一个 \codeb{torch.Generator().manual_seed(0)} 生成\cnemph{逐字节相同}的 prompt、
+2 次 warmup。p50 是 63 个 step 时间的中位数。加速比 $=$ cache tok/s $\div$ recompute tok/s，
+取自 JSON 的 \codeb{cache_speedup_by_prompt_len} 字段。
+LMEngine 端到端往返（22 token）：recompute 1.36 s，cache 1.14 s。}
+\label{tab:kv-bench}
+\end{table}
+
+五个加速比：$1.20 / 1.28 / 1.20 / 1.27 / 1.23$。均值 $1.24\times$。
+\cnemph{prompt 长度涨了 32 倍，加速比几乎不动}（末项比首项 $=1.02$）。
+
+这和事前的断言完全相反。事前的断言写在下面这个框里，原样保留：
+
+\begin{retraction}{加速比会随 prompt 长度增长，因为重算是 \codet{O(prefix)} 而 cache 是 \codet{O(1)}}
+这句话的\cnemph{前半段推理是对的}——重算解码每步确实要跑完整个前缀，
+cache 每步确实只跑一个位置。错的是从这个渐进关系直接跳到"所以在这台机器、这个模型上，
+加速比会随长度增长"。渐进复杂度描述的是当 prefix 大到能主导总成本时的行为；
+它不告诉你在 prefix $=512$、模型 190M、batch $=1$ 的时候，
+prefix 相关的那部分占总成本的多少。
+
+实测占比很小，所以加速比是平的。这条被 \codeb{artifacts/serving_benchmark_kv.json}
+的五个数直接否掉，撤回。
+\end{retraction}
+
+原因不难说清楚，但要说得准确需要一点算术。recompute 模式下，
+prompt 从 16 涨到 512（32 倍）时，每步 p50 从 63.03 ms 涨到 64.82 ms——
+\cnemph{只涨了 2.8\%}。也就是说\cnemph{连重算本身都几乎不随前缀长度增长}。
+在这个规模上，每一步的成本几乎全部是"把 16 层权重从头到尾过一遍"这个\cnemph{固定开销}，
+而 KV cache 消掉的那部分（前缀相关的 attention 计算和它的 QKV 投影）只是其中一小块。
+
+这个固定开销到底是什么，值得记一笔\cnemph{没有查证到底}的地方。夜报里的措辞是
+"dominated by the fixed forward pass over the weights"，暗示是访存。粗算一下：
+0.19B 参数 $\times$ 4 字节 $= 760$ MB，RTX 3090 的显存带宽约 936 GB/s，
+把权重读一遍的下界是 \cnemph{约 0.8 ms}；而实测每步 60 ms，
+是这个下界的 \cnemph{约 70 倍}。计算量更不是瓶颈（batch 1 单 token 约 0.38 GFLOP，
+在 fp32 的 3090 上是 0.01 ms 量级）。所以这 60 ms 里绝大部分\cnemph{既不是访存也不是算力}，
+更像是每层十几次小 kernel launch、einops 的 \code{rearrange}、Python 层调度的累加。
+\cnemph{这只是一个数量级估算，没有做过 profiling}，所以只能作为一个待查的开放问题写在这里。
+但它不影响本节的结论：不论那 60 ms 具体花在哪，它都是\cnemph{与前缀长度无关}的固定成本，
+而这正是加速比平坦的直接原因。
+
+还有一件必须说的：这张表跑的是\cnemph{朴素的 PyTorch attention，不是本项目的 Triton kernel}。
+\codeb{bench_serving.build_adapted_model} 构造 \code{TransformerLM} 时没有传
+\code{attention_fn}，走的是默认值 \codeb{scaled_dot_product_attention}
+（\codeat{cs336-basics/cs336\_basics/lm.py}{131}）；
+而 \code{forward_with_cache} 那条路径更是\cnemph{直接写死}调用
+\codeb{scaled_dot_product_attention}（\codeat{cs336-basics/cs336\_basics/transfromer/multiheads\_attention.py}{170}），
+连 \code{self.attention_fn} 都不看。两种模式因此是同一个 attention 实现，
+比较是公平的；但\cnemph{这张表和 Triton kernel 无关}，不能拿它去说 kernel 的任何事。
+
+\begin{checkpoint}{flat_speedup}{加速比为什么是平的}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 在什么条件下 KV cache 才会给出教科书上那种数量级的加速？
+  \item 表~\ref{tab:kv-bench} 里哪一列最能说明"重算不贵"？
+  \item $1.24\times$ 这个数字，能不能写进简历说"实现了 KV cache，decode 提速 24\%"？
+\end{enumerate}
+
+\ifshowanswers
+\tcblower
+\answer (a) 当前缀相关的工作在每步成本里占比变大的时候，也就是：上下文更长
+（attention 是 $O(n)$ 每步，权重那一遍是 $O(1)$，$n$ 大到一定程度必然反超）、
+batch 更大（权重那一遍在整个 batch 上摊薄，而 KV 的量随 batch 线性增长）、
+或者模型更小。这三条在这次的配置里全是反的：$n \le 576$、batch $=1$、190M 参数 fp32。
+\cnemph{KV cache 在这个规模上不划算}——这是个比"cache 快 N 倍"更有信息量的结论。
+
+(b) recompute 那一列的 p50：$63.03 \to 61.25 \to 62.79 \to 64.08 \to 64.82$ ms。
+前缀涨了 32 倍，每步只贵了 2.8\%。如果重算真的贵，这一列应该是明显上翘的。
+（JSON 里 \codeb{decode_cost_growth.latency_ratio} 字段记的就是这个比值：$1.028$。）
+
+(c) 可以，但必须带上后半句："在 190M/fp32/batch=1/上下文 $\le$ 576 的条件下测得
+$1.24\times$，而且加速比不随 prompt 长度增长，因为这个规模下每步成本由固定的权重前向主导。"
+只报 $1.24\times$ 会让人以为这是个一般结论；只报"实现了 KV cache"则回避了最有意思的部分。
+真正值得讲的是"我预期它随长度增长，实测是平的，我去查了为什么"这个过程。
+\fi
+\end{checkpoint}
+
+\subsubsection{一个在读自己数据之前就写好结论的 benchmark}
+
+上面那句被撤回的话，不是我在报告里随手写的一句话。它是
+\code{bench_serving.py} 里一个\cnemph{无条件 \codet{print}} 出来的硬编码结论，
+不看任何实际数字。\code{make_night_report.py} 里也有同一句的 markdown 版本。
+
+后果在夜间日志里留着，原样引在这里
+（\codeb{run_logs/post_train_window.log}:1167--1175）：
+
+\begin{lstlisting}[style=hlshell]
+=== recompute vs KV cache ===
+  prompt   recompute tok/s   cache tok/s   speedup
+      16              15.9          19.2     1.20x
+      64              16.4          21.0     1.28x
+     128              15.7          18.9     1.20x
+     256              15.6          19.8     1.27x
+     512              15.6          19.2     1.23x
+
+The speedup grows with prompt length because recompute is O(prefix) per step and the
+cache is O(1) in the prefix -- that widening gap IS the cost of not having a cache.
+\end{lstlisting}
+
+一张明显没有趋势的表，紧接着一行断言它在增长。两处都改成了按实测算趋势再措辞：
+$>1.25\times$ 说"增长"，$<0.8\times$ 说"反常，需要查"，否则说"基本持平在 $\sim X\times$"。
+修复后的代码和它的注释在本仓库里，可以直接引：
+
+\lstinputlisting[style=hlnum, firstline=181, lastline=205, firstnumber=181]%
+  {../../cs336_systems/experiments/bench_serving.py}
+
+第 183--184 行那句 "A benchmark that states its conclusion before reading its own numbers
+is worse than no benchmark" 是这一整章里最该记住的一句。
+
+\begin{checkpoint}{benchmark_wrote_conclusion_first}{为什么这类 bug 比测错数字更严重}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 一个 benchmark 把数字测错了，和一个 benchmark 数字测对了但结论是硬编码的，
+        哪个更危险？
+  \item 修复为什么要写成三个分支（增长 / 反常 / 持平），而不是简单地把那句话删掉？
+  \item 这个 bug 是怎么被发现的？如果没被发现，会怎样？
+\end{enumerate}
+
+\ifshowanswers
+\tcblower
+\answer (a) 后者。测错数字的 benchmark 迟早会和别的证据对不上，而且它的失败是\cnemph{随机方向}的。
+硬编码结论的 benchmark 每一次运行都朝\cnemph{同一个方向}撒谎，而且它撒的谎恰好是你最想听的
+那一句——因为那句话正是你写它的时候相信的。它把 benchmark 从"检验假设的工具"
+降级成"把假设重复一遍的机器"。更糟的是它\cnemph{看起来在工作}：表格是真的，
+数字是真的，只有那一行结论是假的。
+
+(b) 因为删掉之后，读日志的人要自己从五个数里看出趋势，而这正是当初想省掉的那一步。
+三个分支保留了"脚本替你读表"这个便利，同时把"读的结果"和"数据"绑定起来。
+更重要的是 \code{<0.8×} 那个分支：它守的是一个\cnemph{我不希望看到但必须能看到}的情形
+（cache 比重算还慢，说明实现有问题），措辞是"worth investigating before quoting these
+numbers"。一个只会说好消息的脚本，和一个硬编码结论的脚本，性质是一样的。
+
+(c) 是在把表格和结论并排读的时候发现的——五个数明显没趋势，下一行说它在增长，
+荒唐到不用算。如果没发现，\code{NIGHT_REPORT.md} 里会留下一句和自己表格矛盾的结论，
+而这份报告是给别人看的。同一个晚上还在 bucket size 扫描的汇总代码里犯了同一类错
+（直接 \code{print} "best: 50MB"，见 \secref{sec:b-bench}），说明这不是一次手滑，
+是一种习惯：\cnemph{把"我预期会看到什么"写进了本该报告"我看到了什么"的地方}。
+
+\whereincode \codeat{cs336\_systems/experiments/bench\_serving.py}{181}（注释与三分支）、
+\codeat{cs336\_systems/experiments/make\_night\_report.py}{166}（同一处修复的 markdown 版本）。
+\fi
+\end{checkpoint}
+
+\begin{misconception}{\codeb{artifacts/serving_benchmark_kv.json} 是修复后的脚本产出的，所以它是干净的。}
+不是。那个 JSON 写于 2026-07-27 23:58（日志时间戳），修复是之后做的。
+证据：修复后的代码会往结果里写一个 \codeb{cache_speedup_trend_last_over_first} 字段
+（\codeat{cs336\_systems/experiments/bench\_serving.py}{188}），
+而磁盘上那份 JSON 的顶层 key 只有
+\codeb{device / new_tokens / modes / cache_speedup_by_prompt_len}，\cnemph{没有那个字段}。
+
+这不影响任何数字——五个加速比是同一次测量的产物，修复只动了措辞逻辑。
+但它意味着\cnemph{那份 artifact 是用有 bug 的脚本产出的}，
+\code{NIGHT_REPORT.md} 里正确的"roughly flat at ~1.24x"那句话来自
+\code{make_night_report.py} 事后重新生成。这一条写在这里，是因为
+"结论对了"和"产出结论的代码对了"是两件事，而这一章刚好在讲这个区别。
+\end{misconception}
+
+\subsection{端到端：链路里除 tokenizer 外没有 HuggingFace 模型}
+\label{sec:b-kv-e2e}
+
+\codeb{tests/trained_model_integration_test.py} 走完整条链路：
+\code{RequestReceiver} $\to$ \code{pending_queue} $\to$ \code{InferenceEngine} $\to$
+\code{LMEngine} $\to$ \code{TransformerLMAdapter} $\to$ 自训权重。
+2026-07-27 夜里在 GPU 机器上真跑通了，2 passed。输出：
+
+\begin{lstlisting}[style=hlshell]
+prompt:    The history of the internet began in the
+continued:  late 19th century, and the first wave of internet-connected websites
+           emerged in the 20th century.
+\end{lstlisting}
+
+语法通顺、切题，事实是错的（还输出过 "Paris is the capital \ldots\ of the United States"），
+并且开始复读。一个 190M 参数、只训了 2.8 token/param 的模型就该是这个样子，
+\cnemph{不要把它说得比实际好}。这段输出记录在 \codeb{interview_prep/PROGRESS.md}；
+本机没有对应的测试日志，属于核不到出处的一项。
+
+链路里除了 tokenizer，没有任何 HuggingFace 模型。而 tokenizer 之所以能直接用 HF 的，
+是因为训练时用的 \codeb{tiktoken.get_encoding("gpt2")} 和 HF 的 \code{gpt2} tokenizer
+是 token-for-token 相同的。
+
+\begin{checkpoint}{tokenizer_compat}{凭什么说两个 tokenizer 是同一个}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 训练用 tiktoken、serving 用 \code{AutoTokenizer}，怎么保证 token id 对得上？
+  \item 如果不对得上，会表现成什么样？会不会报错？
+  \item 项目里为什么最后没有自己训 BPE？
+\end{enumerate}
+
+\ifshowanswers
+\tcblower
+\answer (a) 两者是同一份 GPT-2 BPE：50257 个词表项，\codet{<|endoftext|>} 都是 50256。
+本机核对过 tiktoken 这一半：\codeb{tiktoken.get_encoding("gpt2")} 的
+\code{n_vocab=50257}、\code{eot_token=50256}，和 adapter 里那个
+\code{GPT2_EOS_TOKEN_ID = 50256} 常量一致
+（\codeat{llm-serving/inferenceLM/engine/transformer\_lm\_adapter.py}{47}）。
+\cnemph{HF 那一半本机没有 \codet{transformers} 可以核对}，
+所以"token-for-token 相同"这个说法目前的依据是 adapter docstring 第 35--38 行
+和集成测试第 75 行的注释，加上两边都声称是 GPT-2 的原始 BPE。
+真正把它验成事实的是集成测试本身：如果 id 不一致，
+用 HF tokenizer 编码的 prompt 喂进按 tiktoken 训的模型，输出会是乱码而不是通顺英文。
+
+(b) \cnemph{不会报错}，因为两边 vocab size 相同，任何 id 都在合法范围内。
+表现是模型输出彻底的胡言乱语——但一个欠训的 190M 模型输出本来就不太好，
+这两种"不好"很容易混淆。这正是为什么集成测试要 \code{print} 出续写文本让人眼看，
+而不只是断言 \code{len(generated) > 0}。
+
+(c) 完整的理由属于预训练那一章（\secref{subsec:tokenizer}）：自训 BPE 在真实混合语料上
+慢到会把整个时间预算吃光，于是换成 tiktoken 的预训练 \code{gpt2} 编码，
+780MB + 20MB 语料 92 秒编码完（\codeb{run_logs/tiktoken_encode.log}：86.0 s + 5.9 s）。
+这里只记它\cnemph{顺带的收益}：serving 端因此不需要分发一份自定义 tokenizer，
+\code{RequestReceiver} 的 \code{AutoTokenizer} 直接指向 \code{"gpt2"} 就行，一行都不用改。
+
+\whereincode \codeat{llm-serving/tests/trained\_model\_integration\_test.py}{75}。
+\fi
+\end{checkpoint}
+
+\subsection{环境这一坑}
+\label{sec:b-kv-env}
+
+最后记一件纯工程的事，因为它花掉的时间不比上面任何一节少。
+
+要在 GPU 机器上同时跑两个仓库的代码，第一反应是给 \code{llm-serving} 单独
+\code{uv sync} 一份 venv。查了之后发现\cnemph{两边 venv 各缺一半}：
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \code{llm-serving} 没有 \code{einops} 和 \code{tiktoken}，
+        而这两个是 \code{cs336_basics} 的必需依赖；
+  \item 本项目没有 \code{transformers} 和 \code{pytest-asyncio}，
+        而 \code{llm-serving} 的测试全靠它们。
+\end{itemize}
+
+而且 \code{llm-serving} 的 \code{pyproject.toml} pin 的是 \code{torch>=2.11}，
+单独装会再拉一份约 3GB 的 torch（本项目跑的是已经验证过的 2.6），
+而那台实例的根分区只剩约 10GB。
+
+最后的解法是\cnemph{不建第二个 venv}：复用本项目的 venv，
+用 \codeb{uv run --with transformers --with pytest-asyncio} 临时补上缺的两个包，
+再用 \code{PYTHONPATH=~/llm-serving} 让 \code{inferenceLM} 可导入。
+不改任何 \code{pyproject.toml}，torch 版本不变。
+
+\begin{lstlisting}[style=hlshell]
+PYTHONPATH=~/llm-serving uv run --with transformers --with pytest-asyncio \
+  python cs336_systems/experiments/bench_serving.py \
+    --config cs336_systems/experiments/real_pretrain_config.json \
+    --checkpoint checkpoints_pretrain_v1/checkpoint_epoch_0100.pt \
+    --modes recompute cache
+\end{lstlisting}
+
+这里有一个反直觉的细节，踩过一次才知道：\cnemph{\codet{uv pip install} 装的包活不过下一次
+\codet{uv run}}。\code{uv run} 会把 venv 重新同步回 lockfile，把手动装的包清掉。
+所以必须用 \code{--with}（它每次都重新解析这几个额外依赖），
+而不是先 \code{uv pip install} 再 \code{uv run}。
+
+这一坑之所以值得写进讲义，是因为它是"两个仓库解耦"这个设计决定的\cnemph{账单}。
+\secref{sec:b-kv-adapter} 说 adapter 不 import \code{cs336_basics} 换来了三个好处；
+代价就在这里——总有一个地方要把两边拼起来，那个地方是运行环境，
+而运行环境比 import 语句难 debug 得多。这个账单是划算的，
+但把它记下来比假装它不存在诚实。

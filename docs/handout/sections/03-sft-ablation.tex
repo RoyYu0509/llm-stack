@@ -1,0 +1,516 @@
+% Chapter 3 -- SFT ablation.
+% Every number in this file was read out of artifacts/eval/*.json, artifacts/NIGHT_REPORT.md,
+% run_logs/sft_*.log or configs_sft/*.json. Where a number could only be found in
+% interview_prep/PROGRESS.md (i.e. the artifact that would confirm it is not on this
+% machine), the text says so.
+
+\section{SFT ablation：把灾难性遗忘变成一张表}
+\label{sec:b-sft}
+
+每个人都"知道"指令微调会造成灾难性遗忘。这是教科书上的一句话，代价小到可以随口说出来。
+
+但"知道"和"你的模型、在你选的那个 lr 上、在四条验证流上分别掉了多少 nats"是两件完全不同的事。前者不需要任何 GPU，后者需要一次预训练、六次微调、二十八次打分，以及一个能让 0.05 量级的差距不被采样噪声吞掉的评测协议。这一章讲的就是后面那件事：我们怎么把一句定性的常识，变成一张可以逐行读、可以拿去反驳自己的表。
+
+这一章的结论有三条，其中两条比我事先预期的强，一条比预期弱。它们都写在 \secref{sec:b-sft-table} 和 \secref{sec:b-sft-curve}；而 \secref{sec:b-sft-honest} 专门用来写这张表不能支持的东西——这一章正在讲"不要报没有出处的数字"，如果它自己的表没有出处，就自相矛盾了。所以下面每一张表的 caption 里都写清楚：数据来自哪个 JSON、多少个 batch、什么 seed。
+
+\subsection{实验设计：6 个 arm，一次回答两个问题}
+\label{sec:b-sft-design}
+
+微调这一步只有一个窗口：预训练在 UTC 20:12 跑完，用户睡觉，GPU 空着大约四小时。在这个预算里能做的不是"调出最好的微调模型"，而是"用最少的 arm 把两个自变量的效应分开"。
+
+于是设计成 $3 \times 2$：三个学习率 $\{1\text{e-}5,\ 3\text{e-}5,\ 1\text{e-}4\}$，乘以"纯 Alpaca"与"Alpaca + 25\% 预训练数据回放"两种语料。六个 arm 之外的一切都锁死——同一个起点 checkpoint、同样 900 步、同样 90 步 warmup、同样 \code{seed=0}、同样 \code{grad_clip=1.0}、同样的 \code{flash_attention_triton} + \code{flashddp} 组合、同样 25MB 的 bucket。六份 config 逐字段 diff 之后只有两处不同：\code{training.lr}，和 \code{tokenized_train} 指向 \code{alpaca_train.npy} 还是 \code{alpaca_replay_train.npy}。
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+ & \codet{lr=1e-5} & \codet{lr=3e-5} & \codet{lr=1e-4} \\
+\midrule
+纯 Alpaca & \codet{lr1e5\_plain} & \codet{lr3e5\_plain} & \codet{lr1e4\_plain} \\
++25\% 回放 & \codet{lr1e5\_replay} & \codet{lr3e5\_replay} & \codet{lr1e4\_replay} \\
+\bottomrule
+\end{tabular}
+\caption{六个 arm 的命名。每个 arm 900 步、\codet{warmup\_iters=90}、\codet{seed=0}、
+每卡 batch 8、context 1024，都用 \codet{init\_from} 指向同一个预训练 checkpoint
+\codeb{checkpoints_pretrain_v1/checkpoint_epoch_0100.pt}。
+出处：\codet{configs\_sft/*.json} 六份，逐字段比对只有 \codet{lr} 和
+\codet{tokenized\_train} 两处不同。}
+\label{tab:sft-grid}
+\end{table}
+
+900 步是怎么来的：2 卡 $\times$ batch 8 $\times$ 1024 context $=$ 16{,}384 token/step，900 步就是约 14.7M token。Alpaca 语料是 4.31M token，于是纯 Alpaca 的 arm 大约看了 3.4 遍。
+
+这里有一个我们当晚没算、写这份讲义时才算出来的混淆项。回放流的拼法见 \secref{subsec:sft-corpus}：\code{replay_frac=0.25} 时拼进去的预训练 token 是 Alpaca 的 $1/3$，所以整条流是 Alpaca 长度的 $4/3$。于是在\cnemph{同样 900 步}下，replay arm 对 Alpaca 的曝光是 $3.4 \times 0.75 = 2.6$ 遍，比 plain arm \cnemph{少 25\%}。这不是设计缺陷，但它是真实的混淆：后面 \secref{sec:b-sft-curve} 会看到 replay arm 的过拟合漂移小 2.6 倍，其中有多少来自"回放起到了正则作用"、有多少只是"Alpaca 少看了 0.85 遍"，这个实验分不开。
+
+\begin{checkpoint}{init_from_vs_resume_from}{\codet{init\_from} 和 \codet{resume\_from} 差在哪}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 微调应该用哪一个？为什么另一个会出问题？
+  \item 这个论证在什么情况下\cnemph{不成立}？
+  \item 旧 checkpoint 为什么被显式拒绝，而不是尽力恢复？
+\end{enumerate}
+\hint 预训练跑完的那一刻，cosine schedule 已经衰到底了。Adam 的一阶二阶矩是在"lr 已经很小"这个 regime 下累出来的。
+
+\ifshowanswers
+\tcblower
+\answer (a) 微调用 \code{init_from}：只加载权重，AdamW 的矩和 LR schedule 全部重来。用 \code{resume_from} 会把两样东西一起继承过来——一个已经衰到最小值的 cosine（微调的前 90 步 warmup 会和它打架），以及一组适配了那个 regime 的动量估计。微调有它自己的、短得多的 schedule，继承任何一个都是把预训练末期的状态强加到一个新任务上。
+
+(b) \cnemph{这个论证只对微调成立，对同任务续训不成立。} 一次被中断的预训练要继续跑，就\cnemph{应该}带上 optimizer state 和 \code{global_step} 恢复——那时 schedule 是同一条，矩估计也是同一个分布上的，丢掉它们才是错的。这一点在项目里被自己纠正过一次：最初的说法是"继承 optimizer state 会和 schedule 打架"，说得太宽了。
+
+(c) 因为旧 checkpoint 只有一个 \code{iter} 字段，而写入端在 \code{tag="step"} 时存的是 global step、\code{tag="epoch"} 时存的是 epoch——同一个字段两种语义。加载端把它当 epoch 喂给 \codeb{range(start_epoch, epochs)}，\code{range(15000, 100)} 和 \code{range(100, 100)} \cnemph{都是空的}：续训会正常启动、正常打印、一步不训直接退出，而且不报错。这种失败模式比崩溃危险得多，所以现在遇到有歧义的旧 checkpoint 直接抛异常并提示改用 \code{init_from}。
+
+\whereincode \codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{343}（\code{init_from} 分支）、\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{179}（拒绝旧 checkpoint 的注释，异常在 188 行）。
+\fi
+\end{checkpoint}
+
+\subsection{\codet{init\_from} 在代码里长什么样}
+\label{sec:b-sft-initfrom}
+
+\lstinputlisting[style=hlnum, firstline=343, lastline=354, firstnumber=343]%
+  {../../cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}
+
+注意最后那句 print 里的 \codeb{optimizer state NOT restored}。它不是装饰：无人值守跑六个 arm 的时候，日志是唯一能证明"这一 run 确实是从预训练权重冷启动的"的东西。一个只在代码注释里写清楚、日志里看不出来的约定，等于没有。
+
+\subsection{配对评测才是 arm 可分辨的原因}
+\label{sec:b-sft-paired}
+
+先看要分辨的差距有多大。表~\ref{tab:sft-delta} 里 \code{lr1e5_replay} 和 \code{lr1e5_plain} 在 general 上差 0.047 nats，在 instruction 上差 0.007 nats。这是一个很容易被"换一批验证 batch"这件事本身盖掉的量级。
+
+夜里为此做了两件事，效果完全不同：
+
+\begin{itemize}[leftmargin=1.5em]
+  \item 把最终打分的 batch 数从 100 提到 200；
+  \item 让 \code{eval_checkpoint.py} 用固定 seed 构造 DataLoader 的 shuffle generator，于是\cnemph{所有 checkpoint 打的是同一批 batch}。
+\end{itemize}
+
+\cnemph{真正让 arm 可分辨的是第二件，不是第一件。} 样本量翻倍只把标准误降到 $1/\sqrt{2}$；而配对之后，"这一批 batch 恰好偏难"这个共同分量在做差时直接抵消掉了。
+
+\lstinputlisting[style=hlnum, firstline=30, lastline=46, firstnumber=30]%
+  {../../cs336_systems/experiments/eval_checkpoint.py}
+
+这个说法当晚被验过一次，而且是被迫验的：另一条线索（见 \secref{sec:b-sft-honest}）显示 \code{general} 上的 delta 符号和分域加权反推出来的对不上，第一反应是"会不会只是采样噪声"。于是换了两个 seed 各重打一次分。
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{lrrr}
+\toprule
+ & pretrained & \codet{lr1e5\_replay} & delta \\
+\midrule
+主 eval（\codet{seed=0}） & 3.5866 & 3.6104 & $+0.0238$ \\
+seedcheck s1 & 3.5853 & 3.6092 & $+0.0240$ \\
+seedcheck s2 & 3.5669 & 3.5913 & $+0.0244$ \\
+\bottomrule
+\end{tabular}
+\caption{同一对 checkpoint，三个不同 seed 的 \codet{general} 流打分。
+\cnemph{绝对值漂了 0.020}（3.5669 到 3.5866），\cnemph{配对差值只漂了 0.0006}。
+出处：\codeb{artifacts/eval/pretrained.json}、\codet{sft\_lr1e5\_replay.json}、
+\codet{seedcheck\_\{pretrained,lr1e5\_replay\}\_s\{1,2\}.json}，
+每格 200 个 batch、\codeb{data/tokenized/mixed_valid.npy}。delta 由这两列现算。
+同一组数字在 \secref{subsec:contamination} 被用于另一个目的（排除采样噪声）；这里用它
+度量的是配对本身的方差抵消效果。}
+\label{tab:seedcheck}
+\end{table}
+
+这张表本身就是配对为什么有效的证据：换 seed 之后单个模型的绝对 loss 动了 0.020，是我们要分辨的 arm 间差距（0.047）的一半；而两个模型的\cnemph{差}只动了 0.0006，小两个数量级。
+
+\begin{checkpoint}{paired_eval}{为什么 200 个 batch 能分辨 0.05 的差}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 如果每个 checkpoint 各自随机采 200 个 batch（不固定 seed），结论会怎样变？
+  \item \code{eval_stream} 里为什么要 \code{shuffle=True} 而不是直接取前 200 个窗口？
+  \item 配对能抵消什么，不能抵消什么？
+\end{enumerate}
+\hint 表~\ref{tab:seedcheck} 里那两个数量级的差距，就是答案。
+
+\ifshowanswers
+\tcblower
+\answer (a) 每个 checkpoint 的 loss 上会各自叠一个约 $\pm 0.01$ 量级的采样波动（表~\ref{tab:seedcheck} 实测：换 seed 后绝对值动了 0.020），做差之后这两个波动不相消而是相加。0.047 的真实差距会被埋进去，六个 arm 的排序会开始随 seed 抖动。
+
+(b) 因为三条流长度差别很大，而 \code{TokenStreamDataset} 是滑窗索引、语料是按域顺序写的。取前 $N$ 个窗口等于拿"C4 的开头几篇网页"去比"Alpaca 的开头几条"，比的是文档而不是模型。固定 seed 的 shuffle 同时拿到了两样：代表性采样，以及跨 checkpoint 的可配对性。
+
+(c) 抵消的是"这一批数据本身偏难/偏易"这个所有 checkpoint 共享的分量。\cnemph{不能}抵消的是流本身的构造问题——如果这批数据里混了重复文本，配对只保证所有模型在同样被污染的数据上被比较，不保证这个数字能被解释成"通用能力"。\secref{sec:b-sft-honest} 就栽在这一点上。
+
+\whereincode \codeat{cs336\_systems/experiments/eval\_checkpoint.py}{37}（固定 seed 的 generator）、\codeat{cs336\_systems/experiments/eval\_checkpoint.py}{34}（注释里写明为什么不能取前 $N$ 个）。
+\fi
+\end{checkpoint}
+
+\subsection{读那张表}
+\label{sec:b-sft-table}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+model & general & web & wiki & instruction \\
+\midrule
+pretrained            & 3.5866 & 3.8469 & 3.5518 & 2.7345 \\
+\midrule
+\codet{sft\_lr1e5\_replay} & 3.6104 & 3.8375 & 3.5656 & 2.4083 \\
+\codet{sft\_lr1e5\_plain}  & 3.6572 & 3.8859 & 3.5954 & 2.4150 \\
+\codet{sft\_lr3e5\_replay} & 3.6424 & 3.8650 & 3.6044 & 2.4531 \\
+\codet{sft\_lr3e5\_plain}  & 3.7375 & 3.9637 & 3.6695 & 2.4793 \\
+\codet{sft\_lr1e4\_replay} & 3.7698 & 3.9914 & 3.7542 & 2.5685 \\
+\codet{sft\_lr1e4\_plain}  & 3.9988 & 4.2319 & 3.9224 & 2.6589 \\
+\bottomrule
+\end{tabular}
+\caption{七个 checkpoint $\times$ 四条验证流的绝对 cross-entropy loss（nats/token）。
+出处：\codet{artifacts/eval/\{pretrained,sft\_*\}.json} 共七个文件，
+每格 200 个 batch、batch size 8、context 1024、\codet{seed=0}，
+流分别是 \codet{mixed\_valid.npy} / \codet{domain\_valid\_web.npy} /
+\codet{domain\_valid\_wiki.npy} / \codeb{domain_valid_instruction.npy}。
+所有 checkpoint 打的是同一批 batch。}
+\label{tab:sft-abs}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+arm & instruction & general & web & wiki & 效率 \\
+\midrule
+\codet{lr1e5\_replay} & $-0.3263$ & $+0.0238$ & $-0.0093$ & $+0.0138$ & $13.7\times$ \\
+\codet{lr1e5\_plain}  & $-0.3195$ & $+0.0706$ & $+0.0390$ & $+0.0437$ & $4.5\times$ \\
+\codet{lr3e5\_replay} & $-0.2814$ & $+0.0557$ & $+0.0181$ & $+0.0526$ & $5.0\times$ \\
+\codet{lr3e5\_plain}  & $-0.2553$ & $+0.1509$ & $+0.1168$ & $+0.1177$ & $1.7\times$ \\
+\codet{lr1e4\_replay} & $-0.1661$ & $+0.1832$ & $+0.1445$ & $+0.2024$ & $0.91\times$ \\
+\codet{lr1e4\_plain}  & $-0.0756$ & $+0.4122$ & $+0.3850$ & $+0.3706$ & $0.18\times$ \\
+\bottomrule
+\end{tabular}
+\caption{相对预训练模型的变化，负号 $=$ 变好。
+"效率" $=$ $|\Delta_{\text{instruction}}| / \Delta_{\text{general}}$，
+即每付出 1 nat 的通用能力代价换回多少 nat 的指令能力。
+出处：表~\ref{tab:sft-abs} 逐格相减；与 \codeb{artifacts/NIGHT_REPORT.md} 第 3 节的
+delta 表一致到最后一位。效率一列是写这份讲义时用 JSON 里的全精度值现算的，
+\codet{NIGHT\_REPORT.md} 没有这一列。}
+\label{tab:sft-delta}
+\end{table}
+
+\begin{examplebox}{reading_the_ablation_table}{逐行读表~\ref{tab:sft-delta}}
+\cnemph{一、这个数在说什么。} \code{lr1e5_replay} 那行的 $-0.3263$ 是：微调后的模型在
+\codeb{domain_valid_instruction.npy} 上的 cross-entropy，比预训练模型低 0.3263 nats。
+换成 perplexity 是 $15.40 \to 11.11$（表~\ref{tab:sft-abs} 对应 JSON 里的 \code{ppl} 字段），
+降了 28\%。它\cnemph{不}是"指令跟随能力"，是"在这批 held-out 指令文本上的下一 token 预测更准了"。
+两者相关但不是一回事——语料里没有任何一条评估是让模型真的执行指令再由人打分的。
+
+\cnemph{二、哪两行可以配对比较。} 同一列里\cnemph{只改一个自变量}的两行：
+\begin{itemize}[leftmargin=1.5em, topsep=2pt]
+  \item \code{lr1e5_replay} vs \code{lr1e5_plain}：只差有没有回放。可比。
+  \item \code{lr1e5_plain} vs \code{lr3e5_plain}：只差 lr。可比。
+\end{itemize}
+这两组各自都是干净的单变量对照，因为除此之外的 config 字段逐字段相同（表~\ref{tab:sft-grid} 的 caption）。
+
+\cnemph{三、哪两行不能。} $13.7\times$（\code{lr1e5_replay}）和 $0.18\times$（\code{lr1e4_plain}）
+之间那个 $75\times$ 的比值\cnemph{不能}被叫做"lr 升高造成的效率损失"——这两行同时改了 lr
+\cnemph{和}回放。同变量的诚实版本是：
+\begin{itemize}[leftmargin=1.5em, topsep=2pt]
+  \item plain 一路：$4.5\times \to 1.7\times \to 0.18\times$，1e-5 到 1e-4 掉 \cnemph{24.7 倍}。
+  \item replay 一路：$13.7\times \to 5.0\times \to 0.91\times$，同样区间掉 \cnemph{15.1 倍}。
+\end{itemize}
+两条路都单调、都跨越一个数量级，但\cnemph{数值不同}，而且回放把塌陷放缓了。把 $75\times$ 写进结论
+是把两个效应乘在了一起。
+\end{examplebox}
+
+\begin{misconception}{回放是拿一点指令能力去换通用能力，是个权衡。}
+表~\ref{tab:sft-delta} 说不是。同样 lr=1e-5，replay arm 在 instruction 上是 $-0.3263$、
+plain 是 $-0.3195$——replay \cnemph{在指令上也更好}，同时 general 的代价低 3 倍。
+四个域全面占优，没有任何一格是 replay 更差。lr=3e-5 上同样成立（四个域全占优），
+lr=1e-4 上也成立。这是严格的 Pareto 改进，不是权衡。
+\end{misconception}
+
+\begin{checkpoint}{pareto_not_tradeoff}{Pareto 改进为什么是可能的}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 直觉上，"少喂 25\% 的指令数据"应该让指令能力\cnemph{变差}才对。为什么没有？
+  \item 这个结论在三个 lr 上都成立，还是只在小 lr 上成立？
+\end{enumerate}
+\hint 回想 \secref{sec:b-sft-design} 最后那段：在固定 900 步下，replay arm 看到的 Alpaca token
+比 plain arm 少 25\%。
+
+\ifshowanswers
+\tcblower
+\answer (a) 因为在这个规模上，多看 Alpaca 的边际收益早就转负了。\secref{sec:b-sft-curve} 会看到
+所有 arm 的 instruction 验证 loss 在 step 100--300 就触底，之后一路变差——900 步里大部分时间是在
+过拟合。少喂 25\% 等于少过拟合 25\%，于是最终 checkpoint 反而更靠近最优点。\cnemph{这个解释
+只在"步数定得太长"的前提下成立}；如果 900 步落在欠拟合区，同样的操作大概率会让指令能力变差。
+
+(b) 三个 lr 上都成立，而且是四个域全占优（表~\ref{tab:sft-delta} 逐格比较 replay 行与同 lr 的 plain 行）。
+但注意 lr=1e-4 那一对：replay 的 instruction 是 $-0.1661$、plain 是 $-0.0756$，两个都远差于
+lr=1e-5 的 $-0.32$。"replay 更好"和"这个 lr 本身是坏的"可以同时成立。
+
+\whereincode 数据在 \codeat{artifacts/eval/sft\_lr1e5\_replay.json}{1} 等六个文件；
+回放比例的定义在 \codeat{cs336\_systems/data\_harvest/build\_sft\_corpus.py}{87}。
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{why_replay_beats_pretrained_on_web}{为什么 replay arm 在 web 上比预训练模型还好}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item \code{lr1e5_replay} 在 web 上是 $-0.0093$（比预训练模型\cnemph{还低}），在 wiki 上却是
+        $+0.0138$（变差了）。为什么两个域方向相反？
+  \item "25\% 预训练数据回放"这个说法准确吗？
+\end{enumerate}
+\hint 去看 \code{build_sft_corpus.py} 取的是 \code{mixed_train.npy} 的哪一段，
+再去看 \code{build_mixed_corpus.py} 是按什么顺序往 \code{train.txt} 里写的。
+
+\ifshowanswers
+\tcblower
+\answer (a) 因为回放的那 25\% \cnemph{全部是 web 文本，一个 wiki token 都没有}。
+\code{build_sft_corpus.py} 取的是 \code{pretrain[:n_replay]}——预训练流的一个\cnemph{连续前缀}；
+而 \code{build_mixed_corpus.py} 是按域顺序写文件的（先 web，再 wikipedia，再 instruction），
+web 独占 546MB 字符预算中的 546MB 里的头部。语料总共 173{,}972{,}065 token（\code{tiktoken_encode.log}），
+web 段大致占前 1.2 亿 token；而 \codeb{n_replay = n_alpaca/3 ≈ 1.44M}，深深地落在 web 段内部。
+所以 replay arm 实际做的是"指令微调 + 继续在 C4 上预训练"，web 变好、wiki 照样遗忘，
+方向完全对得上。
+
+(b) \cnemph{不准确。} 夜报和 \code{PROGRESS.md} 里都写成"25\% 预训练数据回放"，
+听起来像是按 70/20/10 配比回放；实测的构造是 100\% web 回放。这不影响
+"replay 是 Pareto 改进"这条结论（表~\ref{tab:sft-delta} 里 wiki 列 replay 也全面占优，
+只是幅度小），但它确实改变了这条结论的\cnemph{机制解释}，也说明如果想要一个真正按配比的回放，
+\code{build_sft_corpus.py} 得改成分层采样而不是切前缀。
+
+\whereincode \codeat{cs336\_systems/data\_harvest/build\_sft\_corpus.py}{91}（\code{pretrain[:n_replay]}）、
+\codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{174}（train split 的写入顺序）。
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{forgetting_efficiency}{定义一个"遗忘效率"指标，然后说出它的毛病}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 表~\ref{tab:sft-delta} 最后一列是怎么算的？
+  \item 它有哪三个已知缺陷？
+\end{enumerate}
+\hint 分母是一个可以趋近于零的数。
+
+\ifshowanswers
+\tcblower
+\answer (a) $\text{效率} = |\Delta_{\text{instruction}}| / \Delta_{\text{general}}$，
+两个 delta 都取自表~\ref{tab:sft-delta}，用 JSON 全精度值算。读法是"每付出 1 nat 通用能力，
+换回多少 nat 指令能力"。
+
+(b) 三个毛病，按严重程度排：
+\begin{enumerate}[label=(\arabic*), topsep=2pt]
+  \item \cnemph{分母趋零时它会爆炸。} 一个几乎不动权重的 arm（比如 lr=1e-7）会拿到一个巨大的效率值，
+        而它其实什么都没学到。所以这个指标\cnemph{只能在指令增益可比的 arm 之间用}——比较
+        $13.7\times$ 和 $4.5\times$ 是合法的（两者 instruction 增益差 2\%），比较 $13.7\times$ 和
+        $0.18\times$ 就已经不太合法了（instruction 增益差了 4 倍）。
+  \item \cnemph{它把两个不同单位的东西当成同一个单位相除。} 分子是 Alpaca held-out 上的 nats，
+        分母是混合验证流上的 nats。两者可以相除，但商没有物理意义，只是一个排序用的比值。
+  \item \cnemph{分母那条流本身有 10\% 不干净}（\secref{sec:b-sft-honest}）。排序不受影响，
+        但绝对值不该被引用。
+\end{enumerate}
+所以这一列在讲义里保留，是因为它把六个 arm 排出了一个和四列 delta 完全一致的序；
+它不是一个可以拿去跨项目比较的指标。
+\fi
+\end{checkpoint}
+
+\subsection{曲线：收益几乎全在前 100 步}
+\label{sec:b-sft-curve}
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrrrrr}
+\toprule
+arm & 100 & 200 & 300 & 400 & 500 & 600 & 700 & 800 & 900 \\
+\midrule
+\codet{lr1e5\_plain}  & \textbf{2.4390} & 2.4465 & 2.4488 & 2.4486 & 2.4566 & 2.4585 & 2.4618 & 2.4620 & 2.4631 \\
+\codet{lr1e5\_replay} & 2.4490 & 2.4475 & \textbf{2.4472} & 2.4515 & 2.4493 & 2.4546 & 2.4531 & 2.4553 & 2.4566 \\
+\codet{lr3e5\_plain}  & \textbf{2.4430} & 2.4618 & 2.4820 & 2.4854 & 2.4994 & 2.5209 & 2.5294 & 2.5296 & 2.5308 \\
+\codet{lr3e5\_replay} & \textbf{2.4475} & 2.4520 & 2.4658 & 2.4898 & 2.4849 & 2.5028 & 2.5012 & 2.5072 & 2.5097 \\
+\codet{lr1e4\_plain}  & \textbf{2.4542} & 2.4955 & 2.5544 & 2.5703 & 2.5854 & 2.6689 & 2.6894 & 2.7010 & 2.7179 \\
+\codet{lr1e4\_replay} & \textbf{2.4571} & 2.4639 & 2.5203 & 2.5727 & 2.5606 & 2.6095 & 2.6215 & 2.6303 & 2.6310 \\
+\bottomrule
+\end{tabular}
+\caption{训练内验证 loss，每 100 步一次，粗体是各 arm 的最低点。
+出处：\codet{run\_logs/sft\_*.log} 里的 \codeb{Rank 0 | step NNNNNN | Val loss:} 行，
+每次 eval 是 \codet{alpaca\_valid.npy} 上 \codet{val\_bat\_num=50} 个 batch。
+注意这\cnemph{不是}表~\ref{tab:sft-abs} 的 instruction 列——那一列是
+\codeb{domain_valid_instruction.npy} 上 200 个随机 batch，两条流不同、采样也不同。}
+\label{tab:sft-curve}
+\end{table}
+
+六条曲线的形状是一样的：在 step 100 或 300 触底，然后基本单调变差（有 0.002 量级的抖动，
+例如 \code{lr1e5_plain} 在 300$\to$400 微降、\code{lr1e4_replay} 在 400$\to$500 微降）。
+把最低点和第 900 步的差叫做\cnemph{漂移}：
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+arm & best val & best 出现在 & final val (step 900) & 漂移 \\
+\midrule
+\codet{lr1e5\_replay} & 2.4472 & step 300 & 2.4566 & $+0.0094$ \\
+\codet{lr1e5\_plain}  & 2.4390 & step 100 & 2.4631 & $+0.0241$ \\
+\codet{lr3e5\_replay} & 2.4475 & step 100 & 2.5097 & $+0.0622$ \\
+\codet{lr3e5\_plain}  & 2.4430 & step 100 & 2.5308 & $+0.0878$ \\
+\codet{lr1e4\_replay} & 2.4571 & step 100 & 2.6310 & $+0.1739$ \\
+\codet{lr1e4\_plain}  & 2.4542 & step 100 & 2.7179 & $+0.2637$ \\
+\bottomrule
+\end{tabular}
+\caption{best val 与 final val。出处：表~\ref{tab:sft-curve} 的九个点取最小值与末值，
+与 \codeb{artifacts/NIGHT_REPORT.md} 第 2 节的 best/final 两列逐位一致。
+"best 出现在"和"漂移"两列是本讲义现算的，\codet{NIGHT\_REPORT.md} 只有 best 和 final。}
+\label{tab:sft-drift}
+\end{table}
+
+漂移随 lr 单调上升（$0.0241 \to 0.0878 \to 0.2637$，plain 一路），回放把它压小（同 lr 下
+$0.0241 \to 0.0094$，小 2.6 倍）。但请记住 \secref{sec:b-sft-design} 末尾那个混淆项：
+replay arm 在同样步数下对 Alpaca 的曝光少 25\%，这 2.6 倍里有多少是"回放正则化"、
+有多少是"少看了 0.85 遍"，本实验分不开。
+
+\begin{checkpoint}{eval_density}{9\% 的开销换一条什么样的曲线}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item eval 从每 300 步加密到每 100 步，代价是多少？
+  \item 如果保持每 300 步，表~\ref{tab:sft-curve} 会变成什么样？哪条结论会丢？
+  \item 预训练那条曲线为什么反而故意做得很稀疏（全程约 5 次）？
+\end{enumerate}
+\hint 一个 arm 的墙钟是多少，一次 eval 是多少。
+
+\ifshowanswers
+\tcblower
+\answer (a) 一次 eval 约 7 秒（50 个 batch），一个 arm 约 700 秒（六个 arm 的启动时间戳间隔约
+15 分钟，见 \codeb{run_logs/post_train_window.log}）。9 次 eval $\approx$ 63 秒 $\approx$ 9\%。
+
+(b) 只剩 step 300 / 600 / 900 三个点。以 \code{lr1e5_plain} 为例就是 $2.4488 / 2.4585 / 2.4631$
+——单调上升，看得出"越训越差"，但\cnemph{看不出拐点在哪}，因为最低点（step 100）根本不在采样里。
+"收益几乎全在前 100 步、合理步数是 100--200"这条结论会丢，剩下的只是"900 步太长"这个模糊印象。
+更糟的是 \code{lr1e5_replay}：三个点是 $2.4472 / 2.4546 / 2.4566$，最低点恰好落在 step 300 上，
+会让人以为拐点就在那儿。
+
+(c) 因为两者问的问题不同。预训练那条曲线要回答的是"loss 在不在降、有没有 NaN"，
+一次 eval 本来就是验证集上一次带误差棒的随机采样估计，把频率提高十倍买到的是噪声不是信号，
+而 7 小时的训练里每次 eval 都在挤真正的训练步数。微调这边要回答的是"拐点在哪"，
+那是一个关于\cnemph{形状}的问题，形状需要采样密度。同一个旋钮在两个场景下往相反方向拧，
+是因为要回答的问题不同，不是前后矛盾。
+
+\whereincode \codeat{configs\_sft/lr1e5\_replay.json}{1}（\code{eval_every_n_steps: 100}）；
+预训练那边的理由写在 \code{real_pretrain_config.json} 的 \code{_NOTE_eval_frequency} 字段里。
+\fi
+\end{checkpoint}
+
+\begin{tipbox}{3 arm 版本}
+没有四小时空闲 GPU 也能得到前两条结论。把网格砍成三个 arm：
+\code{lr1e5_plain} / \code{lr1e5_replay} / \code{lr1e4_plain}。
+
+\begin{itemize}[leftmargin=1.5em, topsep=2pt]
+  \item \cnemph{Pareto 改进}照样能得：它只需要 \code{lr1e5} 那一对（表~\ref{tab:sft-delta} 前两行）。
+  \item \cnemph{收益全在前 100 步}照样能得：任何一个 arm 的九点曲线都够（表~\ref{tab:sft-curve}）。
+  \item \cnemph{遗忘临界点}会退化成两个点（$4.5\times$ 和 $0.18\times$），
+        只能说"效率在 1e-5 到 1e-4 之间掉了 24.7 倍"，不能说这条曲线长什么样。
+        中间那个 3e-5 的点（$1.7\times$）就是买"单调性"这个性质的钱。
+\end{itemize}
+\resources 三个 arm 各 900 步。夜里六个 arm 在 2$\times$3090 上跑了约 90 分钟（21:46--23:15 UTC，
+见 \codeb{run_logs/post_train_window.log} 的 arm 时间戳），所以三个 arm 约 45 分钟。
+评测部分（\code{eval_checkpoint.py}，四条流 $\times$ 200 batch）在 CPU 上也能跑，只是慢。
+\end{tipbox}
+
+\subsection{这一章不敢报的东西}
+\label{sec:b-sft-honest}
+
+\begin{checkpoint}{last_not_best}{被打分的 checkpoint 不是最好的那个}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 表~\ref{tab:sft-abs} 里每个 arm 被打分的是哪一步的权重？为什么这仍然是公平的？
+  \item 为什么没有补一次"在最优步数停下"的 run？
+  \item "best val" 和"表~\ref{tab:sft-abs} 的 instruction 列"是不是同一个数？
+\end{enumerate}
+\hint 表~\ref{tab:sft-drift} 的"漂移"列，以及表~\ref{tab:sft-curve} 的 caption。
+
+\ifshowanswers
+\tcblower
+\answer (a) 都是 step 900 的权重（\code{checkpoint_epoch_0100.pt}，见每个 eval JSON 的
+\code{checkpoint} 字段）。checkpointing 存的是最后一步，不是最好那一步。这仍然公平，
+是因为\cnemph{六个 arm 待遇完全一致}——都被扣掉了各自的漂移，而且排序问题问的是相对关系。
+但要注意这个扣减\cnemph{不是等量的}：\code{lr1e4_plain} 被扣掉 0.2637，
+\code{lr1e5_replay} 只被扣掉 0.0094。也就是说这张表\cnemph{系统性地低估了大 lr arm}，
+真实的"最优早停 lr1e4"没有表里看起来那么糟。这一条对结论方向没有影响（它只会让 lr1e4 更差看），
+但如果反过来——如果 winner 是漂移最大的那个 arm——这张表就不能用了。
+
+(b) 因为 winner（\code{lr1e5_replay}）的漂移只有 $0.0094$，它的最终 checkpoint 基本就在最优点上。
+为 0.009 nats 再租一次 GPU、重跑一遍 900 步，是做样子不是做实验。
+
+(c) \cnemph{不是。} 三处不同：best val 来自 \code{alpaca_valid.npy}、训练循环内的 50 个 batch、
+而且是 \codeb{DistributedSampler(shuffle=False)} 取前 50 个窗口（所以是该流开头的一个窄切片）；
+表~\ref{tab:sft-abs} 的 instruction 列来自 \codeb{domain_valid_instruction.npy}、200 个随机 batch、
+固定 seed。\code{lr1e5_plain} 的两个数分别是 2.4390 和 2.4150。它们\cnemph{不该被放在一起比较}，
+在报告里必须分开写。
+
+\whereincode 打分脚本 \codeat{cs336\_systems/experiments/eval\_checkpoint.py}{72}；
+训练内 eval 的窄切片性质在 \codeat{artifacts/NIGHT\_REPORT.md}{15} 的两条 caveat 里写着。
+\fi
+\end{checkpoint}
+
+第二件不敢报的：\cnemph{\codet{general} 这条流有 10\% 的成分是被污染的。}
+
+\code{mixed_valid.npy} 的 instruction 区段是 \codeb{build_mixed_corpus.build_instruction}
+把 2600 条 held-out Alpaca 循环 1.91 遍凑出来的——这个做法对 train split 是对的
+（用 epoch 数给小而精的域配比，正是 LLaMA 那套设计本身），但它被同样用在了 valid split 上。
+重复过的验证数据是假的容易：一个 1024-token 窗口里可能装着同一条样本两次，
+第二遍靠 in-context 复制就能预测。完整的追查过程和那张"算术闭合"的切片表
+（表~\ref{tab:closure}）属于数据那一章，见 \secref{subsec:contamination}；
+这里只取它落在本章上的两个后果。
+
+第一，\cnemph{污染改变了 delta 的符号}：在重复过的 instruction 区段上，
+\code{lr1e5_replay} 是 $+0.0924$（"变差"），而在干净的
+\codeb{domain_valid_instruction.npy} 上是 $-0.3263$（大幅变好）。
+同一批 2600 条样本，两条流，符号相反。
+
+第二，所以表~\ref{tab:sft-delta} 的 \code{general} 一列
+\cnemph{绝对值和分解都不能引用}，能引用的只有 arm 之间的\cnemph{排序}——
+所有 arm 打的是同一批被同样污染的数据、配对比较，排序不受影响。
+本章里凡是用到 \code{general} 的地方（包括那个"效率"指标的分母）都受这一条约束。
+
+第三件：\cnemph{这不是教科书意义上的 SFT。} \code{cs336_basics} 的 \code{cross_entropy}
+没有 loss masking，loss 是在整篇 \codeb{### Instruction: ... ### Response: ...} 文档上算的。
+论证见 \secref{subsec:sft-corpus} 和那里的 Checkpoint~\ref{cp:not_really_sft}。
+本章标题仍然叫 SFT，是因为改名会和代码里的目录名、config 名全部脱节；
+但每次引用表~\ref{tab:sft-delta} 都得带上这句话。
+
+第四件：\cnemph{有几个数字这台机器上核不了。} Alpaca 语料 4.31M token、
+三条分域验证流各 267K / 281K / 226K token——这些只记录在 \codeb{interview_prep/PROGRESS.md} 里，
+对应的 \code{data/} 目录和构建日志留在已经停掉的远端实例上，本地 \code{data/tokenized/}
+只剩 TinyStories 的三个 \code{.npy}。本讲义里凡是用到这些数的地方（比如"900 步 $\approx$ 3.4 遍"）
+都是从它们推出来的，因此同样未经独立核实。
+
+\subsection{没有中途改实验}
+\label{sec:b-sft-nochange}
+
+第一个 arm（\code{lr1e5_plain}）跑完，九个点的曲线一出来，"900 步定得太长、合理值是 100--200 步"
+就已经很明显了。当时还有五个 arm 没跑。
+
+\begin{checkpoint}{dont_change_mid_experiment}{看到第一个 arm 就知道设错了，为什么不改}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 把剩下五个 arm 改成 200 步，会失去什么？
+  \item 除了"可比性"之外，还有一个更强的理由不改。是什么？
+  \item 什么情况下\cnemph{应该}中途停下来改？
+\end{enumerate}
+
+\ifshowanswers
+\tcblower
+\answer (a) 失去整张表。六个 arm 里只要有一个用了不同的步数预算，表~\ref{tab:sft-delta}
+的每一行就不再是同一个实验的六个观测，而是两个实验各三行。lr 的效应和步数的效应会混在一起，
+"效率随 lr 单调下降"这条结论直接作废。
+
+(b) \cnemph{这条曲线本身就是结论。} 我们要的不只是"一个微调好的模型"，还有"微调的收益在哪一步耗尽"
+这个可以量化的事实。如果在 step 200 就停，表~\ref{tab:sft-curve} 只剩两列，
+"漂移随 lr 单调上升、回放把漂移压小 2.6 倍"（表~\ref{tab:sft-drift}）这一整块就没有了。
+换句话说，那个"设错了的" \code{max_iters=900}，恰好是让过拟合过程可观测的设置。
+
+(c) 当发现的是\cnemph{正确性问题}而不是\cnemph{设计不优}的时候。这个区别在同一个项目里刚好有对照：
+预训练发散成 NaN 时立刻停了，因为那是一个 bug；微调步数偏长没有停，因为那只是一个不够优的选择，
+而且它产出的数据有独立价值。判据是"继续跑下去还会不会得到有效数据"——NaN 之后不会，
+过拟合之后会。
+\fi
+\end{checkpoint}
+
+这一节和 \secref{sec:b-sft-honest} 合起来是这一章的方法论：\cnemph{实验的价值不取决于参数选得多好，
+取决于它能不能被逐行读、能不能被反驳。} 六个 arm 里有五个的最终 checkpoint 都不如它们自己的
+step-100 版本；那不妨碍这张表说清楚了它要说的三件事。

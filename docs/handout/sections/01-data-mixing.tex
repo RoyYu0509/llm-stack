@@ -1,0 +1,428 @@
+\section{数据：一个混合语料，以及它在验证集上骗了我}
+\label{sec:b-data}
+
+这一章要讲的东西写起来只有三百行 Python，但它是整条链路上唯一一个\cnemph{我们自己造出来、没有任何外部基准可以对照}的环节。模型结构抄的是标准 pre-norm Transformer；训练循环早就写好了；serving 那一端还有 HuggingFace 的 \code{generate()} 可以做差分测试。只有语料是自己拼的——拼错了，下游每一个数字都跟着错，而且不会有任何东西报错。
+
+先把痛点摆在前面。这次冲刺的数据部分，一开始能讲的只有一句话：
+
+\begin{misconception}{我用了 LLaMA 的配比：C4 70\%、Wikipedia 20\%、instruction 10\%。}
+这句话在\cnemph{没有分域验证集}之前是零证据的。它描述的是一个\cnemph{输入}——我们往语料里塞了多少字节——而不是一个\cnemph{结果}。模型有没有因为那 20\% 的 Wikipedia 而在 Wikipedia 上更好？有没有因为那 10\% 的指令数据而学会 \code{\#\#\# Response:} 这个格式？只报配比，这两个问题一个都没回答。真正让这句话变成可检验命题的，是 \secref{subsec:domain-valid} 那三条分域验证流；而在把它们造出来的过程中，我们发现\cnemph{混合验证集本身是错的}。
+\end{misconception}
+
+本章路线：配比怎么定（\secref{subsec:ratio}）、小域怎么凑够占比（\secref{subsec:cycle}）、一个\cnemph{没有测过}的问题（\secref{subsec:char-vs-token}），然后是重点——一次从「加权平均对不上」查到「自己的数据脚本有 bug」的追查（\secref{subsec:contamination}）；最后是修法（\secref{subsec:domain-valid}）和微调语料（\secref{subsec:sft-corpus}）。
+
+% ---------------------------------------------------------------------------
+\subsection{配比从哪来：70 / 20 / 10}
+\label{subsec:ratio}
+
+三个源，全部走 HuggingFace 的 streaming 接口，按\cnemph{原始字符}预算切片：
+
+\begin{itemize}\itemsep2pt
+  \item \code{allenai/c4} (en)，web text，目标 70\%，预算 546{,}000{,}000 字符；
+  \item \code{wikimedia/wikipedia} (20231101.en)，目标 20\%，预算 156{,}000{,}000 字符；
+  \item \code{tatsu-lab/alpaca}，instruction / response，目标 10\%，预算 78{,}000{,}000 字符。
+\end{itemize}
+
+合计 780M 字符的 train，外加 20M 字符的 valid（14M / 4M / 2M，同样 70/20/10）。两组预算是硬编码常量，见 \codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{37} 与 \codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{38}。
+
+\paragraph{为什么这是「受启发」而不是「复现」。}这里要说得硬气一点，因为「用了 LLaMA 的配比」是一句很容易被追问的话。LLaMA 原论文的混合表有 \cnemph{7 个域}（CommonCrawl、C4、GitHub、Wikipedia、Books、ArXiv、StackExchange）。我们只留了 3 个，而且：
+
+\begin{enumerate}[label=(\alph*)]\itemsep2pt
+  \item 70/20/10 这三个数\cnemph{不是}把原表按剩余域重新归一化得到的。把 CommonCrawl 和 C4 合起来算「web」大约是 82\%，Wikipedia 只有 4.5\%，都对不上 70/20。这三个数是我们自己拍的，只保留了「web 主导」这个定性特征。
+  \item instruction 这个域 LLaMA 论文里\cnemph{根本没有}。它是为了让后面的指令微调有一个「格式已经见过」的起点才加进来的。
+  \item 真正借来的是\cnemph{机制}而不是数字：配比不靠按字节平均切，而是靠给小而精的域跑多个 epoch。这一点写在 \codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{7} 的模块 docstring 里，下一节展开。
+\end{enumerate}
+
+所以正确的说法是：\cnemph{一个受 LLaMA 数据混合思路启发的三域配比}，不是 LLaMA 配比的复现。这个区别在简历上值两句话的篇幅，别省。
+
+\begin{table}[t]
+\centering
+\begin{tabular}{llrrrl}
+\toprule
+源（目标占比） & split & 实际字符 & 文档数 & passes & oversample \\
+\midrule
+\codet{allenai/c4} (70\%)          & train & 546{,}000{,}616 & 251{,}371 & 1.00 & 否 \\
+                                   & valid & 14{,}003{,}074  & 6{,}560   & 1.00 & 否 \\
+\addlinespace
+\codet{wikimedia/wikipedia} (20\%) & train & 156{,}001{,}590 & 25{,}167  & 1.00 & 否 \\
+                                   & valid & 4{,}009{,}029   & 829       & 1.00 & 否 \\
+\addlinespace
+\codet{tatsu-lab/alpaca} (10\%)    & train & 78{,}000{,}388  & 192{,}699 & \textbf{3.90} & \textbf{是} \\
+                                   & valid & 2{,}000{,}066   & 4{,}956   & \textbf{1.91} & \textbf{是（错的）} \\
+\bottomrule
+\end{tabular}
+\caption{\codet{manifest.json} 记录的实际结果（2026-07-27 的正式构建，转录自 \codeb{run_logs/master_pipeline.log}）。train 三域的 \codet{achieved\_ratio} 精确落在 0.7000 / 0.2000 / 0.1000，valid 是 0.6997 / 0.2003 / 0.0999。最后一行的「错的」是 \secref{subsec:contamination} 的主题。}
+\label{tab:mix-manifest}
+\end{table}
+
+% ---------------------------------------------------------------------------
+\subsection{小域怎么凑占比：cycle 不是 hack}
+\label{subsec:cycle}
+
+Alpaca 一共 52{,}002 条样本。脚本先按 5\% 切出 held-out 池：train 池 49{,}402 条，valid 池 2{,}600 条（\codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{105}）。每条格式化成
+
+\begin{lstlisting}[style=hlplain]
+### Instruction:
+{instruction}
+### Input:          # 只有 input 非空时才有这一段
+{input}
+### Response:
+{output}
+\end{lstlisting}
+
+平均一条约 405 字符。49{,}402 条跑满一遍大约 20M 字符，而 instruction 这个域的预算是 78M——差 3.9 倍。于是 \code{build_instruction()} 直接循环这个池子直到填满预算：
+
+\lstinputlisting[style=hlnum, firstline=137, lastline=150, firstnumber=137]%
+  {../../cs336_systems/data_harvest/build_mixed_corpus.py}
+
+\code{idx \% n} 这一行就是全部的 oversample 实现，\code{passes} 字段把倍数记进 manifest。
+
+这里值得停一下：这\cnemph{不是}一个为了凑数字的 hack，它就是 LLaMA 论文里那个做法本身。一个只有 20M 字符的高质量域，如果坚持「按字节切、每个域只看一遍」，它在 780M 的混合里最多只能占 2.6\%；想让它占 10\%，唯一的办法就是让模型在它上面多走几遍。LLaMA 对 Wikipedia 和 Books 也是这么处理的——配比表里那个百分比描述的是\cnemph{采样权重}，不是磁盘上的字节数。
+
+\begin{checkpoint}{oversample_is_the_recipe}{为什么「重复采样小域」不是作弊}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 一个只有 20M 字符的域，在 780M 字符的混合语料里，如果只允许出现一遍，最多能占多少？想让它占 10\%，你有哪两种办法？
+  \item \codet{passes=3.90} 和 \codet{passes=1.91} 这两个数分别出现在哪个 split 上？其中一个是对的、一个是错的——凭什么这么说？
+  \item 如果把 instruction 的预算从 78M 提到 156M（占比 20\%），\codet{passes} 会变成多少？这时模型第一次和第八次看到同一条 Alpaca 样本，学到的东西一样多吗？
+\end{enumerate}
+\hint 「配比」这个词描述的是\cnemph{采样权重}，不是磁盘字节数。一旦接受这一点，(a) 的第二种办法就很显然了。
+\ifshowanswers
+\tcblower
+\answer (a) 最多 $20/780 \approx 2.6\%$。两种办法：要么把其他域砍到只剩 180M 字符（贵，等于扔掉 77\% 的 web 数据），要么把小域重复采样 3.9 遍（便宜，这是 LLaMA 的做法，也是这里的做法）。
+
+(b) 3.90 在 train split 上，1.91 在 valid split 上。train 上重复是对的，因为训练集的作用就是按配比给梯度加权；valid 上重复是错的，因为验证集的作用是\cnemph{估计模型在未见数据上的表现}，重复不增加任何未见数据，只是把同一批样本在平均里数了两遍——而且会让它和别的流不再可比（\secref{subsec:contamination}）。
+
+(c) $156/20 \approx 7.8$ 遍。不一样：小语料上跑多个 epoch 的边际收益递减，同时过拟合风险上升。LLaMA 那个「小域多跑几遍」的做法在 1T token 尺度上是安全的；在我们这个 174M unique token 的语料上，整体已经跑了 2.8 遍（\secref{sec:b-pretrain}），instruction 这个域实际被看到的次数是 $2.8 \times 3.9 \approx 11$ 遍。这个数我们\cnemph{没有}做消融，不知道是不是太多了。
+\whereincode \codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{140}
+\fi
+\end{checkpoint}
+
+\begin{tipbox}{先用 \codet{-{}-dry\_run} 把配比逻辑跑通，再去烧带宽}
+\codeb{build_mixed_corpus.py --dry_run} 换用一组小 20 倍的预算（1.4M / 0.4M / 0.2M 字符，\codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{41}），产出约 2MB 的 \code{train.txt} + \code{valid.txt} 和一份完整的 \code{manifest.json}。
+
+它能验的：三个 streaming 源都连得上、配比归一化算得对、\code{passes} 字段写得对、下游 tokenize 能吃这个文件格式。它\cnemph{不能}验的：任何一个 loss 数字。2MB 语料上训出来的东西没有意义，别去看它的 val loss。
+
+\resources CPU 即可，主要开销是网络；HuggingFace Hub 若限流（429）需要配 \code{HF_TOKEN}。
+\end{tipbox}
+
+% ---------------------------------------------------------------------------
+\subsection{一个没有测过的开放问题：字符配比不等于 token 配比}
+\label{subsec:char-vs-token}
+
+\code{manifest.json} 里的 \code{achieved_ratio} 是\cnemph{字符}比例。但模型看到的是 token，而每个域的「字符 / token」换算率并不一样：web 文本里有大量常见英文词（一个 token 吃掉四五个字符），Alpaca 里有 \code{\#\#\#}、换行、密集标点这类结构标记（一个 token 常常只吃一两个字符）。
+
+训练语料\cnemph{每个域各自的 token 数，我们没有测过}。原因很实际：\code{data/mixed_corpus/} 在本地是空目录（可以自己 \code{ls} 确认），全量语料留在那台已经 \code{stop} 掉的 vast.ai 实例的磁盘上，重建一次要 2--3 小时。
+
+能确定的只有总量：780{,}002{,}594 字符编码成 173{,}972{,}065 个 token（\code{tiktoken} 的 gpt2 编码，见 \secref{subsec:tokenizer}），平均 4.48 字符 / token。
+
+能\cnemph{估计}的：分域验证流用了一个每域相等的 1.2M 字符预算，产出 267K / 281K / 226K token（web / wiki / instruction），换算率分别约 4.5 / 4.3 / 5.3 字符 / token。把这三个率套回训练语料的字符预算：
+
+\[
+\underbrace{\frac{546}{4.5}}_{121\,\mathrm{M}} \;:\;
+\underbrace{\frac{156}{4.3}}_{36\,\mathrm{M}} \;:\;
+\underbrace{\frac{78}{5.3}}_{15\,\mathrm{M}}
+\quad\Longrightarrow\quad 70.4\% \,/\, 21.1\% \,/\, 8.5\%
+\]
+
+三项加起来 172M，和实测的 174M 差 0.7\%，说明这个换算方向大致对。但结论只能写成：\cnemph{token 层面的 instruction 占比可能不是 10\% 而是 8\%--9\%，我们没有直接测过}。要测很便宜——分域各 tokenize 一次，比较 \code{len(arr)}——只是当时没做，现在数据不在手边。
+
+这个数字重要吗？对「配比起没起作用」这个定性结论不重要（8.5\% 和 10\% 不会翻转任何排序）。对「我复现了 LLaMA 的 70/20/10」这句话重要：如果 LLaMA 的百分比指的是 token，那我们报的就不是同一个量。
+
+% ---------------------------------------------------------------------------
+\subsection{验证集污染：从一个对不上的加权平均查起}
+\label{subsec:contamination}
+
+这一节是本章的重点，也是整个冲刺里最值得复述的一次 debug。它的形状很典型：\cnemph{一个算术恒等式不成立，顺着查下去发现是自己造数据的脚本有 bug}。按发生顺序走，五步。
+
+\subsubsection*{第一步：症状——微调 delta 的符号反了}
+
+指令微调有六个 arm，每个 arm 都要在两类流上打分：\code{general}（混合验证集 \code{mixed_valid.npy}）和三条分域流。winner 那个 arm（\code{lr1e5_replay}）的分域结果是 web $-0.0093$、wiki $+0.0138$、instruction $-0.3263$（负号 = 更好）。按 70/20/10 加权应该得到
+
+\[
+0.70\times(-0.0093) + 0.20\times(+0.0138) + 0.10\times(-0.3263) = -0.0364 ,
+\]
+
+也就是 \code{general} 应该\cnemph{变好} 0.036。实测是 $+0.0238$——\cnemph{变差}了。符号相反，不是幅度不对。
+
+\subsubsection*{第二步：先排除采样噪声}
+
+\code{eval_checkpoint.py} 每次打分是从流里\cnemph{随机}抽 200 个 batch（固定 seed 的 shuffle，\codeat{cs336\_systems/experiments/eval\_checkpoint.py}{37}），所以第一反应必须是「会不会只是抽样抽歪了」。换两个 seed 重打，三次的 \code{general} delta：
+
+\[
++0.0238,\qquad +0.0240,\qquad +0.0244
+\]
+
+散布 $\pm 0.0003$，比 $0.0364+0.0238=0.0602$ 这个待解释的差距小两个数量级。\cnemph{排除了采样噪声，说明是结构性问题}。
+
+这一步花了大约十分钟，但它把假设空间从「测量误差 / 数据不同 / 代码 bug」砍成了后两个。跳过它的代价是：你会开始猜，然后猜错。
+
+\subsubsection*{第三步：把 \codet{mixed\_valid} 按域边界切开直接打分}
+
+第二步说明「后造的那三条分域流」和「\code{mixed_valid} 里对应的区段」大概不是同一批数据。验证方法很直接：不用后造的流，直接把 \code{mixed_valid.npy} 按域边界切成三段，再打一次分。
+
+\begin{table}[t]
+\centering
+\begin{tabular}{lrrrrr}
+\toprule
+\codet{mixed\_valid} 区段 & 权重 & pretrained & \codet{lr1e5\_replay} & delta & 加权贡献 \\
+\midrule
+web          & 0.70 & 3.7717 & 3.7854 & $+0.0137$ & $+0.0096$ \\
+wikipedia    & 0.20 & 3.5247 & 3.5515 & $+0.0268$ & $+0.0054$ \\
+instruction  & 0.10 & 2.3863 & 2.4787 & $\mathbf{+0.0924}$ & $+0.0092$ \\
+\midrule
+加权合计     &      &        &        &           & $\mathbf{+0.0242}$ \\
+整条 \codet{mixed\_valid} 上直接实测 & & 3.5866 & 3.6104 & $\mathbf{+0.0238}$ & \\
+\bottomrule
+\end{tabular}
+\caption{切开之后，算术闭合。数字取自 \codet{artifacts/eval/} 下的 \codet{slice\_pretrained.json}、\codet{slice\_lr1e5\_replay.json}、\codet{pretrained.json}、\codet{sft\_lr1e5\_replay.json}，均为 200 batch、固定 seed 的配对打分。}
+\label{tab:closure}
+\end{table}
+
+$+0.0242$ 对 $+0.0238$，残差 $0.0004$，落在第二步量出的 $\pm0.0003$ 噪声带边上。\cnemph{算术完全闭合}——从来就没有测量错误。真正的结论是：\code{mixed_valid} 的 instruction 区段上，微调让模型\cnemph{变差}了 $0.0924$；而在后造的干净 instruction 流上，同一个 checkpoint 变好了 $0.3263$。同一批 2{,}600 条 Alpaca 样本，两条流，符号相反。
+
+\begin{examplebox}{chasing_the_weighted_average}{三步把一个 0.06 的差距追成一个 bug}
+每一步只做一件事，并且明确记下它\cnemph{排除了什么}。
+
+\medskip\noindent\textbf{第 0 步（观察）}\quad 分域 delta 加权 $=-0.0364$，直接实测 $=+0.0238$，差 $0.0602$ 且符号相反。
+待排除的假设：\{采样噪声、两条流不是同一批数据、打分脚本有 bug、加权用错了权重\}。
+
+\medskip\noindent\textbf{第 1 步（换 seed 重打三次）}\quad $+0.0238 / +0.0240 / +0.0244$，散布 $\pm0.0003$。
+
+\cnemph{排除了}：采样噪声。差距比噪声大 200 倍，不可能是抽样抽出来的。\quad\cnemph{代价}：三次打分，约 3 分钟 GPU。
+
+\medskip\noindent\textbf{第 2 步（不用后造的流，直接切 \codet{mixed\_valid}）}\quad 见表~\ref{tab:closure}：$0.70(+0.0137)+0.20(+0.0268)+0.10(+0.0924)=+0.0242$，对实测 $+0.0238$。
+
+\cnemph{排除了}：打分脚本有 bug、权重用错。加权公式\cnemph{是对的}，只要喂给它的是同一批数据，它就闭合。\quad\cnemph{留下}：唯一还活着的假设是「后造的三条流不等于 \code{mixed_valid} 的三个区段」。\quad\cnemph{代价}：写一个按域边界切 \code{.npy} 的十行脚本，加六次打分。
+
+\medskip\noindent\textbf{第 3 步（去读造数据的代码）}\quad 到这一步已经不需要再跑实验了，只要回答一个问题：这两条流是怎么造出来的，哪里不一样。答案在 \code{build_instruction()} 上，见下文。
+
+\medskip
+这个例子里最该学的不是结论，是\cnemph{第 1 步的顺序}。「先量噪声、再谈差异」这条纪律在本项目里还救过另外几次场——反过来，\secref{sec:b-bench} 里 DDP 三种策略之间那几个百分点的比较，正是因为\cnemph{没有}先量噪声而被整段撤回。
+\end{examplebox}
+
+\subsubsection*{第四步：根因——train split 上正确的做法被用到了 valid split 上}
+
+\code{build_instruction()} 在 \code{main()} 里被调用了\cnemph{两次}：一次填 train 预算（\codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{184}），一次填 valid 预算（\codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{198}）。它内部无条件 cycle。
+
+对 train split，cycle 是\cnemph{正确的}——那就是 \secref{subsec:cycle} 讲的整个设计。对 valid split，它把 2{,}600 条 held-out 样本重复了 1.91 遍，只为了让验证集的字符配比也是 70/20/10。
+
+而验证集\cnemph{根本没有理由}去匹配训练集的混合配比。验证集要回答的是「模型在没见过的数据上表现如何」，重复一遍不会增加任何没见过的数据。
+
+代价是实测出来的：预训练模型在 \code{mixed_valid} 的 instruction 区段上是 2.3863，在同样这 2{,}600 条样本、不重复的那条流上是 2.7345——差 0.348 nats。而且它\cnemph{把微调 delta 的符号弄反了}（$+0.0924$ 对 $-0.3263$）。
+
+结论和修法已经写回代码里了，就在 \code{build_instruction()} 的 docstring（\codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{117}）——把结论写在最容易被下一次调用者读到的地方，比写在某个 markdown 里有用。
+
+\subsubsection*{第四步补：写这份讲义时才发现，那 0.348 nats 大概率不是「重复」造成的}
+
+docstring 里给的机制解释是「一个 1024-token 窗口里可能装着同一条样本两次，第二遍靠 in-context 复制就能预测」。复盘时把数字代进去，这个机制\cnemph{站不住}：
+
+\begin{itemize}\itemsep2pt
+  \item 一条 Alpaca 样本约 87 个 token，2{,}600 条跑一遍是约 $2.3\times10^{5}$ 个 token。同一条样本的两次出现相隔约 20 万 token，而上下文只有 1024。\cnemph{一个窗口里不可能装下同一条样本两次}。
+  \item 更根本的一点：对一个\cnemph{权重已经冻结}的模型，把同一批文档重复一遍，平均每 token 的 loss 期望\cnemph{不变}——那还是同一批文档，只是在平均里被数了两次。重复本身不可能凭空产生 0.348 nats。
+\end{itemize}
+
+那 0.348 nats 从哪来？最可能的是\cnemph{文档分隔符不一致}。三个脚本写文档边界的方式各不相同：
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.32\textwidth} >{\raggedright\arraybackslash}X l@{}}
+\toprule
+脚本 & 文档之间写什么 & 代码位置 \\
+\midrule
+\codet{build\_mixed\_corpus.py}（预训练语料） & \codeb{doc + "\textbackslash n" + EOT + "\textbackslash n"} & \codeat{build\_mixed\_corpus.py}{51} \\
+\codet{build\_domain\_valid.py}（分域验证流） & \codet{EOT.join(docs)}，无换行 & \codeat{build\_domain\_valid.py}{35} \\
+\codet{build\_sft\_corpus.py}（微调语料）     & \codet{doc + EOT}，无换行     & \codeat{build\_sft\_corpus.py}{43} \\
+\bottomrule
+\end{tabularx}
+\caption{三种写法，三个文件（都在 \codeb{cs336_systems/data_harvest/}）。预训练模型只见过第一种，所以在后两种上每遇到一个文档边界就要吃一次意外。}
+\label{tab:separators}
+\end{table}
+
+如果这个解释对，那么两条流的 loss 差应该\cnemph{正比于文档边界的密度}，也就是反比于平均文档长度。用手头已有的数字验算：
+
+\begin{table}[t]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+域 & 每文档 token（估） & 边界密度 & 两条流 loss 差 & 每边界摊到 (nats) \\
+\midrule
+instruction & 87      & $1.15\times10^{-2}$ & $0.3482$ & $30.3$ \\
+web         & 475     & $2.11\times10^{-3}$ & $0.0752$ & $35.7$ \\
+wiki        & 1{,}133 & $8.8\times10^{-4}$  & $0.0271$ & $30.7$ \\
+\bottomrule
+\end{tabular}
+\caption{文档长度跨了 13 倍，「每个文档边界摊到多少额外 nats」却落在 30--36 这个窄区间里。这是复盘时用已有数字算的，\cnemph{没有跑新实验}。}
+\label{tab:boundary-cost}
+\end{table}
+
+三个域的文档长度差 13 倍，摊到每个边界的额外代价却几乎是常数。这对「分隔符不一致」是很强的支持，对「重复导致 in-context 复制」则没有解释力——web 和 wiki 两条流\cnemph{都没有重复}，却表现出同一个规律。
+
+必须说清楚这个结论的不确定性：web 和 wiki 的文档数是我用混合语料里的平均文档长度\cnemph{估}出来的（分域流的 \code{.npy} 不在本地）；打分本身有 $\pm0.01$ 的 seed 间散布，wiki 那一行的 $0.0271$ 只比噪声大两三倍。\cnemph{这是一个未经测试的假设，不是结论}。要证伪它很便宜：把 \code{build_domain_valid.py} 的 \code{_encode} 改成和 \code{_write_doc} 一样的分隔符，重新编码，再打一次分——如果 0.348 大幅缩小，假设成立。
+
+\begin{retraction}{重复过的验证数据是假的容易，白送了 0.35 nats。}
+这句话现在写在 \code{build_instruction()} 的 docstring 和 \code{real_pretrain_config.json} 的 note 里，两处都保留原样，因为它是当时能写出的最好解释。
+
+站不住的地方：重复距离约 $2\times10^{5}$ token，上下文只有 1024，窗口内复制不可能发生；而且对冻结的模型，重复同一批文档不改变期望 loss。
+
+不受影响的部分（这一点同样重要，别一起丢掉）：2.3863 和 2.7345 两个数是实测的；表~\ref{tab:closure} 的算术闭合是成立的；「valid split 不要 cycle」这条修法仍然是对的——只是它对的理由是「验证集不需要匹配训练配比、重复不产生新信息」，而不是「重复让验证变容易」。
+\end{retraction}
+
+\subsubsection*{第五步：影响范围，以及什么没有被影响}
+
+范围必须说准：说宽了等于把所有结论都作废，说窄了等于没承认。
+
+\begin{itemize}\itemsep3pt
+  \item \cnemph{受影响}：预训练那条 val 曲线，以及 \code{general} 这个指标——它 10\% 的成分（instruction 区段）来自一条构造方式和其他流不一致的数据。任何拿 \code{general} 的\cnemph{绝对值}说事的地方都要打折扣。
+  \item \cnemph{不受影响}：\cnemph{arm 之间的排序}。六个 arm 打的是同一批数据、同一个 seed、同一组 batch，是配对比较；一个所有 arm 共享的偏置不改变谁比谁好。这也是为什么最后没有推翻指令微调的任何结论（\secref{sec:b-sft}）。
+  \item \cnemph{干净的数}：分域那三条流。它们都没有 oversample，而且各自独立编码。
+\end{itemize}
+
+修法写进了 docstring：valid split 不 cycle；验证集不需要匹配训练混合配比；让每个域贡献它 held-out 池子实际的量，然后\cnemph{分域分别报}。
+
+\begin{checkpoint}{sign_flip}{同一批样本，两条流，delta 符号相反}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 微调后的 \codet{lr1e5\_replay} 在 \codet{mixed\_valid} 的 instruction 区段上是 $+0.0924$（变差），在 \codeb{domain_valid_instruction} 上是 $-0.3263$（大幅变好）。这两条流装的是\cnemph{同一批} 2{,}600 条 held-out Alpaca 样本。什么样的差异能让同一批文本给出相反的符号？
+  \item 如果只看得到 \codet{general} 这一个数（$+0.0238$），你会得出关于这次微调的什么结论？它错在哪？
+\end{enumerate}
+\hint 微调语料 \codet{alpaca\_train.txt} 是用 \codet{build\_sft\_corpus.py} 的 \codet{\_write\_pool} 写的，不是用 \codet{build\_mixed\_corpus.py} 的 \codet{\_write\_doc}。去比较这两个函数在文档\cnemph{之间}写了什么。
+\ifshowanswers
+\tcblower
+\answer (a) 两条流的\cnemph{文档分隔符}不同（表~\ref{tab:separators}）：\code{mixed_valid} 用的是预训练见过的写法（换行加 EOT 再加换行），\code{domain_valid} 和微调语料用的是裸 EOT。微调之后模型适应了裸 EOT 那种写法，于是在用同样写法的流上大幅变好、在预训练写法的流上变差。同一批文本、不同边界约定，就足够让符号翻转。注意这是复盘时提出的解释，\cnemph{没有跑实验验证}（见上面的 retraction）。
+
+(b) 只看 \code{general} 会得出「微调让模型全面变差了一点点」。方向上不算错（灾难性遗忘确实存在），但幅度和归因都不对：变差的那 $+0.0238$ 里有接近四成来自 instruction 区段（加权贡献 $+0.0092$，见表~\ref{tab:closure}），而 instruction 恰恰是这次微调\cnemph{最该变好}的域。一个混合指标可以把两个方向相反的效应压成一个看起来温和的数字。这就是要分域报的理由。
+\whereincode \codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{51} 与 \codeat{cs336\_systems/data\_harvest/build\_sft\_corpus.py}{43}
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{arithmetic_closure}{为什么「算术闭合」比「找到 bug」更早成为结论}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 表~\ref{tab:closure} 里加权得到 $+0.0242$、直接实测 $+0.0238$。这个 $0.0004$ 的残差应该和\cnemph{哪个已经测过的量}比较，才能判断它算不算「闭合」？
+  \item 闭合这个事实\cnemph{排除了}哪几个假设？它\cnemph{没有}排除哪个？
+  \item 如果闭合失败（比如加权得到 $+0.024$、实测 $-0.010$），下一步该查什么？
+\end{enumerate}
+\hint 加权公式本身是个恒等式：只要三段的权重就是它们在流里的 token 占比，加权平均\cnemph{必然}等于整体平均。所以闭合失败只能有一个来源。
+\ifshowanswers
+\tcblower
+\answer (a) 和第二步量出的 seed 间散布 $\pm0.0003$ 比。$0.0004$ 落在这个量级上，所以是闭合而不是「差一点」。\cnemph{没有先量噪声就没法回答这一问}——这就是第二步的价值。
+
+(b) 排除了：打分脚本算错、权重用错、模型加载错。没有排除的是「这两条流装的不是同一批数据」——恰恰相反，闭合把这个假设变成了\cnemph{唯一}还活着的一个。
+
+(c) 查权重：三段在 \code{mixed_valid} 里的实际 token 占比是不是真的 70/20/10。字符配比是 70/20/10，token 配比可能不是（\secref{subsec:char-vs-token}）——如果 instruction 实际只占 8.5\%，加权结果会偏。这次没踩到，是因为那个偏差比残差还小。
+\whereincode \codeat{cs336\_systems/experiments/eval\_checkpoint.py}{30}
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{valid_contamination}{一行 \codet{idx \% n}，两个 split，一对一错}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item \codet{build\_instruction()} 被调用了两次。同一段代码，为什么一次对、一次错？把「对」和「错」的判据分别写成一句话。
+  \item 假设只能改一处，让这个函数在两个 split 上都正确。改哪里最省？不止一种答案，说出你选的那种的代价。
+  \item 这个 bug 在 \codet{manifest.json} 里其实\cnemph{留下了记录}。是哪个字段？为什么当时没人看它？
+\end{enumerate}
+\hint 判据不在代码里，在两个 split 各自的\cnemph{用途}里。
+\ifshowanswers
+\tcblower
+\answer (a) train split 的用途是按配比给梯度加权，重复采样正是实现配比的手段，所以对。valid split 的用途是估计未见数据上的表现，重复不产生未见数据，只会让这条流和别的流不再可比，所以错。
+
+(b) 三种：(1) 给 \code{build_instruction} 加一个 \code{allow_cycle} 参数，valid 调用传 \code{False}——最小改动，但把决定权留给了调用方，下次还可能传错；(2) valid split 干脆不设字符预算，直接把 held-out 池整个写进去——这是 docstring 里给的修法，代价是 valid 的三域配比不再是 70/20/10，而这恰恰是想要的；(3) 在函数里断言预算不超过池子的总量，越界就报错——最防御，但对 train 是误报。选了 (2)。
+
+(c) \code{passes: 1.91}。它一直写在 \code{manifest.json} 的 valid 段里，构建时还打印到了 stdout（\codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{199}）。没人看，是因为当时关注的是「配比对不对」（\code{achieved_ratio} 是 0.0999，完美），而 \code{passes} 被当成了只有 train split 才需要关心的字段。\cnemph{一个字段在一个 split 上是特性、在另一个 split 上是缺陷，这种字段最容易被漏看}。
+\whereincode \codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{116}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{分域验证流：三条独立、等大、都不 oversample}
+\label{subsec:domain-valid}
+
+\code{build_domain_valid.py} 是上面那次追查的直接产物。它写三个独立的 \code{.npy}：
+
+\begin{itemize}\itemsep2pt
+  \item \code{domain_valid_web.npy}：C4 的\cnemph{真} \code{validation} split；
+  \item \code{domain_valid_wiki.npy}：Wikipedia 没有 validation split，所以跳过训练语料消费掉的那一段再取；
+  \item \codeb{domain_valid_instruction.npy}：Alpaca 的 held-out 池，全部 2{,}600 条，\cnemph{只跑一遍}。
+\end{itemize}
+
+三条都用同一个每域相等的字符预算 \code{--target_chars}，默认 1{,}200{,}000（\codeat{cs336\_systems/data\_harvest/build\_domain\_valid.py}{41}）。
+
+\paragraph{为什么要等大。}三个理由，按重要性排：
+
+\begin{enumerate}[label=(\arabic*)]\itemsep3pt
+  \item \cnemph{验证集不该复刻训练配比}。这正是 \secref{subsec:contamination} 那个 bug 的来源——「valid 也要是 70/20/10」这个念头本身就是错的。一旦放弃它，每个域取多少就变成一个纯粹的工程问题，而不是一个要匹配的约束。
+  \item \cnemph{每个域的数字要带同样大小的误差棒}。这三条流的用途是横向比较七个 checkpoint 在三个域上的 delta。如果 instruction 只有 web 的 $1/7$ 大，它那一列的抽样方差就会大得多，而 instruction 恰恰是 delta 最大的一列——很容易把「噪声大」误读成「效应强」。
+  \item \cnemph{便宜}。每条几十万 token、200 个 batch，一个 checkpoint 三条流打完不到一分钟。六个 arm 加一个预训练基线一共七次，这个开销小到可以每次都跑，而不是「等有空再补」。
+\end{enumerate}
+
+\paragraph{两处如实的保留。}第一，「等大」是\cnemph{字符}等大，不是 token 等大：三条流实际是 267K / 281K / 226K token，最大和最小差 24\%。第二，\code{build_domain_valid.py} 的 docstring 说它取的是「\code{build_mixed_corpus.py} 用于 valid split 的同一批 held-out 切片」，这句话对 web 和 instruction 成立，对 wiki \cnemph{不成立}：\code{WIKI_VALID_SKIP = 200_000}（\codeat{cs336\_systems/data\_harvest/build\_domain\_valid.py}{31}），而训练语料实际只消费了 25{,}167 篇（表~\ref{tab:mix-manifest}）。跳得更远只会更安全（肯定不重叠），但两条 wiki 流确实不是同一段文本——实测也对得上：预训练模型在 \code{domain_valid_wiki} 上是 3.5518，在 \code{mixed_valid} 的 wiki 区段上是 3.5247。
+
+\begin{checkpoint}{why_equal_size_domain_valid}{三条验证流为什么要等大，又为什么不必等太准}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 如果照搬训练配比，把三条验证流做成 70/20/10 大小，哪一列的结论最容易被误读？为什么？
+  \item 「等大」在这里指的是等字符还是等 token？实际差了多少？这个差影响 (a) 的论证吗？
+  \item 这三条流是用来报\cnemph{绝对}质量的，还是用来做\cnemph{比较}的？这个定位决定了它们可以小到什么程度？
+\end{enumerate}
+\hint 想想 instruction 那一列的 delta（$-0.3263$）和 wiki 那一列（$+0.0138$）分别有多大，再想它们各自的误差棒有多大。
+\ifshowanswers
+\tcblower
+\answer (a) instruction。它只占 10\%，样本量最小、抽样方差最大，同时 delta 的绝对值又最大（比 web/wiki 大一个数量级）——最容易把大方差读成强效应，或者反过来把真实效应淹进噪声里。
+
+(b) 等\cnemph{字符}（\code{--target_chars} 默认 1.2M）。实际 token 数 267K / 281K / 226K，最大最小差 24\%。不影响 (a) 的论证：24\% 的样本量差异对应约 12\% 的标准误差异，远小于 70/20/10 带来的 $\sqrt{7}\approx 2.6$ 倍差异。
+
+(c) 比较。\code{eval_checkpoint.py} 固定 seed，所以每个 checkpoint 打的是\cnemph{同一批} batch，是配对比较，方差大部分抵消（\codeat{cs336\_systems/experiments/eval\_checkpoint.py}{37}）。这就是为什么几十万 token 就够——真正让 0.05 量级的差异可分辨的是配对，不是样本量。反过来说，这三个 loss 的\cnemph{绝对值}不该被当成模型质量的权威数字。
+\whereincode \codeat{cs336\_systems/data\_harvest/build\_domain\_valid.py}{13}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{微调语料与 replay 变体}
+\label{subsec:sft-corpus}
+
+\code{build_sft_corpus.py} 造两个 arm 的训练流。这一节只讲\cnemph{语料怎么造}；哪个 arm 赢、赢多少，归 \secref{sec:b-sft}。
+
+\paragraph{格式复用，不重写。}它直接从 \code{build_mixed_corpus} 导入 \code{_load_alpaca_pools}（\codeat{cs336\_systems/data\_harvest/build\_sft\_corpus.py}{31}），所以微调看到的 \code{\#\#\# Instruction:} / \code{\#\#\# Response:} 结构和预训练那 10\% 完全一致，而且 train/valid 的切分也是同一个 \code{seed=0} 的 shuffle——不会出现「微调集里混进了预训练验证集的样本」这种泄漏。
+
+需要补一句：这个复用只保证了\cnemph{文档内部}的格式一致，\cnemph{文档之间}的分隔符并不一致（表~\ref{tab:separators}）。模块 docstring 里 byte-identical prompt structure 这个说法在边界处站不住。
+
+\paragraph{replay 变体的配比公式。}目标是让预训练数据占最终 token 数的 $f=25\%$。设 Alpaca 的 token 数为 $n_{\mathrm{a}}$，要拼进去的预训练 token 数 $n_{\mathrm{r}}$ 满足
+\[
+\frac{n_{\mathrm{r}}}{n_{\mathrm{a}} + n_{\mathrm{r}}} = f
+\quad\Longrightarrow\quad
+n_{\mathrm{r}} = n_{\mathrm{a}}\cdot\frac{f}{1-f} ,
+\]
+$f=0.25$ 时系数是 $1/3$。代码就是这一行：
+
+\lstinputlisting[style=hlnum, firstline=81, lastline=95, firstnumber=81]%
+  {../../cs336_systems/data_harvest/build_sft_corpus.py}
+
+注意第 82--84 行注释里的取舍：\cnemph{不需要在磁盘上打散}。\code{TokenStreamDataset} 是滑窗索引，\code{DistributedSampler} 又会 shuffle 窗口，所以简单 \code{concatenate} 出来的流在训练时已经是交错的。少写一个 shuffle，也就少一处可能写错的地方。
+
+\paragraph{一条必须自己说出来的声明。}\code{cs336_basics} 的 \code{cross_entropy} 没有 loss masking——它没有 \code{ignore_index}，也不接受 mask，直接对整个张量求平均（\codeat{cs336-basics/cs336\_basics/train/loss.py}{47}）。也就是说 loss 是在整篇 \codeb{### Instruction: ... ### Response: ...} 文档上算的，包含 instruction 和 input 那部分 token，而不是只在 response 上算。
+
+严格说，这不是教科书意义上的 SFT，而是\cnemph{在指令数据上做 domain-adaptive continued pretraining}。这句话写在 \code{build_sft_corpus.py} 的模块 docstring 里（\codeat{cs336\_systems/data\_harvest/build\_sft\_corpus.py}{18}），不是事后补的免责声明。
+
+\begin{checkpoint}{not_really_sft}{为什么这不能叫 SFT}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 教科书 SFT 在算 loss 时会对哪些 token 做 mask？不做这个 mask，模型实际在学什么额外的东西？
+  \item 这个差别会让 instruction 验证集上的 loss 偏高还是偏低？为什么它\cnemph{不影响} arm 之间的排序？
+  \item 要在这个 codebase 里补上 loss masking，最小的改动是什么？为什么这次没做？
+\end{enumerate}
+\hint 去看 \codet{cross\_entropy} 的签名，数一数它接受几个参数。
+\ifshowanswers
+\tcblower
+\answer (a) 教科书 SFT 只在 response 的 token 上算 loss，把 prompt（instruction 加 input）那部分 mask 掉。不 mask 的话，模型同时在学「怎么生成一条 Alpaca 风格的指令」——而那不是我们想要的能力，推理时指令是用户给的，不需要模型自己编。
+
+(b) 偏\cnemph{低}：instruction 那部分文本模式性很强（\code{\#\#\# Instruction:} 这类标记几乎是确定的），拉低了平均。不影响排序，因为六个 arm 用的是同一个 loss 定义、同一批验证数据、同一组 batch，是配对比较；一个共享的偏置会整体平移所有 arm 的数字，不改变谁比谁好。
+
+(c) 最小改动：在 \code{build_sft_corpus.py} 里除了 token 流再写一条等长的 mask 数组，标出 \code{\#\#\# Response:} 之后的位置；然后给 \code{cross_entropy} 加一个可选 mask 参数，默认 \code{None} 时行为不变，测试基线不动。没做的原因是它会改到 \code{cs336_basics} 的公共 loss 函数——那是所有测试和整个训练路径共用的，在一个只剩几小时 GPU 预算的窗口里改它，风险大于收益。\cnemph{改成如实声明，比改代码便宜，而且诚实}。
+\whereincode \codeat{cs336-basics/cs336\_basics/train/loss.py}{17}
+\fi
+\end{checkpoint}
+
+\medskip
+\noindent 这一章造出来的东西，下一章会被拿去烧七个小时的 GPU。在那之前值得记住的只有一句：\cnemph{语料构造脚本里每一个「为了让数字好看」的动作，都会在下游变成一个你解释不了的数字}。
