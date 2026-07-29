@@ -43,17 +43,19 @@ def _ensure_bridge():
     """Compile the C++ test bridge if the binary doesn't exist or is stale."""
     src = CPP_DIR / "test_bridge.cpp"
     impl = CPP_DIR / "bpe_tokenizer.cpp"
+    pretokenizer = CPP_DIR / "pretokenizer.cpp"
+    parallel_helper = CPP_DIR / "parallel_helper.cpp"
     binary = CPP_BRIDGE
 
+    sources = [src, impl, pretokenizer, parallel_helper]
     needs_build = (
         not binary.exists()
-        or src.stat().st_mtime > binary.stat().st_mtime
-        or impl.stat().st_mtime > binary.stat().st_mtime
+        or any(s.stat().st_mtime > binary.stat().st_mtime for s in sources)
     )
     if needs_build:
         subprocess.check_call(
-            ["g++", "-std=c++17", "-O2", "-o", str(binary),
-             str(src), str(impl)],
+            ["g++", "-std=c++20", "-O2", "-pthread", "-o", str(binary),
+             *[str(s) for s in sources]],
             cwd=str(CPP_DIR),
         )
 
