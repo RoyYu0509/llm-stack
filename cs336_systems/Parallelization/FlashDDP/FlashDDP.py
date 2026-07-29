@@ -234,7 +234,12 @@ class DDPOverlapBucketed(nn.Module):
         # Dedicated CUDA stream for NCCL communication, for overlapping comm & comp.
         self._comm_stream = torch.cuda.Stream(device=self.device)
 
-        # Initialize the bucket 
+        # Broadcast rank 0's initial parameters to every other rank, so all ranks
+        # start training from the same weights (standard DDP semantics).
+        for para in self.module.parameters():
+            dist.broadcast(para.data, src=0)
+
+        # Initialize the bucket
         self._build_bucket()
 
         # Add the parameter hooks for overlapping communication and computation
@@ -288,8 +293,22 @@ class DDPOverlapBucketed(nn.Module):
         """
         A standard self.module forward function.
 
+        Before delegating to the wrapped module, make sure every bucketed parameter's
+        `.grad` is still a zeroed view into its bucket's grad_buffer. Callers that use
+        the documented `optimizer.zero_grad(set_to_none=False)` already zero the buffer
+        in place via the existing view, so this is a no-op for them (checked via a
+        cheap `.grad is None` probe, not a reallocation). Callers that use
+        `set_to_none=True` (the torch default) replace `.grad` with `None`, which
+        detaches it from the buffer; only then do we re-link it, since otherwise
+        backward() would accumulate into a fresh, disconnected tensor instead of the
+        buffer that `_sync_grad_bucket` all-reduces, silently turning DDP sync into a
+        no-op from the second step onward.
+
         TODO: Implement parallelized forward. (Tensor parallelism, pipeline parallelism, etc.)
         """
+        for bucket in self.buckets:
+            if bucket.para_list[0].grad is None:
+                bucket._prepare_grad_buffer(self.dtype, self.device)
         return self.module(*inputs, **kwargs)
 
     def _sync_grad_bucket(self, input_bucket: Bucket):
