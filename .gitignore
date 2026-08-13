@@ -211,3 +211,5 @@ docs/handout/sections/*.aux
 # The quiz edition is derived from the same source; the build command is in
 # docs/handout/README.md. Committing two PDFs of the same text is noise.
 docs/handout/*-quiz.pdf
+
+*.DS_Store
