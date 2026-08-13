@@ -1,0 +1,23 @@
+kernel,ddp,wall_sec,step,loss
+flash_attention_triton,Bucketed Overlapping DDP,53.2006,1,6.4136
+flash_attention_triton,Bucketed Overlapping DDP,57.6736,6,6.699
+flash_attention_triton,Bucketed Overlapping DDP,62.1448,11,6.3698
+flash_attention_triton,Bucketed Overlapping DDP,66.5753,16,6.4973
+flash_attention_triton,Bucketed Overlapping DDP,70.991,21,6.2985
+flash_attention_triton,Bucketed Overlapping DDP,75.4167,26,7.0445
+flash_attention_triton,Bucketed Overlapping DDP,79.8495,31,5.9548
+flash_attention_triton,Bucketed Overlapping DDP,84.2907,36,6.36
+flash_attention_triton,Bucketed Overlapping DDP,88.7376,41,6.8161
+flash_attention_triton,Bucketed Overlapping DDP,93.2025,46,6.3185
+flash_attention_triton,Bucketed Overlapping DDP,97.6487,51,6.2231
+flash_attention_triton,Bucketed Overlapping DDP,160.0651,56,5.7613
+flash_attention_triton,Bucketed Overlapping DDP,164.4528,61,6.0114
+flash_attention_triton,Bucketed Overlapping DDP,168.8526,66,6.3335
+flash_attention_triton,Bucketed Overlapping DDP,173.2668,71,5.8987
+flash_attention_triton,Bucketed Overlapping DDP,177.68,76,6.1849
+flash_attention_triton,Bucketed Overlapping DDP,182.0999,81,6.3404
+flash_attention_triton,Bucketed Overlapping DDP,186.5178,86,5.7104
+flash_attention_triton,Bucketed Overlapping DDP,190.9548,91,6.2436
+flash_attention_triton,Bucketed Overlapping DDP,195.3802,96,6.3049
+flash_attention_triton,Bucketed Overlapping DDP,199.8324,101,6.4386
+flash_attention_triton,Bucketed Overlapping DDP,200.7214,102,6.2227

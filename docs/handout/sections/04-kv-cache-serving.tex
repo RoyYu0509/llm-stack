@@ -378,8 +378,26 @@ global grad norm 2.151，记录在 \codeb{interview_prep/PROGRESS.md}；本机�
 
 \subsubsection{不变量 1：\codet{is\_causal} 不是手写开关，是从 shape 推出来的}
 
-\lstinputlisting[style=hlnum, firstline=154, lastline=170, firstnumber=154]%
-  {../../cs336-basics/cs336_basics/transfromer/multiheads_attention.py}
+\begin{lstlisting}[style=hlnum, firstnumber=154]
+        # Append to the cache AFTER rotating: RoPE is applied once, at each token's own
+        # absolute position, so cached keys must already carry their rotation.
+        if past_kv is not None:
+            past_k, past_v = past_kv
+            K = torch.cat([past_k, K], dim=-2)
+            V = torch.cat([past_v, V], dim=-2)
+
+        Q_packed = rearrange(Q, "... h seq d_k -> (... h) seq d_k")
+        K_packed = rearrange(K, "... h seq d_k -> (... h) seq d_k")
+        V_packed = rearrange(V, "... h seq d_v -> (... h) seq d_v")
+
+        # Causal masking only applies when queries and keys are the same block (prefill).
+        # During decode the queries are the newest tokens and every cached key strictly
+        # precedes them, so the triangular mask is not just unnecessary but wrong: it is
+        # built as tril(seq_q, seq_k), which for a single query would expose only key 0.
+        is_causal = Q_packed.shape[-2] == K_packed.shape[-2]
+        out_packed = scaled_dot_product_attention(Q_packed, K_packed, V_packed, is_causal=is_causal)
+\end{lstlisting}
+\noindent 来源：\codeat{cs336-basics/cs336_basics/transfromer/multiheads_attention.py}{154--170}，已直接抄入正文。
 
 第 169 行是这一节的重点：
 
@@ -435,8 +453,22 @@ position, so cached keys must already carry their rotation."
 
 绝对位置是在最外层算的：
 
-\lstinputlisting[style=hlnum, firstline=201, lastline=213, firstnumber=201]%
-  {../../cs336-basics/cs336_basics/lm.py}
+\begin{lstlisting}[style=hlnum, firstnumber=201]
+        past_len = 0 if past_kv is None else past_kv[0][0].shape[-2]
+        seq_new = x.shape[1]
+        if past_len + seq_new > self.token_positions.shape[0]:
+            raise RuntimeError(
+                f"cached decode would reach position {past_len + seq_new}, beyond the "
+                f"model's context length {self.token_positions.shape[0]}"
+            )
+
+        x = self.in_embedding(x)
+        # Absolute positions continuing past the cache, so RoPE stays consistent with what
+        # the cached keys were rotated by.
+        positions = self.token_positions[past_len:past_len + seq_new]
+        positions = positions.unsqueeze(0).expand(x.shape[0], -1).to(x.device)
+\end{lstlisting}
+\noindent 来源：\codeat{cs336-basics/cs336_basics/lm.py}{201--213}，已直接抄入正文。
 
 \code{past_len} 从缓存的形状里读出来（第 201 行），positions 从 \code{past_len} 开始切
 （第 212 行）。所以第 $n$ 步 decode 的那个 token 拿到的是位置 $n$，不是位置 0。
@@ -562,8 +594,21 @@ CPU 模型，整份文件跑完不到 1 秒。
 \fi
 \end{checkpoint}
 
-\lstinputlisting[style=hlnum, firstline=66, lastline=77, firstnumber=66]%
-  {../../tests/test_kv_cache.py}
+\begin{lstlisting}[style=hlnum, firstnumber=66]
+@torch.no_grad()
+def test_incremental_logits_match_full_forward_at_each_step(model):
+    """Step-by-step, not just at the end: a cache bug that only shows up deep into decoding
+    (a stale key, a mis-rotated position) would pass an end-state check on a short run."""
+    ids = torch.randint(0, 257, (1, 6))
+    logits, past = model.forward_with_cache(ids, past_kv=None)
+    for _ in range(10):
+        nxt = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
+        ids = torch.cat([ids, nxt], dim=1)
+        logits, past = model.forward_with_cache(nxt, past_kv=past)
+        reference = model(ids)[:, -1, :]
+        assert torch.allclose(reference, logits[:, -1, :], atol=1e-4)
+\end{lstlisting}
+\noindent 来源：\codeat{tests/test_kv_cache.py}{66--77}，已直接抄入正文。
 
 \begin{checkpoint}{batched_decode_leak}{批内串 key 是什么样的 bug}
 不看代码回答：
@@ -801,8 +846,34 @@ cache is O(1) in the prefix -- that widening gap IS the cost of not having a cac
 $>1.25\times$ 说"增长"，$<0.8\times$ 说"反常，需要查"，否则说"基本持平在 $\sim X\times$"。
 修复后的代码和它的注释在本仓库里，可以直接引：
 
-\lstinputlisting[style=hlnum, firstline=181, lastline=205, firstnumber=181]%
-  {../../cs336_systems/experiments/bench_serving.py}
+\begin{lstlisting}[style=hlnum, firstnumber=181]
+        # Describe what was measured. An earlier version printed "the speedup grows with
+        # prompt length" unconditionally -- which the first real run promptly contradicted
+        # (a flat ~1.2x across a 32x range). A benchmark that states its conclusion before
+        # reading its own numbers is worse than no benchmark.
+        if len(speedups) >= 2:
+            ordered = [speedups[n] for n in sorted(speedups, key=int)]
+            trend = ordered[-1] / ordered[0] if ordered[0] else float("nan")
+            results["cache_speedup_trend_last_over_first"] = trend
+            if trend > 1.25:
+                print(f"\nCache speedup GROWS with prompt length ({ordered[0]:.2f}x -> "
+                      f"{ordered[-1]:.2f}x): the prefix-dependent recompute is a material "
+                      f"share of step cost at these lengths.")
+            elif trend < 0.8:
+                print(f"\nCache speedup SHRINKS with prompt length ({ordered[0]:.2f}x -> "
+                      f"{ordered[-1]:.2f}x), which is not the expected direction -- worth "
+                      f"investigating before quoting these numbers.")
+            else:
+                mean = sum(ordered) / len(ordered)
+                print(f"\nCache speedup is roughly FLAT at ~{mean:.2f}x across "
+                      f"{min(speedups, key=int)}-{max(speedups, key=int)} prompt tokens "
+                      f"(not growing with length). At this model size the per-step cost is "
+                      f"dominated by the fixed forward pass over the weights, so the "
+                      f"prefix-dependent attention work the cache eliminates is only a "
+                      f"small share of it. A cache pays off far more at longer contexts "
+                      f"and/or larger batch, where that share is bigger.")
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/experiments/bench_serving.py}{181--205}，已直接抄入正文。
 
 第 183--184 行那句 "A benchmark that states its conclusion before reading its own numbers
 is worse than no benchmark" 是这一整章里最该记住的一句。

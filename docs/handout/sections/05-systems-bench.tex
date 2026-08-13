@@ -197,8 +197,21 @@ Bucketed vs Naive 的均值 10.3\% 对 2SE 10.2\%——\cnemph{刚好压线}，�
 \textbf{sign test} 问的是“B 是不是\cnemph{一贯}比 A 快”。它只看符号，不看幅度，所以离群值动不了它。
 实现是精确的二项尾部，不是正态近似：
 
-\lstinputlisting[style=hlnum, firstline=88, lastline=99, firstnumber=88]%
-  {../../cs336_systems/experiments/analyze_ddp_replicate.py}
+\begin{lstlisting}[style=hlnum, firstnumber=88]
+            pos = sum(1 for d in diffs if d > 0)
+            n = len(diffs)
+
+            def _comb(n, k):
+                num = den = 1
+                for i in range(k):
+                    num *= n - i
+                    den *= i + 1
+                return num // den
+
+            tail = sum(_comb(n, k) for k in range(min(pos, n - pos) + 1))
+            p = min(1.0, 2 * tail / (2 ** n))
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/experiments/analyze_ddp_replicate.py}{88--99}，已直接抄入正文。
 
 \begin{checkpoint}{paired_vs_unpaired}{同一批数字，配对和非配对为什么给出相反的结论}
 不看代码回答：
@@ -293,8 +306,23 @@ $n$ 同时也是 sign test 的天花板（\secref{subsec:n5}），多跑几次�
 rep-major 交替是为了降低方差。问题是：\cnemph{它真的降了吗}？这句话本身是可测的，
 所以分析脚本里专门留了一段去测它，而不是在报告里断言它成功了。代码注释直接写着“更早的版本只是宣布它有效”：
 
-\lstinputlisting[style=hlnum, firstline=127, lastline=140, firstnumber=127]%
-  {../../cs336_systems/experiments/analyze_ddp_replicate.py}
+\begin{lstlisting}[style=hlnum, firstnumber=127]
+    if unpaired_cvs and paired_sds:
+        u, p = st.mean(unpaired_cvs), st.mean(paired_sds)
+        n_pairs = max(len(sorted(set(data[a]) & set(data[b]))) for a in data for b in data if a != b)
+        print(f"\nPairing check: mean unpaired CV {u:.1f}% vs mean paired sd {p:.1f}%.")
+        if n_pairs < 4:
+            print(f"  With only {n_pairs} paired reps both estimates are themselves very "
+                  f"noisy -- this comparison is not yet meaningful either way.")
+        elif p < 0.6 * u:
+            print("  Paired spread is materially smaller: the rep-major interleaving is "
+                  "cancelling shared drift, as intended.")
+        else:
+            print("  Paired spread is NOT materially smaller than unpaired. The variance is "
+                  "then mostly within-run (each measurement is only ~78s), not shared drift "
+                  "-- longer measurements per run would help more than more reps.")
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/experiments/analyze_ddp_replicate.py}{127--140}，已直接抄入正文。
 
 实测结果是 \cnemph{paired sd 11.3\% vs unpaired CV 9.5\%——配对没有降低方差}，走的是上面的 \code{else} 分支。
 脚本 docstring 里预期的“配对标准差通常远小于非配对”

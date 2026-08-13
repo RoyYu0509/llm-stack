@@ -72,8 +72,23 @@ Alpaca 一共 52{,}002 条样本。脚本先按 5\% 切出 held-out 池：train 
 
 平均一条约 405 字符。49{,}402 条跑满一遍大约 20M 字符，而 instruction 这个域的预算是 78M——差 3.9 倍。于是 \code{build_instruction()} 直接循环这个池子直到填满预算：
 
-\lstinputlisting[style=hlnum, firstline=137, lastline=150, firstnumber=137]%
-  {../../cs336_systems/data_harvest/build_mixed_corpus.py}
+\begin{lstlisting}[style=hlnum, firstnumber=137]
+    written = docs = 0
+    n = len(pool)
+    idx = 0
+    while written < char_budget:
+        written += _write_doc(fh, pool[idx % n])
+        docs += 1
+        idx += 1
+    return {
+        "source": "tatsu-lab/alpaca",
+        "chars": written,
+        "docs": docs,
+        "pool_size": n,
+        "passes": round(idx / n, 2),
+    }
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/data_harvest/build_mixed_corpus.py}{137--150}，已直接抄入正文。
 
 \code{idx \% n} 这一行就是全部的 oversample 实现，\code{passes} 字段把倍数记进 manifest。
 
@@ -396,8 +411,24 @@ n_{\mathrm{r}} = n_{\mathrm{a}}\cdot\frac{f}{1-f} ,
 \]
 $f=0.25$ 时系数是 $1/3$。代码就是这一行：
 
-\lstinputlisting[style=hlnum, firstline=81, lastline=95, firstnumber=81]%
-  {../../cs336_systems/data_harvest/build_sft_corpus.py}
+\begin{lstlisting}[style=hlnum, firstnumber=81]
+    # Replay arm: alpaca tokens + a contiguous slice of the pretraining stream, sized so
+    # pretraining data is `replay_frac` of the result. Interleaving happens for free --
+    # TokenStreamDataset draws sliding windows and DistributedSampler shuffles them, so
+    # concatenating is enough; no need to shuffle documents on disk.
+    alpaca_train = encoded["train"]
+    n_alpaca = len(alpaca_train)
+    n_replay = int(n_alpaca * args.replay_frac / (1 - args.replay_frac))
+    pretrain = np.load(str(PRETRAIN_TRAIN_NPY), mmap_mode="r")
+    if n_replay > len(pretrain):
+        raise SystemExit(f"replay slice {n_replay:,} exceeds pretraining stream {len(pretrain):,}")
+    replay = np.concatenate([alpaca_train, np.asarray(pretrain[:n_replay], dtype=np.int32)])
+    out = OUT_DIR / "alpaca_replay_train.npy"
+    np.save(str(out), replay)
+    print(f"[sft] replay arm: {n_alpaca:,} alpaca + {n_replay:,} pretrain "
+          f"= {len(replay):,} tokens ({n_replay / len(replay):.1%} pretrain) -> {out}")
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/data_harvest/build_sft_corpus.py}{81--95}，已直接抄入正文。
 
 注意第 82--84 行注释里的取舍：\cnemph{不需要在磁盘上打散}。\code{TokenStreamDataset} 是滑窗索引，\code{DistributedSampler} 又会 shuffle 窗口，所以简单 \code{concatenate} 出来的流在训练时已经是交错的。少写一个 shuffle，也就少一处可能写错的地方。
 

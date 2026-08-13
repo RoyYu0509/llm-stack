@@ -67,8 +67,21 @@
 \subsection{\codet{init\_from} 在代码里长什么样}
 \label{sec:b-sft-initfrom}
 
-\lstinputlisting[style=hlnum, firstline=343, lastline=354, firstnumber=343]%
-  {../../cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}
+\begin{lstlisting}[style=hlnum, firstnumber=343]
+    # init_from vs resume_from: resume_from continues an interrupted run (weights +
+    # optimizer moments + step counter). init_from starts a NEW run from pretrained
+    # weights only -- fresh AdamW state and a fresh LR schedule -- which is what
+    # fine-tuning wants: the pretraining run ended with its cosine decayed to the
+    # minimum and its moments tuned to that regime, and inheriting either would fight
+    # the fine-tune's own (much smaller) schedule.
+    if init_from is not None:
+        ckpt = torch.load(init_from, map_location=device)
+        state = {k.removeprefix("_orig_mod."): v for k, v in ckpt["model"].items()}
+        model.load_state_dict(state)
+        print(f"Rank {rank} initialized weights from {init_from} "
+              f"(pretraining iter {ckpt.get('iter')}); optimizer state NOT restored.")
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}{343--354}，已直接抄入正文。
 
 注意最后那句 print 里的 \codeb{optimizer state NOT restored}。它不是装饰：无人值守跑六个 arm 的时候，日志是唯一能证明"这一 run 确实是从预训练权重冷启动的"的东西。一个只在代码注释里写清楚、日志里看不出来的约定，等于没有。
 
@@ -86,8 +99,26 @@
 
 \cnemph{真正让 arm 可分辨的是第二件，不是第一件。} 样本量翻倍只把标准误降到 $1/\sqrt{2}$；而配对之后，"这一批 batch 恰好偏难"这个共同分量在做差时直接抵消掉了。
 
-\lstinputlisting[style=hlnum, firstline=30, lastline=46, firstnumber=30]%
-  {../../cs336_systems/experiments/eval_checkpoint.py}
+\begin{lstlisting}[style=hlnum, firstnumber=30]
+@torch.no_grad()
+def eval_stream(model, path: str, context_length: int, batch_size: int, n_batches: int,
+                device, seed: int) -> tuple[float, int]:
+    ds = TokenStreamDataset(path, context_length)
+    # Fixed-seed shuffle: the streams have very different lengths, so scoring the first
+    # N windows of each would compare "start of C4" against "start of alpaca" rather
+    # than a representative sample of either.
+    g = torch.Generator().manual_seed(seed)
+    loader = DataLoader(ds, batch_size=batch_size, shuffle=True, generator=g, num_workers=2)
+    total, seen = 0.0, 0
+    for x, y in loader:
+        x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+        total += cross_entropy(model(x), y).item()
+        seen += 1
+        if seen >= n_batches:
+            break
+    return total / max(seen, 1), seen
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/experiments/eval_checkpoint.py}{30--46}，已直接抄入正文。
 
 这个说法当晚被验过一次，而且是被迫验的：另一条线索（见 \secref{sec:b-sft-honest}）显示 \code{general} 上的 delta 符号和分域加权反推出来的对不上，第一反应是"会不会只是采样噪声"。于是换了两个 seed 各重打一次分。
 

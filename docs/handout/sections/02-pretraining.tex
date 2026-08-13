@@ -267,8 +267,23 @@ GPU 1 has a total capacity of 23.56 GiB of which 25.00 MiB is free.
 
 去读初始化代码，问题在一个默认参数上。工具函数的签名是：
 
-\lstinputlisting[style=hlnum, firstline=6, lastline=19, firstnumber=6]%
-  {../../cs336-basics/cs336_basics/transfromer/para_init.py}
+\begin{lstlisting}[style=hlnum, firstnumber=6]
+def trunct_normal_para_init(dim_out, dim_in, mu=0, var=1, truc_magnitude=3, device="cpu", dtype=torch.float16):
+    """
+    Return the initialized parameters value using truncated normal.
+    """
+    device = device if device is not None else "cpu"
+    dtype = dtype if dtype is not None else torch.float16 
+    tensor = torch.empty(dim_out, dim_in, dtype = dtype, device = device)
+    weight_mat: Float[torch.Tensor, "dim_out, dim_in"] = tensor 
+    nn.init.trunc_normal_(
+        weight_mat, mean=mu, std=math.sqrt(var), 
+        a=mu-truc_magnitude, b=mu+truc_magnitude,
+    )
+
+    return weight_mat
+\end{lstlisting}
+\noindent 来源：\codeat{cs336-basics/cs336_basics/transfromer/para_init.py}{6--19}，已直接抄入正文。
 
 \code{var} 的默认值是 \textbf{1}。而 SwiGLU FFN 里那三次调用\cnemph{都没有传 var}，于是 \code{W1}/\code{W2}/\code{W3} 全部按 $\sigma=1.0$ 初始化。模型里其他所有矩阵（\code{Linear}、\code{W_Q}/\code{W_K}/\code{W_V}/\code{W_O}）都老老实实传了 Xavier 的 $2/(d_{\mathrm{out}}+d_{\mathrm{in}})$。对 FFN 该有的值是
 \[
@@ -276,8 +291,21 @@ GPU 1 has a total capacity of 23.56 GiB of which 25.00 MiB is free.
 \]
 也就是说实际用的标准差比应该用的\cnemph{大了约 37 倍}。修复就是把这个方差显式传进去：
 
-\lstinputlisting[style=hlnum, firstline=13, lastline=24, firstnumber=13]%
-  {../../cs336-basics/cs336_basics/transfromer/pointwise_ffn.py}
+\begin{lstlisting}[style=hlnum, firstnumber=13]
+        # Xavier variance, matching Linear (linear_module.py) and the attention projections
+        # (multiheads_attention.py). Passing it explicitly matters: trunct_normal_para_init's
+        # `var` defaults to 1, and these three calls used to omit it, so every FFN matrix was
+        # initialized at std=1.0 instead of ~0.027. Pre-norm hides that at step 0 (RMSNorm
+        # renormalizes, so initial loss is still exactly ln(vocab_size)), but the FFN branch
+        # writes values with RMS ~2.5e4 into a residual stream whose branches should be
+        # contributing ~0.4 -- a ~65,000x overshoot that reliably diverges to NaN a few
+        # hundred steps in, once the LR is high enough to actually move those weights.
+        ffn_var = 2 / (dim_ff + dim_model)
+        self.W1: Float[torch.Tensor, "dim_ff, d_model"]= torch.nn.Parameter(trunct_normal_para_init(dim_ff, dim_model, 0, ffn_var, 3, device, dtype))
+        self.W3: Float[torch.Tensor, "dim_ff, d_model"]= torch.nn.Parameter(trunct_normal_para_init(dim_ff, dim_model, 0, ffn_var, 3, device, dtype))
+        self.W2: Float[torch.Tensor, "d_model, dim_ff"]= torch.nn.Parameter(trunct_normal_para_init(dim_model, dim_ff, 0, ffn_var, 3, device, dtype))
+\end{lstlisting}
+\noindent 来源：\codeat{cs336-basics/cs336_basics/transfromer/pointwise_ffn.py}{13--24}，已直接抄入正文。
 
 \subsubsection*{第五步：为什么一直没被发现}
 
@@ -356,8 +384,24 @@ GPU 1 has a total capacity of 23.56 GiB of which 25.00 MiB is free.
 
 比修复更重要的是两道闸，因为它们保证\cnemph{下一次}不会再瞒这么久：
 
-\lstinputlisting[style=hlnum, firstline=507, lastline=521, firstnumber=507]%
-  {../../cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}
+\begin{lstlisting}[style=hlnum, firstnumber=507]
+            # Fail fast on divergence. Without this the job happily burns its whole
+            # wall-clock budget multiplying NaNs, and nothing in stdout says so until the
+            # next eval -- which can be thousands of steps away.
+            if not math.isfinite(loss_value):
+                raise RuntimeError(
+                    f"Rank {rank}: training DIVERGED -- non-finite loss ({loss_value}) at "
+                    f"global_step {global_step} (lr={current_lr if use_lr_schedule else peak_lr:.3e}). "
+                    f"Aborting instead of burning the rest of the budget."
+                )
+
+            if log_every_n_steps is not None and global_step % log_every_n_steps == 0:
+                # Also to stdout, not just W&B: the run log is the only thing available when
+                # reconnecting over SSH, and previously it showed nothing but a tqdm bar.
+                lr_str = f" | lr {current_lr:.3e}" if use_lr_schedule else ""
+                print(f"Rank {rank} | step {global_step:06d} | train loss {loss_value:.4f}{lr_str}", flush=True)
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}{507--521}，已直接抄入正文。
 
 第一道是 \code{math.isfinite(loss_value)}：一旦非有限立刻 \code{raise}，并把当时的 \code{global_step} 和 \code{lr} 一起打出来——而不是继续拿 NaN 乘 7 小时。
 
@@ -405,8 +449,17 @@ RuntimeError: Error(s) in loading state_dict for TransformerLM:
 
 \paragraph{修法（两端都改）。}保存端 unwrap，让\cnemph{以后}的 checkpoint 直接是干净的 plain key：
 
-\lstinputlisting[style=hlnum, firstline=115, lastline=122, firstnumber=115]%
-  {../../cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}
+\begin{lstlisting}[style=hlnum, firstnumber=115]
+    if rank == 0:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        ckpt_path = os.path.join(checkpoint_dir, f"checkpoint_{tag}_{epoch:04d}.pt")
+        raw_model = model.module if hasattr(model, "module") else model
+        # Unwrap torch.compile too, so checkpoints are written with plain module keys and
+        # stay loadable by anything that builds a bare TransformerLM (the sampler, the
+        # serving adapter). Otherwise every key carries an "_orig_mod." prefix.
+        raw_model = getattr(raw_model, "_orig_mod", raw_model)
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}{115--122}，已直接抄入正文。
 
 加载端统一做一次 \codeb{k.removeprefix("_orig_mod.")}，对没有前缀的 checkpoint 是 no-op——三处都改了：\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{175}（续训）、\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{351}（\code{init_from}）、\codeat{cs336\_systems/experiments/eval\_checkpoint.py}{73}（打分）。
 
@@ -566,15 +619,45 @@ step & val loss \\
 
 修法：\code{global_step} 和 \code{epoch} 分开存；resume 时恢复 \code{global_step}（否则就算循环跑起来，LR 也会从头 warmup）；旧 checkpoint 因字段有歧义\cnemph{明确报错}并提示改用 \code{init_from}：
 
-\lstinputlisting[style=hlnum, firstline=179, lastline=193, firstnumber=179]%
-  {../../cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}
+\begin{lstlisting}[style=hlnum, firstnumber=179]
+    # Prefer the unambiguous fields. Older checkpoints only have "iter", which was written
+    # with a *step* count for tag="step" files and an *epoch* count for tag="epoch" files;
+    # feeding either into `range(start_epoch, epochs)` produced an EMPTY range
+    # (range(15000, 100) and range(100, 100) alike), so resuming silently trained for zero
+    # steps and exited looking like a successful run. global_step was never restored at
+    # all, so even a non-empty range would have restarted the LR warmup from scratch.
+    epoch = checkpoint.get("epoch")
+    global_step = checkpoint.get("global_step")
+    if epoch is None or global_step is None:
+        raise RuntimeError(
+            f"{resume_from} predates the checkpoint schema fix and records only "
+            f"iter={checkpoint.get('iter')}, which is ambiguous between a step count and "
+            f"an epoch count -- resuming from it cannot be done correctly. Use --init_from "
+            f"to start a fresh run from its weights instead."
+        )
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}{179--193}，已直接抄入正文。
 
 \paragraph{(4) NVTX：探测一次，而不是猜。}\code{cs336_basics} 有 8 个文件用 \code{@nvtx.range(...)} 标注 forward。\code{torch.cuda.nvtx} 在非 CUDA build 上\cnemph{导入正常、一调用就炸}（\codeb{RuntimeError: NVTX functions not installed}），意味着 \code{TransformerLM} 在 CPU/MPS 机器上根本跑不起来——上面那个「在笔记本上验初始化」的 Tip，当初就是被它挡住的。
 
 \code{nvtx_compat.py} 的做法是 import 时探测一次：
 
-\lstinputlisting[style=hlnum, firstline=32, lastline=44, firstnumber=32]%
-  {../../cs336-basics/cs336_basics/nvtx_compat.py}
+\begin{lstlisting}[style=hlnum, firstnumber=32]
+def _nvtx_is_usable() -> bool:
+    """Probe rather than infer. ``torch.cuda.is_available()`` is the wrong question --
+    it asks about a *device*, while NVTX is about whether the *build* has the symbols,
+    and the two come apart (a CUDA build on a machine with no GPU still has NVTX)."""
+    try:
+        _torch_nvtx.range_push("_nvtx_probe")
+        _torch_nvtx.range_pop()
+        return True
+    except Exception:
+        return False
+
+
+NVTX_AVAILABLE = _nvtx_is_usable()
+\end{lstlisting}
+\noindent 来源：\codeat{cs336-basics/cs336_basics/nvtx_compat.py}{32--44}，已直接抄入正文。
 
 这里的教学点在那三行注释上：\cnemph{不能靠 \code{torch.cuda.is_available()} 猜}。那个函数问的是「这台机器上有没有可用的 GPU 设备」，而 NVTX 问的是「这个 torch build 里有没有编进 NVTX 符号」——两者会脱钩（一个 CUDA build 装在没有 GPU 的机器上，NVTX 照样可用）。\cnemph{当一个能力可以被直接试一次时，不要用一个相关但不等价的条件去推断它。}
 

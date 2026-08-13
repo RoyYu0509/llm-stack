@@ -1,0 +1,232 @@
+kernel,ddp,wall_sec,step,loss
+vectorized_torch,Local No DDP,23.9645,1,6.6158
+vectorized_torch,Local No DDP,29.1799,6,6.9695
+vectorized_torch,Local No DDP,34.4007,11,6.5973
+vectorized_torch,Local No DDP,39.6215,16,6.7591
+vectorized_torch,Local No DDP,44.8504,21,6.8094
+vectorized_torch,Local No DDP,50.0817,26,6.7931
+vectorized_torch,Local No DDP,56.9737,31,6.5969
+vectorized_torch,Local No DDP,62.2128,36,6.9339
+vectorized_torch,Local No DDP,67.4626,41,6.5151
+vectorized_torch,Local No DDP,72.7133,46,6.3349
+vectorized_torch,Local No DDP,77.9692,51,6.4892
+vectorized_torch,Local No DDP,108.9355,56,6.5349
+vectorized_torch,Local No DDP,114.153,61,6.5622
+vectorized_torch,Local No DDP,119.3741,66,6.7084
+vectorized_torch,Local No DDP,124.5984,71,5.9952
+vectorized_torch,Local No DDP,129.8295,76,6.4717
+vectorized_torch,Local No DDP,135.0627,81,6.3627
+vectorized_torch,Local No DDP,140.3013,86,6.4019
+vectorized_torch,Local No DDP,145.5429,91,6.3809
+vectorized_torch,Local No DDP,152.4104,96,6.8767
+vectorized_torch,Local No DDP,157.6584,101,6.1148
+vectorized_torch,Local No DDP,158.7083,102,6.6674
+vectorized_torch,Local No DDP,187.1893,106,6.4423
+vectorized_torch,Local No DDP,192.409,111,6.508
+vectorized_torch,Local No DDP,197.629,116,6.2856
+vectorized_torch,Local No DDP,202.8548,121,6.4473
+vectorized_torch,Local No DDP,208.0825,126,6.2788
+vectorized_torch,Local No DDP,213.3102,131,6.8445
+vectorized_torch,Local No DDP,218.5445,136,6.3003
+vectorized_torch,Local No DDP,223.796,141,6.2643
+vectorized_torch,Local No DDP,229.0412,146,5.918
+vectorized_torch,Local No DDP,235.8725,151,6.686
+vectorized_torch,Local No DDP,237.9748,153,6.5775
+vectorized_torch,Naive DDP,45.3473,1,6.3793
+vectorized_torch,Naive DDP,51.2005,6,6.6714
+vectorized_torch,Naive DDP,57.1134,11,6.3343
+vectorized_torch,Naive DDP,63.0621,16,6.4679
+vectorized_torch,Naive DDP,69.0322,21,6.2661
+vectorized_torch,Naive DDP,75.0454,26,7.0216
+vectorized_torch,Naive DDP,81.0257,31,5.9274
+vectorized_torch,Naive DDP,86.9578,36,6.3331
+vectorized_torch,Naive DDP,92.8953,41,6.788
+vectorized_torch,Naive DDP,98.8831,46,6.2871
+vectorized_torch,Naive DDP,104.9071,51,6.2003
+vectorized_torch,Naive DDP,163.8104,56,5.7373
+vectorized_torch,Naive DDP,169.7802,61,5.9875
+vectorized_torch,Naive DDP,175.7453,66,6.3054
+vectorized_torch,Naive DDP,181.6315,71,5.8739
+vectorized_torch,Naive DDP,187.566,76,6.1584
+vectorized_torch,Naive DDP,193.5042,81,6.3184
+vectorized_torch,Naive DDP,199.4993,86,5.6921
+vectorized_torch,Naive DDP,207.8715,91,6.2184
+vectorized_torch,Naive DDP,213.9366,96,6.2844
+vectorized_torch,Naive DDP,219.9439,101,6.4302
+vectorized_torch,Naive DDP,221.1347,102,6.1972
+vectorized_torch,Naive DDP,278.2874,106,6.2351
+vectorized_torch,Naive DDP,284.2181,111,6.166
+vectorized_torch,Naive DDP,290.1735,116,6.2332
+vectorized_torch,Naive DDP,296.1684,121,5.9138
+vectorized_torch,Naive DDP,302.1451,126,5.9457
+vectorized_torch,Naive DDP,308.1111,131,6.3162
+vectorized_torch,Naive DDP,314.0829,136,6.1292
+vectorized_torch,Naive DDP,320.0486,141,6.4103
+vectorized_torch,Naive DDP,329.6647,146,6.1155
+vectorized_torch,Naive DDP,335.6223,151,5.8666
+vectorized_torch,Naive DDP,338.0149,153,5.7568
+vectorized_torch,Bucketed Overlapping DDP,47.5651,1,6.4409
+vectorized_torch,Bucketed Overlapping DDP,54.4695,6,6.7276
+vectorized_torch,Bucketed Overlapping DDP,59.9325,11,6.3831
+vectorized_torch,Bucketed Overlapping DDP,65.3885,16,6.5017
+vectorized_torch,Bucketed Overlapping DDP,70.8835,21,6.3137
+vectorized_torch,Bucketed Overlapping DDP,76.3658,26,7.0765
+vectorized_torch,Bucketed Overlapping DDP,81.8611,31,5.9632
+vectorized_torch,Bucketed Overlapping DDP,87.3561,36,6.3678
+vectorized_torch,Bucketed Overlapping DDP,92.8704,41,6.8193
+vectorized_torch,Bucketed Overlapping DDP,98.3929,46,6.3359
+vectorized_torch,Bucketed Overlapping DDP,103.9271,51,6.228
+vectorized_torch,Bucketed Overlapping DDP,162.0724,56,5.7766
+vectorized_torch,Bucketed Overlapping DDP,167.5096,61,6.0176
+vectorized_torch,Bucketed Overlapping DDP,172.9459,66,6.3407
+vectorized_torch,Bucketed Overlapping DDP,178.3722,71,5.9015
+vectorized_torch,Bucketed Overlapping DDP,183.8436,76,6.1924
+vectorized_torch,Bucketed Overlapping DDP,189.3124,81,6.3401
+vectorized_torch,Bucketed Overlapping DDP,194.7553,86,5.7251
+vectorized_torch,Bucketed Overlapping DDP,200.2336,91,6.2397
+vectorized_torch,Bucketed Overlapping DDP,205.7156,96,6.3148
+vectorized_torch,Bucketed Overlapping DDP,211.2165,101,6.4628
+vectorized_torch,Bucketed Overlapping DDP,212.3169,102,6.2363
+vectorized_torch,Bucketed Overlapping DDP,268.7674,106,6.2722
+vectorized_torch,Bucketed Overlapping DDP,274.2553,111,6.2021
+vectorized_torch,Bucketed Overlapping DDP,279.7601,116,6.2522
+vectorized_torch,Bucketed Overlapping DDP,285.2194,121,5.9548
+vectorized_torch,Bucketed Overlapping DDP,290.6692,126,5.978
+vectorized_torch,Bucketed Overlapping DDP,296.1451,131,6.3447
+vectorized_torch,Bucketed Overlapping DDP,301.6259,136,6.1575
+vectorized_torch,Bucketed Overlapping DDP,307.1318,141,6.4323
+vectorized_torch,Bucketed Overlapping DDP,312.6146,146,6.1346
+vectorized_torch,Bucketed Overlapping DDP,318.0899,151,5.8942
+vectorized_torch,Bucketed Overlapping DDP,320.2826,153,5.7628
+flash_attention_triton,Local No DDP,32.6644,1,6.8483
+flash_attention_triton,Local No DDP,36.7855,6,6.2435
+flash_attention_triton,Local No DDP,40.9206,11,6.6133
+flash_attention_triton,Local No DDP,45.0671,16,6.7262
+flash_attention_triton,Local No DDP,49.2262,21,6.7137
+flash_attention_triton,Local No DDP,53.3894,26,6.4326
+flash_attention_triton,Local No DDP,57.5552,31,6.8847
+flash_attention_triton,Local No DDP,61.7143,36,6.7654
+flash_attention_triton,Local No DDP,70.1316,41,6.9052
+flash_attention_triton,Local No DDP,74.3093,46,6.2755
+flash_attention_triton,Local No DDP,78.4833,51,6.9603
+flash_attention_triton,Local No DDP,118.1091,56,6.7086
+flash_attention_triton,Local No DDP,122.2536,61,6.3165
+flash_attention_triton,Local No DDP,126.4007,66,6.5061
+flash_attention_triton,Local No DDP,130.5595,71,6.2146
+flash_attention_triton,Local No DDP,134.7223,76,6.4546
+flash_attention_triton,Local No DDP,138.8943,81,6.0335
+flash_attention_triton,Local No DDP,143.0689,86,6.3625
+flash_attention_triton,Local No DDP,150.2795,91,6.3889
+flash_attention_triton,Local No DDP,154.4446,96,5.9359
+flash_attention_triton,Local No DDP,158.6176,101,6.3803
+flash_attention_triton,Local No DDP,159.4541,102,6.2785
+flash_attention_triton,Local No DDP,193.9603,106,6.6145
+flash_attention_triton,Local No DDP,198.1079,111,6.3375
+flash_attention_triton,Local No DDP,202.2171,116,5.8786
+flash_attention_triton,Local No DDP,206.327,121,6.2695
+flash_attention_triton,Local No DDP,210.4417,126,6.5297
+flash_attention_triton,Local No DDP,214.5588,131,6.1142
+flash_attention_triton,Local No DDP,218.6837,136,6.2589
+flash_attention_triton,Local No DDP,222.8098,141,6.4653
+flash_attention_triton,Local No DDP,226.9375,146,6.1026
+flash_attention_triton,Local No DDP,231.0772,151,5.8028
+flash_attention_triton,Local No DDP,232.7287,153,6.366
+flash_attention_triton,Naive DDP,47.3876,1,6.5017
+flash_attention_triton,Naive DDP,52.2068,6,6.8001
+flash_attention_triton,Naive DDP,57.0065,11,6.4481
+flash_attention_triton,Naive DDP,61.8243,16,6.5648
+flash_attention_triton,Naive DDP,66.6834,21,6.3764
+flash_attention_triton,Naive DDP,71.5606,26,7.1346
+flash_attention_triton,Naive DDP,79.6379,31,6.0371
+flash_attention_triton,Naive DDP,84.4951,36,6.4395
+flash_attention_triton,Naive DDP,89.3825,41,6.8799
+flash_attention_triton,Naive DDP,94.2431,46,6.3849
+flash_attention_triton,Naive DDP,99.134,51,6.2928
+flash_attention_triton,Naive DDP,152.9533,56,5.8911
+flash_attention_triton,Naive DDP,157.7522,61,6.1197
+flash_attention_triton,Naive DDP,162.5826,66,6.3999
+flash_attention_triton,Naive DDP,167.4389,71,5.9828
+flash_attention_triton,Naive DDP,172.2918,76,6.2505
+flash_attention_triton,Naive DDP,179.3089,81,6.4398
+flash_attention_triton,Naive DDP,184.1514,86,5.7966
+flash_attention_triton,Naive DDP,188.9969,91,6.3077
+flash_attention_triton,Naive DDP,193.8999,96,6.3766
+flash_attention_triton,Naive DDP,198.7978,101,6.5205
+flash_attention_triton,Naive DDP,199.7711,102,6.2896
+flash_attention_triton,Naive DDP,254.0415,106,6.331
+flash_attention_triton,Naive DDP,258.8552,111,6.2542
+flash_attention_triton,Naive DDP,263.7186,116,6.3146
+flash_attention_triton,Naive DDP,268.5728,121,6.0085
+flash_attention_triton,Naive DDP,273.4011,126,6.0297
+flash_attention_triton,Naive DDP,281.1113,131,6.4072
+flash_attention_triton,Naive DDP,285.9491,136,6.2144
+flash_attention_triton,Naive DDP,290.8329,141,6.4884
+flash_attention_triton,Naive DDP,295.7242,146,6.1746
+flash_attention_triton,Naive DDP,300.5736,151,5.9434
+flash_attention_triton,Naive DDP,302.5405,153,5.8178
+flash_attention_triton,Bucketed Overlapping DDP,51.892,1,6.6063
+flash_attention_triton,Bucketed Overlapping DDP,56.2651,6,6.8893
+flash_attention_triton,Bucketed Overlapping DDP,60.6539,11,6.5574
+flash_attention_triton,Bucketed Overlapping DDP,65.0581,16,6.6656
+flash_attention_triton,Bucketed Overlapping DDP,69.5013,21,6.4873
+flash_attention_triton,Bucketed Overlapping DDP,73.8911,26,7.2469
+flash_attention_triton,Bucketed Overlapping DDP,78.2987,31,6.1046
+flash_attention_triton,Bucketed Overlapping DDP,82.7121,36,6.4997
+flash_attention_triton,Bucketed Overlapping DDP,87.167,41,6.943
+flash_attention_triton,Bucketed Overlapping DDP,91.6086,46,6.4698
+flash_attention_triton,Bucketed Overlapping DDP,96.0429,51,6.3545
+flash_attention_triton,Bucketed Overlapping DDP,154.5385,56,5.9366
+flash_attention_triton,Bucketed Overlapping DDP,158.9231,61,6.1883
+flash_attention_triton,Bucketed Overlapping DDP,163.3278,66,6.4645
+flash_attention_triton,Bucketed Overlapping DDP,167.6939,71,6.0365
+flash_attention_triton,Bucketed Overlapping DDP,172.0957,76,6.3056
+flash_attention_triton,Bucketed Overlapping DDP,176.4957,81,6.4925
+flash_attention_triton,Bucketed Overlapping DDP,180.9302,86,5.8652
+flash_attention_triton,Bucketed Overlapping DDP,185.3516,91,6.3555
+flash_attention_triton,Bucketed Overlapping DDP,189.7639,96,6.4267
+flash_attention_triton,Bucketed Overlapping DDP,194.1602,101,6.5742
+flash_attention_triton,Bucketed Overlapping DDP,195.0433,102,6.346
+flash_attention_triton,Bucketed Overlapping DDP,252.9558,106,6.406
+flash_attention_triton,Bucketed Overlapping DDP,257.3544,111,6.3139
+flash_attention_triton,Bucketed Overlapping DDP,261.73,116,6.3507
+flash_attention_triton,Bucketed Overlapping DDP,266.1294,121,6.0639
+flash_attention_triton,Bucketed Overlapping DDP,270.5581,126,6.0683
+flash_attention_triton,Bucketed Overlapping DDP,274.9614,131,6.4571
+flash_attention_triton,Bucketed Overlapping DDP,279.361,136,6.2643
+flash_attention_triton,Bucketed Overlapping DDP,283.7773,141,6.5253
+flash_attention_triton,Bucketed Overlapping DDP,288.1971,146,6.2205
+flash_attention_triton,Bucketed Overlapping DDP,292.6207,151,5.9729
+flash_attention_triton,Bucketed Overlapping DDP,294.3849,153,5.8593
+flash_attention_triton,Pytorch DDP,48.8777,1,6.4928
+flash_attention_triton,Pytorch DDP,53.2269,6,6.7743
+flash_attention_triton,Pytorch DDP,57.6119,11,6.4274
+flash_attention_triton,Pytorch DDP,62.0004,16,6.5487
+flash_attention_triton,Pytorch DDP,68.4132,21,6.3559
+flash_attention_triton,Pytorch DDP,72.8125,26,7.0995
+flash_attention_triton,Pytorch DDP,77.2416,31,6.0101
+flash_attention_triton,Pytorch DDP,81.6463,36,6.4162
+flash_attention_triton,Pytorch DDP,86.028,41,6.8618
+flash_attention_triton,Pytorch DDP,90.4337,46,6.3776
+flash_attention_triton,Pytorch DDP,94.868,51,6.2705
+flash_attention_triton,Pytorch DDP,150.5643,56,5.8303
+flash_attention_triton,Pytorch DDP,154.9189,61,6.0798
+flash_attention_triton,Pytorch DDP,159.2911,66,6.3867
+flash_attention_triton,Pytorch DDP,165.6298,71,5.9423
+flash_attention_triton,Pytorch DDP,170.0154,76,6.236
+flash_attention_triton,Pytorch DDP,174.3909,81,6.4072
+flash_attention_triton,Pytorch DDP,178.8402,86,5.7634
+flash_attention_triton,Pytorch DDP,183.2382,91,6.2815
+flash_attention_triton,Pytorch DDP,187.6314,96,6.3486
+flash_attention_triton,Pytorch DDP,192.0451,101,6.509
+flash_attention_triton,Pytorch DDP,192.9309,102,6.2652
+flash_attention_triton,Pytorch DDP,246.9882,106,6.3123
+flash_attention_triton,Pytorch DDP,251.3442,111,6.2194
+flash_attention_triton,Pytorch DDP,255.7162,116,6.276
+flash_attention_triton,Pytorch DDP,261.9018,121,5.9899
+flash_attention_triton,Pytorch DDP,266.3068,126,5.9965
+flash_attention_triton,Pytorch DDP,270.7109,131,6.3703
+flash_attention_triton,Pytorch DDP,275.0994,136,6.1939
+flash_attention_triton,Pytorch DDP,279.5232,141,6.4753
+flash_attention_triton,Pytorch DDP,283.9311,146,6.1561
+flash_attention_triton,Pytorch DDP,288.3295,151,5.9277
+flash_attention_triton,Pytorch DDP,290.0954,153,5.7955
