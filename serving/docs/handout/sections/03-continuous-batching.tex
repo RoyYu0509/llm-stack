@@ -1,0 +1,583 @@
+\section{从一次一条到 continuous batching：一次被自己推翻的设计}
+\label{sec:a-batching}
+
+前两章里每一句话都能落到一行代码上。这一章不行：到 Week 3 为止，\code{inferenceLM/} 下
+没有任何一个标识符叫 \code{batch}、\code{scheduler} 或 \code{admission}
+（唯一的三处匹配是 \code{transformer_lm_adapter.py} 注释里描述 tensor shape 的
+\code{(batch, seq)}）。所以这不是"如何实现 continuous batching"的教程，而是一次\cnemph{设计复盘}：
+把 2026-04-09 批准的 \code{DESIGN.md} 拿出来，对着 2026-04-21 的讨论记录逐条勾掉，
+看哪些结论还站得住，哪些已经死了但文档还没改。本章的\textbf{代码位置}多数指向 \codet{docs/}
+下的文档而不是源码，这是刻意的——指向一个不存在的行号比不给行号更糟。
+
+\subsection{现行 loop 的结构性限制：症状不是根因}
+\label{sec:cb-limit}
+
+先看今天真正在跑的东西。整个消费循环只有十七行，\secref{sec:a-loop} 已经逐行讲过：
+第 45 行取一条请求，第 50 行把它整条跑完，第 59 行在 \code{finally} 里归还队列计数，
+然后回到第 43 行取下一条（\codeat{inferenceLM/engine/inference\_engine.py}{43}）。
+一次循环迭代 $=$ 一条请求从进入到结束的完整生命周期。
+那一节关心它\cnemph{怎么}工作，这一节只关心它\cnemph{不能}怎么工作。
+
+一个很容易脱口而出的诊断是这样的：
+
+\begin{misconception}{GPU 利用率低，所以要做 continuous batching。}
+一次只跑一条请求，decode 阶段每步只有 \code{[1, 1]} 这么一个 token 进 GPU，算力大部分时间闲着。
+把 batch 开大，GPU 利用率上去了，吞吐自然就上去了。
+\end{misconception}
+
+这句话在 Week 3 的设计讨论里被当场纠正过，纠正内容记在
+\codeb{docs/progress/week3-discussion.md} 第 4 节的表格里，原话是：\cnemph{"GPU utilization 低" as root cause}
+$\to$ \emph{That's the symptom} $\to$ \emph{Root cause: request lifecycle coupled to iteration lifecycle}。
+
+区别不是修辞。如果你相信根因是利用率，你会去找\cnemph{让 GPU 更忙}的办法：更大的 batch、更低的精度、
+算子融合。这些都可能有用，但它们都不能让\cnemph{第二条请求在第一条跑完之前拿到第一个 token}。
+只要循环的一次迭代还等于一条请求的一生，第二条请求的排队时间下界就是第一条请求的
+全部 decode 步数，无论 GPU 有多空。这是一个结构约束，不是一个性能数字。
+
+同一份文档的 §2.5 把这句话说得更完整：
+
+\begin{quote}
+Current loop: one iteration = one request's full lifecycle (fetch $\to$ prefill $\to$ decode loop $\to$ done
+$\to$ next request). This couples request lifecycle to iteration lifecycle, preventing any work interleaving.
+\end{quote}
+
+于是解法的形状也就被定死了：不是"把 batch 调大"，而是\cnemph{把两个 lifecycle 拆开}。
+新的循环里，一次迭代 = 所有 in-flight 请求各走一步 + 顺带接纳新请求；一条请求的一生横跨很多次迭代。
+
+\begin{checkpoint}{symptom_vs_root_cause}{现行 loop 的根因，不是 GPU 闲着}
+不看文档回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 把 \codet{inference\_engine.py} 里的 \code{while self.open:} 循环理解成"一次迭代做一件什么事"？
+        新 loop 里同一句话该怎么填？
+  \item 如果我们只把 GPU 换成快十倍的卡，第二条请求的排队延迟会不会改善？为什么这说明利用率不是根因？
+  \item 写出一个"利用率"完全解释不了、但"lifecycle 耦合"能解释的观察。
+\end{enumerate}
+\hint 问自己：\code{pending_queue.get()} 这一行，在一条请求的一生中被执行几次？
+\ifshowanswers
+\tcblower
+\answer (a) 今天：一次迭代 = 一条请求的完整生命周期（fetch $\to$ prefill $\to$ 整个 decode loop $\to$ 写回
+$\to$ 取下一条）。新 loop：一次迭代 = 所有 in-flight 请求各前进一个 step，外加一次 admission 决定。
+(b) 会按比例缩短，但结构不变——排队的请求仍然必须等前一条\cnemph{整条}生成完。
+把 GPU 换成无限快，第二条请求的 TTFT 仍然等于第一条请求的全部 decode 时间。
+能被硬件消掉的是常数，不是耦合。
+(c) 一条 max\_token\_length=200 的长请求后面跟一条 5 token 就结束的短请求：
+短请求的 TTFT 被完全挡住。这跟 GPU 忙不忙无关，是 head-of-line blocking。
+\whereincode 症状与根因的对照见 \codeat{docs/progress/week3-discussion.md}{123}（§4 表格第 3 行），
+完整表述在同文件 §2.5；现行 loop 见 \codeat{inferenceLM/engine/inference\_engine.py}{43}。
+\fi
+\end{checkpoint}
+
+\subsection{continuous batching 的定义，以及它对 scheduler 位置的裁决}
+\label{sec:cb-def}
+\anchor{a:continuous-batching-def}
+
+Week 2 的 retro 里已经先一步把定义收敛好了。\codet{docs/retro/week2-retro.md} §2.4 的原话是：
+
+\begin{quote}
+continuous batching 不是"并发地跑很多 request"，而是"在 step granularity 上动态维护 batch membership"。
+\end{quote}
+
+每个词都在排除一种误读。"不是并发地跑很多 request"排除掉"开 N 个 asyncio task 各跑一条"——
+那是 N 份互不相干的单请求循环，GPU 上依然一条一条排队，只是队列从 Python 挪到了 CUDA stream。
+"step granularity"排除掉 batch 粒度：不是攒够一批发车、跑完再攒下一批（那是 static batching，
+\code{DESIGN.md} §4.2 已因 head-of-line blocking 否掉）。"动态维护 batch membership"是说 batch 是一个
+\cnemph{可变集合}，每个 step 边界上可以进人（admission）也可以出人（eviction）。
+
+同一节还写下了这个定义最重要的推论：
+
+\begin{quote}
+scheduler 不是一个独立于 engine loop 的外置幻想层；它应该嵌在 engine loop 的
+step-by-step admission / execution policy 里。
+\end{quote}
+
+这条推论直接判了一个设计的死刑：\code{DESIGN.md} §3 架构图里那个独立的 \emph{Scheduler} 方块。
+如果 batch membership 是在 step 边界上维护的，"选谁进 batch"就发生在两次 forward 之间，
+它是循环体的一部分，不是一个能被抽出来单独调用的组件。
+Week 2 retro"问题 1：加不必要的中间层"讲的是同一件事。
+
+\begin{checkpoint}{continuous_batching_definition}{一句话定义 continuous batching}
+不看文档回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 用一句话给出 continuous batching 的定义。这句话里必须出现两个关键词，是哪两个？
+  \item "开 10 个 asyncio task，每个 task 跑一条请求"——这是不是 continuous batching？为什么？
+  \item 定义里的"动态"具体指哪两个操作？
+\end{enumerate}
+\hint 定义不是关于并发数量的，是关于\cnemph{集合}的。
+\ifshowanswers
+\tcblower
+\answer (a) continuous batching 是\cnemph{在 step 粒度上动态维护 batch membership}。两个关键词：
+\cnemph{step 粒度}（step granularity）和 \cnemph{batch membership}。少了前者会退化成 static batching，
+少了后者会退化成"并发跑很多 request"。
+(b) 不是。那只是把串行排队从 Python 队列挪到了 GPU 上：10 个 task 各自持有自己的 KV cache、
+各自发 \code{[1, 1]} 的 forward，模型层面从来没有形成过一个 batch，membership 这个概念根本不存在。
+(c) 每个 step 边界上：admission（把等待中的新请求加进 running batch）与 eviction
+（把已经命中 stopping criteria 的请求移出 running batch，并回收它那一片 KV cache）。
+\whereincode （尚无实现，依据 \codet{docs/retro/week2-retro.md} §2.4；被否掉的 static batching
+见 \codet{docs/designs/DESIGN.md} §4.2。）
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{scheduler_placement}{scheduler 应该放在哪一层}
+不看文档回答：
+\begin{enumerate}[label=(\alph*)]
+  \item \code{DESIGN.md} 的架构图把 Scheduler 画成一个独立方块，前面接 Request Receiver，
+        后面接 prefill queue 和 decode queue。这张图哪里错了？
+  \item 按 §2.4 的推论，scheduler 的正确形态是什么？它的输入输出各是什么？
+  \item 为什么 Week 3 明确\cnemph{不做} pluggable scheduler interface？
+\end{enumerate}
+\hint 先回答"选谁进 batch 这个决定发生在哪两件事之间"。
+\ifshowanswers
+\tcblower
+\answer (a) 它把一个 policy 画成了一个 layer。图上 scheduler 是数据流里的一站（request 流过它、
+被它路由到某个 queue）；实际上 admission 决定发生在两次 forward 之间，是循环体内的一个判断。
+(b) 一个 admission policy 函数：输入是 pending 队列状态 $+$ 当前 running batch 状态
+（外加 KV cache 余量之类的资源约束），输出是"这一轮 prefill microbatch 收哪几条"。
+它不持有请求，也不拥有队列。
+(c) week3 讨论 §1 把它列进"What was NOT adopted"，理由是 premature abstraction——
+第二种 policy 还不存在，没有第二个实现就无从设计接口。
+\whereincode （尚无实现，依据 \codet{docs/retro/week2-retro.md} §2.4 与
+\codeb{docs/progress/week3-discussion.md} §1。）
+\fi
+\end{checkpoint}
+
+\subsection{backend 约束把设计逼回来：stage-homogeneous batching}
+\label{sec:cb-stage}
+\anchor{a:stage-homogeneous}
+
+定义收敛之后，讨论里出现的第二个提案很自然：既然一次迭代要让所有 in-flight 请求前进一步，
+那把待 prefill 的 prompt 和正在 decode 的单 token \cnemph{拼进同一个 forward}，
+用 \code{<BOS>} 分隔、配一个精心构造的 mask，不就一次搞定了吗？
+
+这个提案被 backend 挡了回来。\codeb{docs/progress/week3-discussion.md} §2.1 标了 CRITICAL：
+
+\begin{quote}
+\textbf{HuggingFace \code{model()} cannot mix prefill and decode in one forward pass.}
+HF attention\_mask is \code{[batch_size, seq_len]} — a padding mask only.
+\end{quote}
+
+关键在 \code{attention_mask} 的秩。它是二维的 \code{[B, S]}，语义是"第 $b$ 条序列的第 $s$ 个位置
+是不是真 token"。要把两条独立序列拼进同一行还互不可见，需要表达的是"第 $i$ 个位置能不能看见
+第 $j$ 个位置"，那是 per-pair 的 \code{[S, S]}（乃至 \code{[B, 1, S, S]}）结构，
+二维 padding mask 表达不了。真要做就得换成支持 block table 的自定义 attention kernel
+（FlashAttention、xformers 那一类），而 GPT-2 的 HF 实现不接受 ragged/packed 输入。
+
+被逼出来的结论就是 \cnemph{stage-homogeneous batching}：一个 batch 里所有序列必须处在同一个阶段。
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{lll}
+\toprule
+ & Prefill microbatch & Decode microbatch \\
+\midrule
+\codet{input\_ids}      & \codet{[B\_p, S\_max]}     & \codet{[B\_d, 1]} \\
+\codet{past\_key\_values} & \codet{None}             & 上一轮的 cache \\
+\codet{attention\_mask} & \codet{[B\_p, S\_max]}（padding） & \codet{[B\_d, L+1]}（padding） \\
+一次迭代里的调用次序 & 第一次 \codet{model()} & 第二次 \codet{model()} \\
+\bottomrule
+\end{tabular}
+\caption{stage-homogeneous batching：每个 engine iteration 两次独立的 \codet{model()} 调用，
+顺序执行。这两次调用之间没有任何 GPU 并行——它们是 Python 里前后两条语句，
+第二次的 kernel 要等第一次的 kernel 排完队。依据
+\codeb{docs/progress/week3-discussion.md} §2.1--§2.2。}
+\label{tab:cb-stage-shapes}
+\end{table}
+
+\cnemph{"两次 forward"很容易被读成"两倍并行"，实际上是"两倍串行"。}
+文档写得很直白：\emph{Sequential execution, not GPU-parallel. Two \code{model()} calls.}
+一次迭代的墙钟时间是 prefill forward 加上 decode forward，不是两者取最大值——
+这也是为什么 prefill-first 的代价必须被显式承认（\secref{sec:cb-status}）。
+
+这段约束是从 HF 的 API 形状推出来的，而 API 会变。本仓库 \code{pyproject.toml} 写的是
+\code{transformers>=5.5.3}，实际装的是 5.5.3；在这个版本上 \code{outputs.past_key_values}
+已经\cnemph{不再是} \code{lm_engine.py} 类型注解里写的 \codeb{List[Tuple[Tensor, Tensor]]}，
+而是一个 \code{DynamicCache} 对象——不支持下标（\code{cache[0]} 直接抛 \code{TypeError}），
+\code{from_legacy_cache} / \code{to_legacy_cache} 在 5.x 里也已不存在。
+真要做 batching，这一层会是第一个绊脚的地方。
+
+\begin{tipbox}{十行脚本验证 backend 约束，不需要 GPU}
+不要相信讲义（也不要相信设计文档）里写的 tensor shape，自己打一遍：
+\begin{lstlisting}[style=hlplain]
+m = GPT2LMHeadModel.from_pretrained("gpt2"); m.eval()
+ids  = torch.zeros((2, 8), dtype=torch.long)
+mask = torch.zeros((2, 8), dtype=torch.long)
+mask[0, :5] = 1; mask[1, :8] = 1   # 第一条 prompt 只有 5 个真 token
+out = m(input_ids=ids, attention_mask=mask, past_key_values=None, use_cache=True)
+c = out.past_key_values
+print(type(c).__name__, len(c.layers), tuple(c.layers[0].keys.shape))
+# DynamicCache 12 (2, 12, 8, 64)
+\end{lstlisting}
+把 \code{mask} 换成三维再传进去，看它报什么错；这是理解"为什么不能 packed"最快的一条路。
+\resources CPU 即可。权重已缓存时实测 1.6 秒；首次运行要先下载 gpt2 权重（HF 缓存目录 525\,MB）。
+\end{tipbox}
+
+\begin{checkpoint}{why_stage_homogeneous}{为什么一次迭代必须发两次 \codet{model()}}
+不看文档回答：
+\begin{enumerate}[label=(\alph*)]
+  \item HF 的 \code{attention_mask} 是什么形状、什么语义？它为什么表达不了 packed 序列？
+  \item "一次迭代两次 forward"是不是意味着这两次可以并行？一次迭代的耗时怎么算？
+  \item 如果我们哪天真的想混合 prefill 和 decode，需要换掉哪一层？
+\end{enumerate}
+\hint 想清楚 padding mask 是"逐位置"的，而 causal 隔离是"逐位置对"的。
+\ifshowanswers
+\tcblower
+\answer (a) \code{[batch_size, seq_len]}，二维，逐位置标记"是不是 padding"。把两条序列拼进同一行之后，
+需要禁止第二条的 token 看见第一条的 token，这是位置\cnemph{对}之间的约束，需要 \code{[S, S]} 级别的
+mask；二维 padding mask 没有表达这件事的秩。
+(b) 不能并行。它们是 Python 里前后两条语句，中间没有 stream 切换，文档明说
+\emph{Sequential execution, not GPU-parallel}。一次迭代耗时 $\approx$ prefill forward $+$ decode forward。
+(c) attention kernel 本身：要能吃 block table / ragged 输入的实现（FlashAttention、xformers 之类），
+GPT-2 的 HF 实现不支持。这被 week3 讨论列为 Future（chunked prefill、paged KV cache 同一档）。
+\whereincode （尚无实现，依据 \codeb{docs/progress/week3-discussion.md} §2.1--§2.2。
+今天单请求的两种 shape 见 \codeat{inferenceLM/engine/lm\_engine.py}{36} 与
+\codeat{inferenceLM/engine/lm\_engine.py}{60}。）
+\fi
+\end{checkpoint}
+
+\begin{examplebox}{one_iteration_walkthrough}{一次迭代：3 条 in-flight decode + 2 条 pending prefill}
+\textbf{这是设计推演，Week 3 尚无代码。}下面的循环体在仓库里不存在，
+标注了"（已实测）"的 shape 是拿 \code{gpt2} 在 CPU 上真跑出来的，其余部分是推论。
+
+场景：running batch 里有 3 条请求正在 decode，它们的 KV cache 已经对齐到长度 13；
+pending queue 里有 2 条新请求，prompt 分别是 5 和 8 个 token；
+admission policy 决定这一轮把两条都收进来。
+
+\medskip
+\textbf{第一次 \code{model()}：prefill microbatch}
+
+\begin{lstlisting}[style=hlplain]
+input_ids       = [2, 8]        # 两条 prompt padding 到 S_max = 8
+attention_mask  = [2, 8]        # [[1]*5 + [0]*3, [1]*8]
+past_key_values = None
+# -> logits [2, 8, 50257]                    (*@（已实测）@*)
+# -> DynamicCache, 12 层, layers[i].keys [2, 12, 8, 64]   (*@（已实测）@*)
+\end{lstlisting}
+
+\textbf{第二次 \code{model()}：decode microbatch}
+
+\begin{lstlisting}[style=hlplain]
+input_ids       = [3, 1]        # 三条各自上一步生成的 token
+attention_mask  = [3, 14]       # 13 个历史位置 + 这一步
+past_key_values = cache(seq=13)
+# -> logits [3, 1, 50257]                              (*@（已实测）@*)
+# -> cache 增长到 seq=14, keys [3, 12, 14, 64]          (*@（已实测）@*)
+\end{lstlisting}
+
+\medskip
+\textbf{未验证的设计推演，三条}
+
+\cnemph{(1) 两片 cache 怎么并进一个 batch。}下一轮要让 5 条一起 decode，就得把
+\code{[2, 12, 8, 64]} 和 \code{[3, 12, 14, 64]} 并成 \code{[5, 12, 14, 64]}——seq 维不等长，
+得先把短的两条补到 14。\code{DynamicCache} 在 5.5.3 上\cnemph{没有任何 concat / merge 方法}
+（已核对 \code{dir(DynamicCache)}），所以要自己写 \code{torch.cat}，还得保证 12 层
+$\times$ (keys, values) 全对齐。这套代码不存在，也没被测过。
+
+\cnemph{(2) padding 补在哪一边。}\code{lm_engine.py} 第 38 行取的是 \code{outputs.logits[:, -1, :]}。
+prefill batch 若\cnemph{右}补零，那条 5 token 请求的最后一个位置是 pad，取出的 logits 就是错的；
+推论是必须左补，并让 \code{attention_mask} 屏蔽左侧 pad。这只是从 shape 推出来的，无测试覆盖。
+
+\cnemph{(3) 请求结束后怎么从 batch 摘掉。}这一步反而有现成工具：
+\codeb{DynamicCache.batch_select_indices(indices)} 沿 batch 维做子集选择，
+实测把 \code{[3, 12, 14, 64]} 选成 \code{[2, 12, 14, 64]}。
+但什么时候调用、和 \code{request_store} 的状态更新怎么排序，都还没有设计。
+\end{examplebox}
+
+\subsection{\codet{DESIGN.md} 被推翻了什么}
+\label{sec:cb-designdiff}
+
+\code{DESIGN.md} 的日期是 2026-04-09，Status 至今写着 Approved。Week 3 的讨论发生在 12 天后，
+没有人回去改那份文档——\secref{sec:a-timeline} 的文档时间线表已经把这层关系摆出来了，
+这里不重复，只做内容层面的逐项对账。下面这张表是本章最需要记住的东西：
+它把两份文档逐条对上，标出哪一行还能信。
+
+\begin{table}[ht]
+\centering
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}Xl@{}}
+\toprule
+条目 & \codet{DESIGN.md} v0（2026-04-09） & Week 3 讨论（2026-04-21）后的状态 & 判定 \\
+\midrule
+KV cache 策略 &
+§4.1 静态预分配：每 slot 按满 1024 context 分配 75.5\,MB，12\,GB 卡上约 146 slots，
+4 并发约 302\,MB &
+新 loop 下没有重新给出 KV cache 策略；今天的 cache 由 HF 的 \codet{DynamicCache} 动态增长、
+请求结束即丢弃，"预分配"没有执行主体。paged KV cache 被降级为 Future，
+触发条件是"移出 GPT-2 124M" &
+已取代 \\
+\addlinespace
+Batching &
+§4.2 以 request level 做 load in/off，完成即 evict，立刻补新请求；拒绝 static batching &
+完全一致，只是被表述得更准确：在 step 粒度上动态维护 batch membership &
+仍有效 \\
+\addlinespace
+调度规则 &
+§4.3 两个 logical queue，每个 iteration 只跑 prefill 或只跑 decode；
+prefill 非空时按 2 prefill : 1 decode 交替 &
+§2.2 锁定"一次迭代两次 forward，prefill 和 decode 都发生"；
+either/or 前提消失，2:1 的语义随之失效；admission policy 标为 OPEN &
+已取代 \\
+\addlinespace
+Iteration 的定义 &
+§6 Q3：一个 iteration = 一次 forward pass，scheduler 决定跑哪个 queue &
+§2.2：一个 iteration = 一次 prefill forward $+$ 一次 decode forward &
+已取代 \\
+\addlinespace
+项目定位 &
+§1 一个多用户 CLI inference 平台（类 Ollama），§7 里程碑排到 Week 8
+"相对 naive baseline 50\% speedup、60\% memory reduction" &
+§1 改为 lab-grade research-serving runtime；范围收窄到 continuous batching、
+lifecycle management、data collection 三件事做对 &
+已取代 \\
+\bottomrule
+\end{tabularx}
+\caption{\codet{DESIGN.md} 逐项对照。五行里四行已取代，唯一整条存活的是 §4.2 的
+request-level batching——它恰好是当初写得最不像实现方案、最像原则的一条。表里藏着一个模式：
+\cnemph{死掉的都是数字和结构，活下来的是原则}。75.5\,MB、146 slots、2:1、50\% speedup
+这些能写进验收标准的东西一条没剩，而"完成即 evict，别让快请求等慢请求"活到了今天。}
+\label{tab:cb-design-diff}
+\end{table}
+
+\begin{retraction}{每个 request slot 预分配 75.5\,MB KV cache，12\,GB 卡上可开约 146 个 slot}
+原文见 \code{DESIGN.md} §4.1 的资源预算表：
+$2 \times 12\ \text{layers} \times 12\ \text{heads} \times 1024\ \text{seq} \times 64\ \text{dim}
+\times 4\ \text{bytes} = 75.5$\,MB，
+可用 VRAM 按 $12 - 0.5 - 0.5 \approx 11$\,GB 估，得到 $11/0.075 \approx 146$ slots，
+并据此得出"4 条并发只需 302\,MB，完全没有 memory pressure"。
+
+\cnemph{算术本身没错，失效的是它的执行主体。}这套预算假设存在一个我们自己写的
+\code{KVCacheManager}（§6 Q1：用 \code{torch.empty()} 预分配、自己 track slot），按满 context
+切成定长 slot。今天没有这一层：cache 由 HF 在 forward 里自己 append 出来（\code{DynamicCache}），
+长度随生成增长，请求结束就整片扔掉。Week 3 讨论也没有恢复它，只把 paged KV cache 记成 Future。
+这段预算既不是当前行为，也不是已批准的下一步——它是一份悬空的规格。
+留着仍有用：真要写 cache manager 时，这张表的计算方法（尤其"按满 context 分配会浪费 60--80\%"
+这个 tradeoff）还是正确的起点。
+\end{retraction}
+
+\begin{retraction}{prefill 非空时跑 2 轮 prefill 再跑 1 轮 decode（2:1 ratio）}
+原文是 \code{DESIGN.md} §4.3 的伪代码：
+\begin{lstlisting}[style=hlplain]
+each iteration:
+    if prefill_queue is non-empty:
+        run 2 rounds prefill, then 1 round decode  # 2:1 ratio
+    else:
+        run decode
+\end{lstlisting}
+这条规则的\cnemph{前提}是同一节上一句话：\cnemph{每个 iteration 只跑 prefill batch 或 decode batch
+（V0 不混合）}。在 either/or 模型下，"2:1"是一个有意义的量：它说的是时间片配额——
+每三次迭代里两次给 prefill、一次给 decode。
+
+Week 3 §2.2 把迭代结构改成"每次迭代 prefill 和 decode 都跑（两次 forward）"之后，
+"轮次"这个计量单位没有了，2:1 失去了指称对象。文档的原话是：\emph{Under both-in-one-iteration model,
+this ratio no longer directly applies.}
+它\cnemph{不是}被一个更好的比例取代了，而是整个 ratio 形式的调度语言不再适用，
+取而代之的问题变成了"每次迭代最多放多少条新请求进来"（admission policy），而这个问题标记为 OPEN。
+\end{retraction}
+
+\begin{checkpoint}{two_one_ratio_is_dead}{2:1 到底怎么死的}
+不看文档回答：
+\begin{enumerate}[label=(\alph*)]
+  \item "2:1 prefill:decode"这条规则依赖一个什么前提？这个前提是被什么推翻的？
+  \item 它是"被换成了别的比例"还是"整类规则失效了"？区别在哪？
+  \item 顶替它位置的那个问题叫什么？现在有答案吗？
+\end{enumerate}
+\hint 先问"2:1 里那个 1 单位是什么"——是一次 forward？一次迭代？还是一个 token 预算？
+\ifshowanswers
+\tcblower
+\answer (a) 前提是 \code{DESIGN.md} §4.3 里的 either/or 模型：每个 iteration 只跑 prefill 或只跑 decode，
+所以"轮次"可以当配额来分。推翻它的是 §2.1 的 backend 约束链——不能混合 $\to$ stage-homogeneous $\to$
+§2.2 锁定"每次迭代两次 forward，两个阶段都跑"。
+(b) 整类失效。既然每次迭代 prefill 和 decode 都发生，就不存在"两轮 prefill 配一轮 decode"这种可数对象了；
+换成 3:1 或 1:1 同样没有意义。这是语义失效，不是参数调整。
+(c) admission policy：每次迭代放多少条 pending 请求进 prefill microbatch。
+文档给了三个候选（全收 / 每轮最多 N 条 / 其它规则）并标记 OPEN，没有答案。
+\whereincode （尚无实现。原规则见 \codeat{docs/designs/DESIGN.md}{111}；
+失效判定见 \codeat{docs/progress/week3-discussion.md}{70}，§4 表格第 4 行在
+\codeat{docs/progress/week3-discussion.md}{124}。）
+\fi
+\end{checkpoint}
+
+\subsection{现在什么是 LOCKED、什么是 OPEN、什么是 NON-GOAL}
+\label{sec:cb-status}
+
+Week 3 讨论最有用的一点，是它对每条结论都标了状态。动手前先分清这三档，
+比记住任何一条具体结论都重要。
+
+\begin{table}[ht]
+\centering
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+状态 & 内容 & 出处与理由 \\
+\midrule
+LOCKED &
+迭代结构：每次迭代 $=$ 先一次 prefill microbatch forward（本轮被 admit 的新请求），
+再一次 decode microbatch forward（所有 in-flight 请求）；顺序执行，两次 \codet{model()} &
+§2.2；被 §2.1 的 backend 约束逼出来的，不是偏好 \\
+\addlinespace
+LOCKED &
+阶段次序：prefill 在 decode 之前 &
+§2.3；优化 TTFT。代价写在同一节：in-flight 请求的 ITL 变差 \\
+\addlinespace
+OPEN &
+admission policy：每轮收多少条 pending 请求。候选"全收"/"每轮最多 N 条"/"其它" &
+§2.4；必须在任务拆解里当成独立任务解决 \\
+\addlinespace
+NON-GOAL &
+pluggable scheduler interface；hooks / trace events / async writer；metrics 收集；
+token-budget scheduling；chunked prefill；schema 重设计；多硬件支持 &
+§3 Explicit Non-Goals；理由分别是"没有第二个实现"、"Phase B"、"运行时先要正确" \\
+\bottomrule
+\end{tabularx}
+\caption{Week 3 的三档状态。依据 \codeb{docs/progress/week3-discussion.md} §2.2--§2.4 与 §3。}
+\label{tab:cb-locked-open}
+\end{table}
+
+prefill-first 这条要特别小心：它是一个\cnemph{被明确承认了代价}的选择，不是免费的优化。
+文档写的是 \emph{Trade-off: decode ITL is worse --- in-flight decode requests wait for prefill
+forward to complete}，随后跟着 \emph{Acceptable for current lab workload (no streaming, short
+prompts)}。后半句是这条决定的有效期条款：工作负载一旦变成流式输出或长 prompt，这条 LOCKED 就该重新开。
+
+\begin{checkpoint}{prefill_first_tradeoff}{prefill 优先，牺牲了谁}
+不看文档回答：
+\begin{enumerate}[label=(\alph*)]
+  \item prefill 放在 decode 前面，优化的是哪个指标？牺牲的是哪个？
+  \item 这个牺牲在什么工作负载下会变得不可接受？
+  \item 如果把次序反过来（decode-first），哪个指标会变好、哪个会变差？
+\end{enumerate}
+\hint 两个指标的英文缩写都在 §2.3 里，一个是 TTFT，一个是 ITL。
+\ifshowanswers
+\tcblower
+\answer (a) 优化 TTFT：新请求在到达的那一轮就能拿到第一个 token。牺牲 in-flight 请求的 ITL：
+它们每一步都要先等 prefill forward 跑完。
+(b) 适用条件是"no streaming, short prompts"，反过来就是失效条件：要流式吐字时 ITL 抖动
+直接被用户看见；prompt 变长时 prefill forward 变慢，每个 in-flight 请求每一步都要多等这段。
+(c) decode-first 让 ITL 更稳，但新请求的 TTFT 要多等一个 decode forward。
+lab 场景里"新请求马上有反应"更重要，所以选了 prefill-first。
+\whereincode （尚无实现，依据 \codeb{docs/progress/week3-discussion.md} §2.3。）
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{admission_policy_open}{OPEN 的那一条到底 open 在哪}
+不看文档回答：
+\begin{enumerate}[label=(\alph*)]
+  \item admission policy 要回答的问题，用一句话说清楚。
+  \item 文档列了哪几个候选？"每轮全收"这个最简单的选项，会带来什么后果？
+  \item 为什么这条不能靠"先写着，跑起来再调"糊过去？
+\end{enumerate}
+\hint 想想 prefill microbatch 的 \code{S_max} 是怎么定的，以及它和 KV cache 占用的关系。
+\ifshowanswers
+\tcblower
+\answer (a) 每次迭代最多把多少条 pending 请求收进这一轮的 prefill microbatch。
+(b) 三个：全收 / 每轮最多 N 条 / 其它规则。"全收"意味着 prefill microbatch 的
+$B_p$ 和 $S_{\max}$ 都不受控——突然来 20 条长 prompt，这一轮 prefill forward 很久，
+所有 in-flight 请求都被拖住（prefill 在前），KV cache 占用瞬间涨 20 片，没有任何背压。
+(c) 因为它决定的是\cnemph{最坏情况}而不是平均性能。默认"全收"等于默认没有 admission control，
+之后再加要改的是 loop 结构和资源核算，不是一个常数。
+\whereincode （尚无实现，依据 \codeb{docs/progress/week3-discussion.md} §2.4。）
+\fi
+\end{checkpoint}
+
+到这里为止，这一章描述的都是一份自洽的设计。\secref{sec:a-timeline} 在时间线表下留了一句话：
+\code{week3-discussion.md} 取代了 \code{DESIGN.md}，但它自己内部也有一处不一致，留到这一章展开。
+现在展开它——这条 checkpoint 要求你怀疑的不是自己的理解，而是文档本身。
+
+\begin{checkpoint}{ssot_contradicts_itself}{单一事实来源自己和自己打架}
+\codeb{docs/progress/week3-discussion.md} 是 \codet{CLAUDE.md} 里指定的
+"batching/scheduling 的最新事实来源"（原话：supersedes DESIGN.md on batching/scheduling specifics）。
+它日期是 2026-04-21，全文 134 行，\cnemph{没有 Status 字段}——没有任何一行告诉你它是提案还是定论。
+不看文档回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 这份文档的 §3 Goals 第 3 条写的是什么？它和 §2.4 的结论是否一致？
+  \item 如果你照着 §3 的验收标准去写 Week 3 的代码，会写出什么？
+  \item 这是读者理解错了，还是文档的缺陷？该怎么修？
+\end{enumerate}
+\hint 先把 §2.4 的标题和 §3 Goals 第 3 条并排抄下来，一个字一个字读。
+\ifshowanswers
+\tcblower
+\answer (a) \cnemph{不一致，这是文档的一处自相矛盾。}§3 Goals 第 3 条原文是
+\emph{"2:1 prefill-prioritized scheduling (hardcoded in loop, no abstraction)"}，
+位置在 \codeat{docs/progress/week3-discussion.md}{92}。而同一份文档的
+§2.4（标题就叫 \emph{Scheduling Rule (OPEN --- must be resolved in task breakdown)}）说
+\emph{"Under both-in-one-iteration model, this ratio no longer directly applies"}，
+并把 admission policy 列为待定；§4 的纠正表格第 4 行又写了一遍
+\emph{"2:1 ratio still applies directly"} 是错的，正确理解是
+\emph{"Need new admission policy definition"}。也就是说，同一份文档在 §2.4 和 §4
+两处宣告 2:1 已死，却在 §3 的验收目标里把它原样留着。
+(b) 你会去 loop 里硬编一个 2:1 的计数器。但在"每次迭代两次 forward"的结构下，
+这个计数器没有可计数的对象——你只能自己发明一套语义（比如"每两轮迭代允许 admit 一次"），
+而那已经不是文档说的东西了。写出来的代码会和 §2.2 的 LOCKED 结构打架。
+(c) 是文档缺陷，不是读者理解错。\cnemph{读到互相矛盾的两节时，先怀疑文档。}
+修法：把 §3 Goals 第 3 条改成"定义并实现一个 admission policy（候选见 §2.4），
+不做抽象接口"，让目标指向那个 OPEN 问题本身，而不是指向一个已经失效的比例。
+这正是 Week 2 retro"问题 3：ADR 和代码不一致"的同一种病——只不过这次不一致的两边
+都在同一份文件里。
+\whereincode （尚无实现。矛盾双方：\codeat{docs/progress/week3-discussion.md}{92}
+对 \codeat{docs/progress/week3-discussion.md}{68}，佐证在
+\codeat{docs/progress/week3-discussion.md}{124}。）
+\fi
+\end{checkpoint}
+
+\subsection{给项目本身划界，也是一个设计决定}
+\label{sec:cb-scope}
+
+Week 3 讨论的第一节根本不谈 batching，谈的是这个项目要做成什么。触发点是导师反馈：
+项目应该服务实验室的真实需求，而不是做一个 vLLM 的复制品。决定写得很直接：
+\emph{Project goal changed from "private vLLM clone" to "lab-grade research-serving runtime
+for local CoT models."} 理由可迁移：vLLM 的功能面（PagedAttention、CUDA/HIP graphs、
+chunked prefill、多硬件、OpenAI 兼容 server）是一个团队维护多年的产物，一个人八周
+只能在\cnemph{每一层上}做到约 20\%；而"研究型 serving runtime"把范围收成三件事——
+continuous batching、lifecycle management、data collection——做\cnemph{对且干净}。
+文档给出的对比是 \emph{"designed and delivered a usable runtime for actual lab workloads"} 强于
+\emph{"attempted to replicate vLLM but only finished the first 20\%"}。
+这不是包装话术：它改变的是验收标准。前者问"某个真实工作负载能不能跑"，后者问"功能清单打了多少勾"；
+一个能被证伪，一个只能被稀释。
+
+同一节还留下了一份很少见的记录——\cnemph{被明确拒绝的建议}：
+
+\begin{table}[ht]
+\centering
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+采纳 & 未采纳（及理由） \\
+\midrule
+research-serving runtime 这个方向 & 报告给的 Week 3 时间表：8 个任务约 20 小时，over-scoped \\
+分阶段 roadmap 结构（作为 backlog 参考） & pluggable scheduler interface：premature abstraction，没有第二个 policy \\
+stage-homogeneous microbatch 方案 & TraceEvent / hooks / async trace writer：属于 Phase B \\
+lifecycle state machine 设计 & schema 重设计（12 字段的 RequestRecord 等）：偏好增量演化 \\
+ & metrics taxonomy：等 runtime 先能正确工作 \\
+\bottomrule
+\end{tabularx}
+\caption{一份外部建议报告的采纳与拒绝清单，出自 \codeb{docs/progress/week3-discussion.md} §1。
+右列比左列信息量大：它记下了"当时为什么没做"，而这正是几周后最容易被自己忘掉的东西。
+对 portfolio 项目来说，右列本身就是可展示的产物——只有左列的项目看起来像照单全收。}
+\label{tab:cb-scope}
+\end{table}
+
+\subsection{四条当场被纠正的说法}
+\label{sec:cb-misconceptions}
+
+\codeb{docs/progress/week3-discussion.md} §4 是一张四行的表，标题 \emph{Key Corrections
+Made During Discussion}，逐行记录"说了什么 / 错在哪 / 正确理解是什么"。第三行（GPU 利用率）
+已在 \secref{sec:cb-limit} 用过，剩下三行原样放在这里。框里的内容\cnemph{是错的}。
+
+\begin{misconception}{每一轮判断是 decode 还是 prefill。}
+引擎循环每次醒来先做一个判断：这一轮是 prefill 轮还是 decode 轮？然后按判断结果跑对应的 batch。
+\end{misconception}
+
+\noindent 错在把两个阶段当成互斥选项（either/or per iteration）。正确理解：
+一次迭代里两件事\cnemph{都}发生，只是分成两次 forward。这个 either/or 的假设，
+正是 \code{DESIGN.md} 那条 2:1 规则赖以成立的地基。
+
+\begin{misconception}{用 \codet{<BOS>} 分隔符把 prefill 和 decode 打包进一个 forward，配一个 mask 就行。}
+把待 prefill 的 prompt 和正在 decode 的 token 拼成一条长序列，中间插 \code{<BOS>} 当分隔符，
+再构造一个 attention mask 让它们互相看不见，一次 forward 全部搞定。
+\end{misconception}
+
+\noindent 错在低估了那个"配一个 mask"。它需要自定义 attention kernel：HF 的 \code{model()}
+只吃 \code{[B, S]} 的 padding mask，不吃 per-pair causal mask（\secref{sec:cb-stage}）。
+方向本身没错——vLLM 一类系统确实这么做——但代价是一个 kernel，不是几行 masking 代码。
+
+\begin{misconception}{2:1 这个 ratio 还是直接适用的。}
+迭代结构虽然改了，但"prefill 优先、按 2:1 配比"这条调度规则可以照搬过来，
+只要在新 loop 里数着轮次执行就行。
+\end{misconception}
+
+\noindent 错在 ratio 的语义随迭代模型一起变了。正确理解：需要一个新的 admission policy 定义。
+这条也是 \secref{sec:cb-status} 里那处文档自相矛盾的源头——纠正记在了 §4，却没有传播回 §3 的 Goals。

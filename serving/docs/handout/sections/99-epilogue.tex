@@ -1,0 +1,117 @@
+\section*{Epilogue}
+\addcontentsline{toc}{section}{Epilogue}
+\label{sec:a-epilogue}
+
+一份回顾式讲义如果只讲已经建好的部分，读完的感觉会比实际状况好太多。所以最后一节专门列缺口。
+下面每一条都当场核过——用 \code{ls}、\code{grep} 或者读文件本身——核的办法写在括号里，
+方便你几个月后再验一遍。
+
+\subsection*{缺口清单}
+
+\begin{table}[ht]
+\centering
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+缺什么 & 怎么核实的 \\
+\midrule
+Week 3 一行代码都没有 &
+\codet{inferenceLM/} 下 \codeb{grep -rniE "batch|schedul|admission|drain|shutdown"} 只命中三处，
+全是 \codeb{transformer_lm_adapter.py} 注释里描述 tensor shape 的 \codet{(batch, seq)}。
+\codet{git log} 停在 \codet{Week3 start}（2026-04-21） \\
+\addlinespace
+\codet{inferenceLM/output/} 是空的 &
+目录里只有一个 0 字节的 \codet{\_\_init\_\_.py}。detokenize 与流式回传在
+\codet{DESIGN.md} §3 的架构图里画着，从没落地。今天调用方只能轮询
+\codeb{request_store[request_id]} \\
+\addlinespace
+\codet{benchmarks/} 是空的 &
+目录里只有一个 \codet{.gitkeep}。这个仓库里没有任何性能测量代码；
+唯一一个真实穿过 \codet{LMEngine} 的 serving benchmark 在姊妹项目里，不在这里 \\
+\addlinespace
+没有 HTTP 层 &
+\codeb{grep -rniE "socket|fastapi|uvicorn|http|flask|grpc"} 在 \codet{inferenceLM/} 下零命中。
+系统的入口 API 就是 \codeb{RequestReceiver.submit_request()} 这个协程；
+\codet{DESIGN.md} §3 画的 "TCP/stdin" 从未存在 \\
+\addlinespace
+没有 CI &
+没有 \codet{.github/} 目录。\codet{ruff} 和 \codet{mypy} 声明在
+\codet{pyproject.toml} 的 dev 依赖里（第 18--22 行），但全文件没有
+\codet{[tool.ruff]} 或 \codet{[tool.mypy]} 段，也没有任何东西调用它们 \\
+\addlinespace
+\codet{LICENSE} 是 0 字节 &
+\codet{ls -la} 显示 size 为 0。文件在，内容没有 \\
+\addlinespace
+\codet{README.md} 还是脚手架 &
+第 2 行标题写着 \codeb{[Project Name --- TO BE DECIDED]}，第 7 行状态写着
+"Setup phase --- project topic and tech stack under discussion"。
+全文 30 行，多数是目录树注释 \\
+\addlinespace
+两个状态值是死的 &
+\codet{RequestStatus.PREFILLING} 和 \codet{DECODING} 定义在
+\codeat{inferenceLM/data/request\_status.py}{5}--\codeat{inferenceLM/data/request\_status.py}{6}，
+但 \codet{grep} 全仓库，除了枚举定义本身和第 10 行那句注释之外，没有任何一处引用 \\
+\addlinespace
+\codet{pytest-asyncio} 装错了位置 &
+它在 \codeat{pyproject.toml}{11}，属于运行时 \codet{dependencies}，
+而不是 \codet{[dependency-groups] dev}。装这个包的人不一定要跑测试 \\
+\bottomrule
+\end{tabularx}
+\caption{核实过的缺口清单。前三条是能力缺失，后面几条是收尾没做完；
+两类的修复成本差着一个数量级，但都在同一份 \codet{ROADMAP.md} 里排着队。}
+\label{tab:epilogue-gaps}
+\end{table}
+
+\subsection*{先做哪三个}
+
+排序不用重排——仓库根的 \code{ROADMAP.md} Part I 已经排好了，依据是\cnemph{依赖关系而不是价值大小}。
+这里只把最前面三条抄过来，各配一句"第一步动什么"。
+
+\textbf{第一，engine 生命周期状态机（\code{INIT} $\to$ \code{RUNNING} $\to$ \code{DRAINING}
+$\to$ \code{STOPPED}）。}
+它是唯一真正的阻塞项，也是 \code{BACKLOG.md} 里仅剩的有效 P0。
+今天 \code{kill()} 只把 \code{self.open} 置 False，而循环正卡在
+\code{await pending_queue.get()} 上——空队列上的一个 killed engine 会永远挂着。
+第 4 章那条"测不到关闭路径"就是这件事的症状。
+\cnemph{第一步：}给 \code{InferenceEngine} 加显式状态字段和 \codeb{async shutdown(drain=True)}，
+然后把测试里的 \code{task.cancel()} 一个一个换成它。换不掉的那个，就是设计还没想清楚的地方。
+
+\textbf{第二，把 request lifecycle 和 iteration lifecycle 拆开。}
+这是 \secref{sec:a-batching} 全章的根因。
+\cnemph{第一步：}把 \codeb{_keep_get_request_and_inference()} 从"取一条跑到底"
+改成"每轮迭代推进所有在飞请求各一步"，为此需要一个 in-flight 集合来存
+\codeb{(request_id, latest_token, past_key_values)}。
+动手之前先解决一个文档冲突：\code{future-tasks.md} 分了 Scheduler 和 Batcher 两层，
+而 \code{week3-discussion.md} 明说不做 pluggable scheduler——先定哪份是现行意图，再写代码。
+
+\textbf{第三，stage-homogeneous batching。}
+已经 LOCKED，理由是后端约束不是偏好（\secref{sec:cb-stage}）。
+\cnemph{第一步：}每轮迭代改成两次 \code{model()} 调用，先 prefill microbatch 再 decode microbatch，
+并且从第一行代码起就记住这两次是\cnemph{顺序执行}的。
+再往后是 admission policy——它在 \code{ROADMAP.md} 里排第四，
+并且是整条路线上唯一一个还没有答案的设计问题；建议等前两步的循环真能跑起来、
+拿到真实的 TTFT/ITL 曲线之后再定，而不是反过来。
+
+\subsection*{这个仓库到底是什么}
+
+数一下行数：\code{inferenceLM/} 下 13 个 Python 文件共 \cnemph{514} 行（其中 4 个 \code{__init__.py}
+是 0 行），\code{tests/} 共 \cnemph{880} 行，\code{docs/} 下自己写的 markdown 共 \cnemph{1502} 行
+（不含四份模板）。文档大约是源码的\cnemph{三倍}，而测试比源码还多。
+
+一个五百行的 Python 包，跑得动一条请求的完整 prefill$\to$decode，
+支持一种采样策略（greedy），没有 HTTP 层，没有 batching，没有性能数据。
+按功能清单算，这份东西很薄。
+
+但清单不是它的产物。真正留下来的是那些\cnemph{被否决的方案}，
+以及每一次否决时写下的理由：
+为什么不用 \code{model.generate()}（ADR-001，Status 至今还是 Proposed）；
+为什么 \code{run()} 必须返回 \code{Task} 而不能 \code{await}；
+为什么不提前暴露 \code{do_sample}；
+为什么"GPU 利用率低"是症状不是根因；
+为什么 \code{DESIGN.md} 里那套 75.5\,MB/slot 的预算表算得没错却已经失效；
+为什么 2:1 这个比例不是被换掉了而是整类规则失效了；
+以及最后那条——\code{week3-discussion.md} 的 §3 目标清单里，
+那条已经在 §2.4 和 §4 被宣告死亡的 2:1 规则，至今还原样留着。
+
+功能可以在一个下午被别的库替代掉。上面这些判断不能。
+如果这份讲义只值得记住一件事，那就是：\cnemph{一个设计文档最有价值的部分，
+是它记下的那些"当时为什么没这么做"，以及它没能自我更新的那几行。}

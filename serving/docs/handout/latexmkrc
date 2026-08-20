@@ -1,0 +1,4 @@
+$pdf_mode = 5;   # xelatex
+$xelatex = 'xelatex -halt-on-error -file-line-error %O %S';
+$bibtex_use = 2; # run biber automatically, clean .bbl
+$clean_ext = 'bbl run.xml synctex.gz xrefs';
