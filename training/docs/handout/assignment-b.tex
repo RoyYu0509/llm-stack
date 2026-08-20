@@ -1,0 +1,42 @@
+% Assignment B -- Closing the Loop
+% Build:  latexmk -xelatex assignment-b.tex
+% Quiz edition (answers hidden):
+%   latexmk -xelatex -jobname=assignment-b-quiz \
+%           -pretex='\showanswersfalse' -usepretex assignment-b.tex
+\documentclass[11pt, a4paper]{article}
+\usepackage{handout}
+
+\sethandoutshorttitle{Assignment B: Closing the Loop}
+\sethandoutsiblingname{Assignment A}
+
+\usepackage{pgfplots}
+\usepackage{pgfplotstable}
+\pgfplotsset{compat=1.18}
+
+\usepackage[backend=biber, style=numeric, sorting=none]{biblatex}
+\addbibresource{refs.bib}
+
+% Stable anchors exported by Assignment A. Copied, not \include-d across repos:
+% the two handouts live in separate git repositories and each must build after a
+% standalone clone. Regenerate by copying llm-serving/docs/handout/assignment-a.xrefs.
+\input{xref-a.tex}
+
+\title{\sffamily\bfseries Assignment B: Closing the Loop\\[0.3em]
+       \large 从语料到一条被服务的请求}
+\author{回顾式讲义 · 基于 \texttt{LLM-system-project} 与它到 \texttt{llm-serving} 的接缝}
+\date{Version 0.1.0 \quad · \quad 2026-07-29}
+
+\begin{document}
+\maketitle
+
+\include{sections/00-overview}
+\include{sections/01-data-mixing}
+\include{sections/02-pretraining}
+\include{sections/03-sft-ablation}
+\include{sections/04-kv-cache-serving}
+\include{sections/05-systems-bench}
+\include{sections/99-epilogue}
+
+\printbibliography[title={References}]
+
+\end{document}

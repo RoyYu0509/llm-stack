@@ -1,0 +1,81 @@
+# 1. Yaml data is stored using key-value pairs. 
+key: value
+
+# 2. There are two ways to store a list of items in yaml.
+  # i). Using a dash followed by a space for each item in the list.
+fruits:
+  - apple
+  - banana
+  - orange
+
+  # ii). Using square brackets and separating items with commas.
+vegetables: [carrot, broccoli, spinach]
+
+# 3. Define a object with multiple attributes using key-value pairs.
+person:
+  name: John Doe
+  age: 30
+  city: New York
+
+# 4. Object can also be stored in a list
+people:
+  - name: John Doe
+    age: 30
+    city: New York
+
+  - name: Jane Smith
+    age: 25
+    city: Los Angeles
+    friends:
+      - name: Mike Johnson
+        age: 28
+        city: Chicago
+      - name: Emily Davis
+        age: 27
+        city: Miami
+
+
+# 5. A very common program config example with ymal
+Pipeline:
+  # Attribute pipeline name
+  name: "Training Pipeline"
+  # Steps is a list of objects, each object has a name, type and parameters
+  steps:
+    - name: "Load Data"
+      type: data_loader
+      parameters: [
+        {"path": "data/input.csv"},
+        {"format": "csv"}
+      ]
+    - name: "Clean Data"
+      type: data_cleaner
+      parameters: [
+        {"method": "remove_nulls"},
+        {"threshold": 0.5}
+      ]
+    - name: "Train Model"
+      type: model_trainer 
+      parameters: [
+        {"algorithm": "random_forest"},
+        {"n_estimators": 100},
+        {"max_depth": 10}
+      ]
+  # Last list attribute
+  args: [
+    {"batch_size": 32},
+    {"learning_rate": 0.001},
+    {"num_epochs": 10}
+  ]
+
+# 6. String representations
+# . Single-line string
+greeting: "Hello, World!"
+# 6.2. Multi-line string using pipe (|) for preserving line breaks
+description: |
+  This is a multi-line string.
+  It preserves line breaks and formatting.
+  You can write paragraphs of text here.
+
+# 6.3. Multi-line string using greater-than (>) for folding newlines
+
+  

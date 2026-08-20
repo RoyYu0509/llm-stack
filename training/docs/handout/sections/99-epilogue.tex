@@ -1,0 +1,161 @@
+\section*{Epilogue}
+\phantomsection
+\addcontentsline{toc}{section}{Epilogue}
+\label{sec:b-epilogue}
+
+这份讲义覆盖的是一次时间盒住的冲刺：从零建语料、训一个 0.19B 模型、做 6 个 arm 的微调 ablation、
+把权重接进 \code{llm-serving} 的请求链路、再补一轮系统 benchmark 和它的复测。
+收尾这一节记三件事：东西现在在哪、下一步该做什么、以及这次冲刺里\cnemph{哪些结论是被自己撤掉的}。
+
+\subsection*{交付状态：什么在本地，什么留在了远端}
+
+vast.ai 实例已经 \code{stop}（状态 \code{exited}），算力停止计费，磁盘保留但磁盘费仍在走。
+下表的“本地”一列是写这份讲义时在本机磁盘上逐个核对过的，不是凭记忆列的。
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{p{0.42\textwidth}p{0.5\textwidth}}
+\toprule
+产物 & 本地状态 \\
+\midrule
+\codeb{checkpoints_sft_lr1e5_replay/}（6 个 arm 里的 Pareto 最优模型） &
+完整，2{,}285{,}748{,}962 B $=$ 2.29 GB；已 \code{torch.load} 验证：0.190B 参数、
+\code{global_step=900}、含 optimizer state \\
+\codet{artifacts/}（\codet{NIGHT\_REPORT.md} $+$ benchmark CSV/PNG $+$ 13 个 eval JSON） & 完整，2.5 MB \\
+\codet{run\_logs/}（29 个日志）、\codet{configs\_sft/}（6 个）、全部代码 & 完整 \\
+\midrule
+\codeb{checkpoints_pretrain_v1/} & 只下到 671{,}519{,}672 B，即完整版的 \cnemph{29.4\%} \\
+\codeb{checkpoints_sft_lr1e5_plain/}（对照组） & \cnemph{65.9\%} \\
+\codet{data/mixed\_corpus/} & 空目录（0\%），重建需 2--3 小时 \\
+\codet{artifacts/ddp\_replicate/} & \cnemph{目录不存在}——5 reps 复测的原始 CSV 一行都没回来 \\
+三个编排脚本（\codeb{continue_pretrain_pipeline.sh}、\codet{post\_train\_window.sh}、
+\codeb{stage8_leftover_benchmarks.sh}） & 不在本地，只在那个实例上 \\
+\bottomrule
+\end{tabular}
+\caption{交付状态。上半区是完整的，下半区是被 SSH 限流截断的。}
+\end{table}
+
+最后两行的代价是具体的，不是抽象的“数据没下全”。\codet{artifacts/ddp\_replicate/} 缺失，
+直接就是 \secref{sec:b-bench} 表~\ref{tab:three-tests} 里那几个 “---” 的来源：
+逐轮百分比、中位数、$p$ 值都还在 \code{PROGRESS.md} 的正文里，但\cnemph{原始数字没了，重算不了}。
+三个编排脚本是这次冲刺工程含量最高的一块（吞吐标定 $\to$ NaN 门禁 $\to$ 反推 \code{max_iters}
+$\to$ 无人值守窗口），丢了就要重想一遍。
+
+真正不可替代的那一个——Pareto 最优的 SFT 权重——在手上。缺的两个里，\code{plain} 只是对照组
+（结论已经量化记录在 \secref{sec:b-sft}），\code{pretrain_v1} 只在要继续训练时才需要，
+而继续训练本来就要重新租 GPU。所以按 \code{ROADMAP.md} 第 3 条的判断：\cnemph{没有什么是必须抢救的}。
+
+\subsection*{想让模型变好，瓶颈是数据不是步数}
+
+最容易走错的下一步是“再多训几万步”。数字不支持这个方向：语料只有约 \cnemph{174M unique token}，
+而这次已经训了 \cnemph{492M token}——\cnemph{整整 2.8 遍}。再加步数是在重复同样的字节。
+换算成另一个角度，492M token 对 0.19B 参数是 2.6 token/param，
+离 Chinchilla 的 20$\times$ 差了近一个数量级，但这个缺口\cnemph{不是靠步数补的}。
+
+正确的动作是把 \code{build_mixed_corpus.py} 的字符预算从 780 MB 提到约 3 GB
+（C4 和 Wikipedia 都是流式的，取之不尽）$\to$ 约 700M token，再训到约 2B token
+（10.5 token/param）。成本是建语料 2--3 小时加训练约 12 小时。
+
+有一个前置条件必须先做：\cnemph{先修验证集污染，再重新建语料}。
+\code{build_instruction()} 会 cycle 小语料池来凑字符预算——这对 train split 是对的
+（那正是按 epoch 数给小而精的域配比的做法），但同一段逻辑也被用在了 valid split 上，
+把 held-out 的 Alpaca 重复了 1.91 遍（\secref{sec:b-data}）。不先修它，
+新一轮训练出来的验证数字仍然不可信，12 小时就白烧了。
+
+完整的优先级、成本估算和收尾项在仓库根的 \code{ROADMAP.md}（Part I 共 7 条，
+上面两条就是它的第 1、2 条）。这里不重复，只强调它的排序依据是\cnemph{依赖关系}而不是价值大小。
+
+\subsection*{这次冲刺撤回或修正的四条结论}
+
+按 \codeb{interview_prep/PROGRESS.md} 自己的记账，这次冲刺一共撤回或修正了四条\cnemph{自己先报错的}结论。
+四条的共同点是：都不是别人指出来的，都是继续往下测的时候被自己的下一个数据点否掉的。
+
+\begin{enumerate}[label=\arabic*.,leftmargin=2em]
+\item \textbf{DDP 三种策略之间的性能对比}（\secref{sec:b-bench}）。
+      “Bucketed 比 Naive 快 2.6\%”“PyTorch DDP 比 Bucketed 快 1.6\%”都来自每格只跑一次的矩阵表，
+      而后来量到单次 run-to-run 噪声是 $\pm$6\%、隔夜同配置差 5.4\%。全部撤回。
+      复测后只剩一条站得住：Bucketed 快于 Naive，5/5 全胜，中位数 +6.5\%，sign test $p=0.062$。
+\item \textbf{KV cache 的加速比随 prompt 长度增长}（\secref{sec:b-kv}）。
+      这句话是被 \code{bench_serving.py} 和 \code{make_night_report.py} \cnemph{无条件 print 出来的硬编码结论}，
+      不看实际数字。实测 16$\to$512 token 的加速比是 1.20 / 1.28 / 1.20 / 1.27 / 1.23$\times$，
+      平的，没有趋势。于是报告里出现了“表格显示没趋势 $+$ 下一行断言它在增长”的荒唐组合。
+      正确性那一侧倒是干净的：缓存解码与重算解码 logits 逐位相同（\extref{a:kv-cache-legality}），
+      被推翻的只是那句性能断言。
+\item \textbf{训练内 val 曲线的代表性}（\secref{sec:b-pretrain}）。
+      4.4579 $\to$ 4.0057 这条曲线\cnemph{不是混合验证集上的 loss}。
+      三件事叠在一起（\code{valid.txt} 按域顺序写、\code{val_sampler} 是 \code{shuffle=False}、
+      \code{_run_eval} 取前 50 个 batch），每次 eval 打的都是 \code{valid.txt} 开头约 1800 个 token，
+      也就是同样那几篇 web 文档。曲线本身仍然有效（天然配对，下降是真的），
+      但不能叫“混合验证集 val loss”——那个数是跑完之后另测的 3.5866。
+\item \textbf{把 3 个点的单调序列叫“趋势”}（\secref{sec:b-bench}）。
+      看到 Naive 连续三轮下降就断言是趋势不是噪声；否掉它的是同期对照——
+      PyTorch 在同样这几轮里是上升的。事后补算：3 个可交换观测排成指定方向的严格单调序列，
+      概率就有 $1/6 \approx 17\%$。
+\end{enumerate}
+
+这个“四条”是日志自己的计数，不是全部。至少还有三处中途修正没算进去：
+NaN 的根因从“缺 LR warmup”改判为 SwiGLU FFN 的初始化方差用了默认的 1；
+TF32 的加速从顺手观察到的 1.5$\times$ 改成对照实验测出的 1.43$\times$；
+以及“继承 optimizer state 会和 LR schedule 打架”这句话被限定为\cnemph{只对微调成立}，
+对同任务续训不成立。
+
+\subsection*{操作层教训：一个主题，三个实例}
+
+这次踩的操作坑里，最贵的三个属于\cnemph{同一类错误——包装层掩盖了真实的退出码或状态}。
+分开看像三件无关的事，合起来看是同一个反模式：在命令和它的真实结果之间加了一层，
+而那一层有自己的成功语义。
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{p{0.26\textwidth}p{0.3\textwidth}p{0.36\textwidth}}
+\toprule
+现象 & 被掩盖的是什么 & 规则 \\
+\midrule
+\multicolumn{3}{l}{\cnemph{主题：包装层掩盖了真实的退出码或状态}} \\[2pt]
+\code{pkill -f} 按脚本名杀进程时自匹配（踩了三次） &
+自己那条 \code{ssh} / \code{bash} 命令行里就含有这个关键词，于是先把自己杀掉；
+同样地，\code{pgrep -f} 判活会永远返回“还在跑” &
+凡是要杀远程进程，先 \code{ps} 拿 PID 再 \code{kill <pid>}；判活用 \code{kill -0 <pid>}，
+不用字符串匹配。要么把脚本写成文件再 \code{bash file.sh}，命令行里就不再出现关键词 \\[4pt]
+\codet{rsync ... | tail} &
+\codet{\&\&} 拿到的是 \code{tail} 的退出码，rsync 的失败被吞掉，链条继续往下走
+（还叠了一层：macOS 自带 rsync 2.6.9 不支持 \code{--info=progress2}） &
+要判成败的命令不要 pipe 给别的命令；非 pipe 不可就用 \code{set -o pipefail}
+或读 \code{PIPESTATUS} \\[4pt]
+SSH 被限流 &
+\code{vastai show instances} 显示实例 \code{running}，于是把连接被拒当成网络抖动；
+第一反应是 20 秒一次加密重试，\cnemph{每敲一次刷新一次封禁计时} &
+所有 rsync 复用一条连接：\code{ControlMaster=auto} $+$ \code{ControlPath} $+$
+\code{ControlPersist=30m}，只认证一次。被拒立刻指数退避，绝不加密 \\
+\midrule
+\multicolumn{3}{l}{\cnemph{其余}} \\[2pt]
+\codeb{ls checkpoint_step_*.pt | tail -1} &
+默认是\cnemph{字典序}，挑出 \code{step_7500} 而不是 \code{step_22500}；
+偏偏只在“训练早死、fallback 生效”时触发，也就是这个选择最要紧的时候 &
+\code{sort -V} \\[4pt]
+“校验不过就不停实例”的自动闸 &
+本意是防数据丢失，但 \code{vastai stop} 保留磁盘、根本不丢数据，
+而停机再开机会重建容器和 sshd、大概率清掉封禁 &
+写防护闸时要先确认它挡住的是不是唯一的解法 \\
+\bottomrule
+\end{tabular}
+\caption{操作层教训。上半区三行是同一个反模式的三个实例。}
+\end{table}
+
+这张表和 \secref{sec:b-bench} 讲的其实是同一件事，只是换了个层面：
+\cnemph{一个 benchmark 在读自己的数据之前就把结论 print 出来}，
+和\cnemph{一条命令链把失败的退出码 pipe 掉}，是同一种错误——
+中间隔了一层，而那一层总是报成功。前者毁掉的是结论，后者毁掉的是数据。
+两者都不会报错，都要靠人主动去掀开那一层看。
+
+\subsection*{最后}
+
+这次冲刺真正打通的是一条线：公开语料 $\to$ 按配比混合 $\to$ 2 卡约 6.5 小时预训练 $\to$
+6 个 arm 的指令微调 ablation $\to$ 一条真实请求走完 \code{RequestReceiver} 到自训权重的全链路。
+线是通的，模型是欠训的，几个性能数字是被自己撤回过一轮的。
+
+三样东西按“值得讲”排序，恰好和“看起来漂亮”排序相反：
+最值得讲的是 25\% 预训练数据回放在指令微调中是\cnemph{严格的 Pareto 改进}
+（\secref{sec:b-sft}，指令能力更好、遗忘代价低 3 倍）；
+其次是一个加权平均对不上，顺着追下去发现是自己在验证集上误用了训练集的正确做法（\secref{sec:b-data}）；
+最后才是那些吞吐百分比——它们大部分没活过复测。

@@ -1,0 +1,115 @@
+\section{讲义总览}
+\label{sec:b-overview}
+
+这份讲义回顾一次为期几天的冲刺：把两个原本互不相干的仓库接成一条能从头跑通的链路——真实语料混合 \(\rightarrow\) 从零预训练一个 0.19B 模型 \(\rightarrow\) 指令微调 ablation \(\rightarrow\) 增量 KV cache \(\rightarrow\) 通过适配层接进 serving engine \(\rightarrow\) 跨仓库 benchmark。
+
+它和姊妹篇 Assignment A 的分工是：A 讲 serving engine 本身的设计，B 讲这条链路怎么闭合，以及闭合过程中\cnemph{测出来的东西怎么和预期不一样}。
+
+后半句是这份讲义真正的主题。这次冲刺里被推翻的预期比被证实的多，而被推翻的那些更值得写下来。
+
+\subsection{这条闭环闭上了什么，没闭上什么}
+\label{sec:b-scope}
+
+\textbf{闭上的：}
+
+\begin{enumerate}[label=\arabic*., itemsep=2pt]
+  \item 按 LLaMA 思路配比的混合语料（web / wikipedia / instruction），带一份记录\cnemph{实际达成}比例的 manifest
+  \item 0.19B 模型从零预训练到约 492M token，2\(\times\)RTX 3090，约 7 小时，干净收尾
+  \item 六个 arm 的指令微调 ablation（3 个学习率 \(\times\) 有无 replay），配对评测
+  \item 增量 KV cache，附带一道正确性门禁——缓存解码必须与重算解码逐位相同
+  \item 自训权重穿过 serving engine 的完整请求链路，除 tokenizer 外链路上没有任何 HuggingFace 模型
+  \item 跨仓库 serving benchmark：TTFT、decode 分位延迟、吞吐，recompute 与 cache 两种模式直接对比
+\end{enumerate}
+
+\textbf{没闭上的，讲义会在对应位置反复说明：}
+
+\begin{enumerate}[label=\arabic*., itemsep=2pt]
+  \item 微调没有 loss masking，所以严格说这是 domain-adaptive continued pretraining，不是教科书意义上的 SFT（\secref{sec:b-data}）
+  \item 2.8 token/param，离 Chinchilla 区间还很远——这是 wall-clock 决定的，不是配置失误（\secref{sec:b-pretrain}）
+  \item 验证集有一处真实污染，指令那 10\% 成分不干净（\secref{sec:b-data}）
+  \item 训练时那条 val loss 曲线\cnemph{并不是}混合验证集上的 loss（\secref{sec:b-pretrain}）
+  \item DDP 性能比较的第一版结论被撤回；复测后的实验\cnemph{从设计上}就不可能达到 \(p<0.05\)（\secref{sec:b-bench}）
+  \item 语料没有被自己爬下来，用的是现成的 HuggingFace 数据集
+\end{enumerate}
+
+\subsection{你可以亲手跑什么}
+\label{sec:b-run}
+
+按算力分三档。第一档不需要 GPU，而且覆盖了这份讲义里最值得亲手验证的东西。
+
+\textbf{无 GPU：}
+\begin{lstlisting}[style=hlshell]
+uv run pytest -q tests/test_kv_cache.py                    # 6 passed
+uv run python cs336_systems/experiments/kv_cache_gate.py   # 小随机模型上的正确性门禁
+uv run python cs336_systems/data_harvest/build_mixed_corpus.py --dry_run
+\end{lstlisting}
+\resources CPU 即可，各几秒到一两分钟。\codet{--dry\_run} 只产出约 2\,MB——配比逻辑和 manifest 都能验，只是数字没有统计意义。
+
+\textbf{单卡：}
+\begin{lstlisting}[style=hlshell]
+uv run python cs336_systems/experiments/eval_checkpoint.py --stream web=...
+uv run python cs336_systems/experiments/sample_from_checkpoint.py
+PYTHONPATH=<llm-serving> uv run python cs336_systems/experiments/bench_serving.py \
+    --modes recompute cache
+\end{lstlisting}
+
+\textbf{两卡：}
+\begin{lstlisting}[style=hlshell]
+uv run python cs336_systems/experiments/run_pipeline.py \
+    --config cs336_systems/experiments/real_pretrain_config.json \
+    --attention_kernel flash_attention_triton --ddp_wrapper flashddp
+\end{lstlisting}
+
+\subsection{代码长什么样}
+\label{sec:b-layout}
+
+新增的部分集中在两处：\codeb{cs336_systems/data_harvest/}（语料构建，三个脚本）和 \codeb{cs336_systems/experiments/}（评测、采样、benchmark、报告）。KV cache 是加在 \codet{cs336-basics/} 里的三个\cnemph{新方法}，\codet{forward} 一个字节没动。适配层在姊妹仓库里。
+
+真正该先读的不是目录树，而是 \codeb{cs336_systems/experiments/real_pretrain_config.json}。那份 config 里有八个 \codet{\_NOTE\_*} 字段，把每一次失败的根因直接写进了配置文件本身——改模型尺寸、batch size 或学习率之前应该先读它们。
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{lX l}
+\toprule
+字段 & 它记录的失败 & 讲义位置 \\
+\midrule
+\codet{\_NOTE\_ffn\_init\_bug} & 反复 NaN 发散的\cnemph{真}根因，第二次发散之后才找到 & \secref{sec:b-pretrain} \\
+\codet{\_NOTE\_divergence\_fix} & 第一次标定就发散，以及当时那个\cnemph{错误}的诊断 & \secref{sec:b-pretrain} \\
+\codeb{_NOTE_approx_param_count} & 参数量算错——\codet{head} 是独立矩阵，不共享 embedding & \secref{sec:b-pretrain} \\
+\codet{\_NOTE\_tokenizer\_swap} & 自训 BPE 在真实语料上要 20 小时，换 tiktoken & \secref{sec:b-pretrain} \\
+\codet{\_NOTE\_batch\_size\_oom} & 漏算 logits 张量，vocab 涨 5 倍这一项就翻 5 倍 & \secref{sec:b-pretrain} \\
+\codeb{_NOTE_wandb_artifact_hang} & 2.3\,GB checkpoint 上传把 rank 0 卡在 barrier 后面 & \secref{sec:b-pretrain} \\
+\codet{\_NOTE\_max\_iters} & 用实测吞吐反推步数预算，而不是拍脑袋 & \secref{sec:b-pretrain} \\
+\codet{\_NOTE\_eval\_frequency} & 预训练期 eval 为什么故意稀疏 & \secref{sec:b-pretrain} \\
+\bottomrule
+\end{tabularx}
+\caption{\codeb{real_pretrain_config.json} 的八个 \codet{\_NOTE\_*} 字段。把失败写进配置文件本身，是这次冲刺里最值得直接抄走的一个做法。}
+\label{tab:b-notes}
+\end{table}
+
+\subsection{怎么用这份讲义}
+\label{sec:b-howto}
+
+橙色 \textbf{Checkpoint} 框的用法和姊妹篇一样：先合上代码答，再看下半格的参考答案和代码位置。
+
+两条 B 专属的约定：
+
+\begin{itemize}[itemsep=2pt]
+  \item \textbf{每张结果表都带出处}——哪个 JSON、多少 batch、什么 seed。这份讲义有一整章在讲「不要报没有出处的数字」，如果它自己的表格没有出处就自相矛盾。\cnemph{看到没有出处的数字，就当它不存在。}
+  \item \textbf{本讲义含被撤回的结论。} 深红色的「撤回」框装的是曾经报出去、后来自己推翻的结论，原样保留是故意的：\secref{sec:b-bench} 整章的主题就是「怎么才有资格说一个性能结论」，删掉被撤回的那一版就没得讲了。
+\end{itemize}
+
+\subsection{前置：假定你读过姊妹篇的哪几节}
+\label{sec:b-prereq}
+
+这份讲义不重复 serving engine 的设计论证。以下几处会直接指过去：
+
+\begin{itemize}[itemsep=2pt]
+  \item \extref{a:lmengine-four-methods} —— \secref{sec:b-kv} 讲适配层「只补四样东西」时的前提
+  \item \extref{a:kv-cache-legality} —— 为什么可以缓存。B 只讲怎么写、怎么测、值不值
+  \item \extref{a:differential-testing} —— 用一个可信实现当 oracle。B 里这个手法用了两次
+  \item \extref{a:why-not-generate} —— 为什么 \codet{LMEngine} 手写驱动模型，这是适配层能存在的原因
+\end{itemize}
+
+没读过姊妹篇也能读这份，但 \secref{sec:b-kv} 会少掉一半的「为什么是这样」。
