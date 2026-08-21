@@ -1,0 +1,62 @@
+{
+  "dataset_mode": "local_text",
+  "raw_train_text": "data/mixed_corpus/train.txt",
+  "raw_valid_text": "data/mixed_corpus/valid.txt",
+  "vocab_path": "data/bpe_tokenizer_mixed/vocab.pkl",
+  "merges_path": "data/bpe_tokenizer_mixed/merges.pkl",
+  "tokenizer_vocab_size": 50257,
+  "tokenizer_num_processes": 64,
+  "tokenized_train": "data/tokenized/alpaca_replay_train.npy",
+  "tokenized_valid": "data/tokenized/alpaca_valid.npy",
+  "build_dataset_num_workers": 64,
+  "model": {
+    "vocab_size": 50257,
+    "context_length": 1024,
+    "num_layers": 16,
+    "d_model": 768,
+    "num_heads": 12,
+    "d_ff": 2048,
+    "rope_theta": 10000.0
+  },
+  "training": {
+    "tr_batch_size": 8,
+    "val_batch_size": 8,
+    "val_bat_num": 50,
+    "epochs": 100,
+    "lr": 0.0001,
+    "weight_decay": 0.01,
+    "beta1": 0.9,
+    "beta2": 0.999,
+    "adam_eps": 1e-08,
+    "grad_clip": 1.0,
+    "max_iters": 900,
+    "warmup_iters": 90,
+    "dtype": "float32",
+    "compile": true,
+    "seed": 0
+  },
+  "checkpointing": {
+    "checkpoint_dir": "checkpoints_sft_lr1e4_replay",
+    "log_interval": 20,
+    "eval_interval": 5,
+    "checkpointing_interval": 10,
+    "checkpoint_every_n_steps": null,
+    "eval_every_n_steps": 100
+  },
+  "wandb": {
+    "project": "Train_Transformer_LM-pretrain-v1",
+    "run_name": "sft-lr1e4_replay"
+  },
+  "attention_kernel": "flash_attention_triton",
+  "ddp_wrapper": "flashddp",
+  "bucket_size_mb": 25,
+  "_NOTE_max_iters": "30000 steps = measured 1.30 batch/s (500-iter calibration on this exact model config, steady-state 1.275-1.38) x 6.5h, i.e. ~491M training tokens at 16384 tokens/step across 2 ranks. Calibration is not re-run after the FFN-init fix because weight init does not change throughput.",
+  "_NOTE_ffn_init_bug": "THE actual cause of the repeated NaN divergences, found only after the second one: PointwiseSGLUactFFN called trunct_normal_para_init(dim_ff, dim_model, device=..., dtype=...) without passing `var`, and that argument defaults to 1 -- so W1/W2/W3 of every SwiGLU FFN were initialized at std=1.0 while every other matrix in the model (Linear, W_Q/W_K/W_V/W_O) correctly used Xavier 2/(dim_out+dim_in), i.e. std~0.027. Pre-norm hides this at step 0 (RMSNorm renormalizes, so initial loss is exactly ln(50257)=10.82, which is why it looked healthy), but measured empirically the FFN branch writes RMS ~2.5e4 into a residual stream whose branches should contribute ~0.37 -- a ~65,000x overshoot. It trains for a few hundred steps and then explodes as soon as the LR is high enough to move those weights, which is why lowering lr 6e-4 -> 3e-4 and adding warmup only moved the NaN from step ~250 to step ~820 instead of fixing it. Fixed in cs336-basics/cs336_basics/transfromer/pointwise_ffn.py. parallel_train now also aborts immediately on a non-finite loss instead of burning the remaining budget multiplying NaNs.",
+  "_NOTE_approx_param_count": "First calibration attempt (num_layers=12, d_model=1024, d_ff=3584) actually reported 0.29B params, not the ~190M planned -- wrong assumption caught from the live log: TransformerLM.head is a SEPARATE Linear (untied from in_embedding, see lm.py:152,180) and the FFN is SwiGLU with 3 matrices (w1/w2/w3, see transformer.py), not 2. Recomputed properly: num_layers=16, d_model=768, num_heads=12, d_ff=2048 (the common 8/3*d_model SwiGLU sizing), vocab_size=50257 untied -> approx 190M params (12L*7.08M/layer=84.9M + 2*50257*768=77.2M embed+head = 190.4M).",
+  "_NOTE_tokenizer_swap": "Custom BPE merge-phase throughput on this real (diverse, non-TinyStories) corpus was ~7.5s/merge -- 9743 merges would take ~20h, blowing the entire time budget on tokenizer training alone (per-merge cost is dominated by vocabulary diversity, not raw corpus bytes: a 4pct proportional sample only got it to ~1.1s/merge, still ~3h). Switched to tiktoken's pretrained 'gpt2' encoding (50257 vocab, already a project dependency) instead of training a custom tokenizer -- vocab.pkl/merges.pkl are now just placeholders (nothing in the flashddp DDP path reads their content, only stage_train_tokenizer's exists-check does), and data/tokenized/{mixed_train,mixed_valid}.npy are pre-built directly via tiktoken so stage_build_dataset's exists-check skips it too. vocab_size bumped from 10000 to 50257 accordingly; num_layers/d_ff trimmed (14->12, 4096->3584) to keep total params near the user's 50-200M target instead of drifting to ~230M.",
+  "_NOTE_divergence_fix": "First real calibration run diverged: val loss 6.90 (step 100) -> 6.60 (step 200) -> nan (step 300+), with lr fixed at 6e-4 from step 0. Two causes, both fixed: (a) the flashddp path never applied any LR schedule (cs336_basics.train.optimizer.lr_scheduler existed but was only wired into the single-GPU path), so a 190M-param model from scratch jumped straight to peak LR -- warmup_iters is now read from this config and a linear-warmup + cosine-decay-to-10pct schedule is applied per step; (b) 6e-4 is GPT-2-small's LR at ~0.5M tokens/batch, but this run is 2 ranks * batch 8 * 1024 ctx = 16K tokens/batch, ~30x smaller, so peak lr is dropped to 3e-4. grad_clip=1.0 was already on and did not save it on its own.",
+  "_NOTE_eval_frequency": "eval_every_n_steps is deliberately sparse (~5 evals across the whole run, patched by continue_pretrain_pipeline.sh from max_iters). Each eval is already a val_bat_num=50-batch random sample of the validation stream, i.e. a statistical estimate with its own error bars -- running it 10x more often does not make the curve more informative, it just burns GPU time. During the 500-step calibration it runs at 250 so there are two val numbers to gate NaN on, and nothing more.",
+  "_NOTE_wandb_artifact_hang": "save_ddp_checkpoint no longer uploads checkpoints as W&B artifacts. Each checkpoint is ~2.3GB (fp32 weights + AdamW moments); rank 0 blocked inside wandb's upload while rank 1 waited in the post-save dist.barrier(), tripping NCCL's 600s watchdog and SIGABRT-ing the whole job right after the final checkpoint of the 2026-07-27 calibration run. Checkpoints are now local-only (rsync them off), the process-group timeout is raised to 60min, the final barrier moved ahead of wandb.finish(), and old step-checkpoints are pruned to the last 2 because the instance only has ~10GB free.",
+  "_NOTE_batch_size_oom": "tr_batch_size=32 (carried over from the vocab_size=10000 plan) OOM'd twice on both GPUs at vocab_size=50257: the final logits tensor is batch*context_length*vocab_size*4bytes = 32*1024*50257*4 ~= 6.6GB before even counting cross-entropy's softmax/backward buffers, which this untied-head/large-vocab model incurs but the original sizing never accounted for. Dropped to tr_batch_size=8 (matches the well-tested smoke-config precedent) for headroom; could likely go higher (16) but keeping it conservative for an unsupervised multi-hour run.",
+  "init_from": "checkpoints_pretrain_v1/checkpoint_epoch_0100.pt"
+}

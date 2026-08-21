@@ -1,0 +1,32 @@
+% Assignment A -- Inference Serving Engine
+% Build:  latexmk -xelatex assignment-a.tex
+% Quiz edition (answers hidden):
+%   latexmk -xelatex -jobname=assignment-a-quiz \
+%           -pretex='\showanswersfalse' -usepretex assignment-a.tex
+\documentclass[11pt, a4paper]{article}
+\usepackage{handout}
+
+\sethandoutshorttitle{Assignment A: Inference Serving Engine}
+\sethandoutsiblingname{Assignment B}
+
+\usepackage[backend=biber, style=numeric, sorting=none]{biblatex}
+\addbibresource{refs.bib}
+
+\title{\sffamily\bfseries Assignment A: Inference Serving Engine\\[0.3em]
+       \large 一个请求在系统里的一生}
+\author{回顾式讲义 · 基于 \texttt{llm-serving} Week 1--3}
+\date{Version 0.1.0 \quad · \quad 2026-07-29}
+
+\begin{document}
+\maketitle
+
+\include{sections/00-overview}
+\include{sections/01-request-shape}
+\include{sections/02-inference-loop}
+\include{sections/03-continuous-batching}
+\include{sections/04-testing}
+\include{sections/99-epilogue}
+
+\printbibliography[title={References}]
+
+\end{document}

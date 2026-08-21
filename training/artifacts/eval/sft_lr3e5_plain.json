@@ -1,0 +1,30 @@
+{
+  "checkpoint": "checkpoints_sft_lr3e5_plain/checkpoint_epoch_0100.pt",
+  "iter": 100,
+  "streams": {
+    "general": {
+      "path": "data/tokenized/mixed_valid.npy",
+      "loss": 3.7374888491630553,
+      "ppl": 41.99240838313248,
+      "batches": 200
+    },
+    "web": {
+      "path": "data/tokenized/domain_valid_web.npy",
+      "loss": 3.9636925745010374,
+      "ppl": 52.65138660450211,
+      "batches": 200
+    },
+    "wiki": {
+      "path": "data/tokenized/domain_valid_wiki.npy",
+      "loss": 3.669484065771103,
+      "ppl": 39.231659681819075,
+      "batches": 200
+    },
+    "instruction": {
+      "path": "data/tokenized/domain_valid_instruction.npy",
+      "loss": 2.4792695331573484,
+      "ppl": 11.93254490517769,
+      "batches": 200
+    }
+  }
+}

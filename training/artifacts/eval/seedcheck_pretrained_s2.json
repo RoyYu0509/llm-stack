@@ -1,0 +1,12 @@
+{
+  "checkpoint": "checkpoints_pretrain_v1/checkpoint_epoch_0100.pt",
+  "iter": 100,
+  "streams": {
+    "general": {
+      "path": "data/tokenized/mixed_valid.npy",
+      "loss": 3.566881629228592,
+      "ppl": 35.40601175215639,
+      "batches": 200
+    }
+  }
+}

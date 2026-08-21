@@ -1,0 +1,764 @@
+\section{手写 inference loop：prefill / decode 与 Weak Async}
+\label{sec:a-loop}
+
+三行就能生成文本：
+
+\begin{lstlisting}[style=hlplain]
+inputs = tokenizer("Yifan Yu is ", return_tensors="pt")
+outputs = model.generate(**inputs, max_length=20)
+print(tokenizer.decode(outputs[0]))
+\end{lstlisting}
+
+这三行是对的、快的、边界情况处理得比我们好的。那为什么这个项目里有一个手写 prefill、手写
+decode 循环、手写停止条件的 \code{LMEngine}？week2-retro §1.1 把理由压成一句话
+（\codeat{docs/retro/week2-retro.md}{48}）：
+
+\begin{quote}
+"High-level API 的代价，不是'少一点灵活性'，而是你会失去整个 backend architecture 的 control
+point。"
+\end{quote}
+
+重点在最后三个字。不是"我调不了 temperature"——那种参数 \code{generate()} 都有。是\cnemph{在两个
+step 之间插入代码的能力}：decode 走完第 5 步、第 6 步之前，我想看一眼 queue 里有没有新 request，
+想把这一步的 KV cache 挪个地方，想决定这条 request 要不要被抢占。\code{generate()} 把整个
+prefill $\to$ decode 循环封在里面，只在结束时交出 output ids。循环体不归你，插入点就不存在。
+
+% ---------------------------------------------------------------------------
+\subsection{为什么不用 generate()}
+\label{sec:a-loop-why-not-generate}
+\anchor{a:why-not-generate}
+
+ADR-001 的 rejection reason 写在 \codeat{docs/decisions/adr001-inference.md}{27}：
+"它不暴露中间状态（KV cache、per-step logits），导致你无法在 Week 3/4 实现 continuous batching
+和 paged KV cache。" week2-retro §1.1 把"中间状态"展开成五项：per-step \code{logits}、updated
+\code{past_key_values}、prefill / decode 的 boundary、step-level scheduling point、以及未来做
+speculative decoding 或 paged KV cache 时对中间状态的 access
+（\codeat{docs/retro/week2-retro.md}{37--42}）。
+
+前两项是\cnemph{数据}，后三项是\cnemph{控制}。数据那两项 \code{generate()} 其实给得出一部分
+（\code{output_scores=True}），但那是\cnemph{事后}的一份记录，不是在循环里当场据此做决定。
+控制那三项才真拿不到：\code{LogitsProcessor} 和 \code{StoppingCriteria} 能改这一步的 logits、
+能让这条序列停，但改不了\cnemph{谁在这个 batch 里}、\cnemph{下一步跑哪些序列}——而 continuous
+batching 要改的正是后者。
+
+顺带纠一个方向：手写\cnemph{不是}性能优化。本仓库把两条路径放在一起跑的地方有两处
+（\code{tests/lm_engine_test.py} 和 \codeb{tests/transformer_lm_adapter_test.py}），比的都是
+输出是否逐 token 相同，没有一处比过时间。真要比，手写版每步还多一次 \code{.item()}
+（\codeat{inferenceLM/engine/lm\_engine.py}{102} 和 \codeat{}{108}）也就是每步一次同步，
+而 \code{generate()} 把整条序列留在 device 上最后一次性搬回。单条 request 下手写版更可能
+\cnemph{更慢}。它换来的是控制权，是一笔当下亏损、指望在 batching 之后回本的交易。
+
+\paragraph{代价：那些 edge case 现在归你了。}
+ADR-001 列 \code{generate()} 的"好处"时自己写了：代码量少、不需要手动管理 KV cache、不需要自己
+写 stopping logic、\cnemph{HuggingFace 已经帮你处理了 edge case}
+（\codeat{docs/decisions/adr001-inference.md}{28}）。最后这条是手写方案的债务，余额可以精确读出
+来——\code{stopping_criteria()} 一共七行，判据两条：
+
+\lstinputlisting[style=hlnum, firstline=113, lastline=119, firstnumber=113]%
+  {../../inferenceLM/engine/lm_engine.py}
+
+达到长度上限，或最后一个生成的 token 是 EOS。就这两条。\code{generate()} 在同一位置还支持
+\code{min_new_tokens}、任意 stop string、\code{max_time}、自定义 \code{StoppingCriteriaList}；
+再往外还有 \code{repetition_penalty}、\code{no_repeat_ngram_size}、\code{bad_words_ids}，以及
+batch 内不等长序列的 attention mask 和 padding。今天一条都没有。
+
+还有三处细节，都是"自己写"必然撞上的那类问题。\code{generated_tokens[-1]} 在列表为空时会
+\code{IndexError}，今天不会发生只是因为 prefill 一定先 append 一个 token
+（\codeat{inferenceLM/engine/lm\_engine.py}{102}）——安全性来自\cnemph{调用顺序}而非函数自身。
+EOS 被 append 之后才停，所以返回值\cnemph{包含} EOS；和 \code{generate()} 一致，但它是巧合还是
+有意对齐，代码里没写。还有一处 guard 重复：\code{inference()} 检查\cnemph{等于} \code{max_length}
+（\codeat{inferenceLM/engine/lm\_engine.py}{98}），\code{prefill()} 又检查\cnemph{大于等于}
+（\codeat{}{32}），判据不等价、文案不同；名字里带 \code{prefill_should_reject} 的那个测试
+（\codeat{tests/lm\_engine\_test.py}{55}）断言的其实是 \code{inference()} 那条的文案，
+所以 \code{prefill()} 自己那条 guard 今天\cnemph{没有测试覆盖}。
+
+\begin{checkpoint}{why_not_generate}{手写 loop 换到了什么，又欠下了什么}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item \codet{generate()} 提供 \codet{StoppingCriteria} 和 \codet{LogitsProcessor} 两种回调。
+        有了它们，为什么还是说"拿不到 step-level scheduling point"？
+  \item 再说出三条 \codet{generate()} 支持而这里没有的停止/约束能力。
+  \item 只做单条 request 的文本生成，手写版更快还是更慢？为什么？
+\end{enumerate}
+\hint 区分"能不能改这一步的输出"和"能不能改下一步跑哪些序列"。
+\ifshowanswers
+\tcblower
+\answer (a) 因为回调的输入是当前这一步的 logits 和已生成序列，输出是修改后的 logits 或一个
+bool。它们改不了 batch 的成员：没法在回调里把新 request 塞进当前 batch、把低优先级的踢出去、
+或决定下一次 forward 的 \codet{input\_ids} 是什么形状。scheduling point 需要的是\cnemph{循环体
+的所有权}，回调只是循环体里的一个洞。
+
+(b) 任选三条：\codet{min\_new\_tokens}、stop string、\codet{max\_time}、
+\codet{repetition\_penalty} 或 \codet{no\_repeat\_ngram\_size}、\codet{bad\_words\_ids}、
+batch 内不等长序列的 mask 与 padding。
+
+(c) 大概率更慢：手写版每 token 做一次 \codet{.item()}（lm\_engine.py:102 和 :108），那是一个
+device$\to$host 同步点；\codet{generate()} 结束后才一次性取回。换来的是控制权，这笔交易在
+batch size 变大之前是净亏的。
+\whereincode \codeat{docs/decisions/adr001-inference.md}{26--28}、
+\codeat{docs/retro/week2-retro.md}{37--48}、
+\codeat{inferenceLM/engine/lm\_engine.py}{113--119}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{KV cache 为什么合法}
+\label{sec:a-loop-kv-legality}
+\anchor{a:kv-cache-legality}
+
+先划边界：\cnemph{这一章不实现 KV cache}。这份代码里没有一行分配、拷贝、分页或驱逐缓存，
+它只做一件事——把上一次 forward 吐出来的 \code{outputs.past_key_values} 原样传回给下一次
+（\codeat{inferenceLM/engine/lm\_engine.py}{40}、\codeat{}{60}、\codeat{}{64}、\codeat{}{106}）。
+缓存由 HuggingFace 管。缓存的数据结构长什么样、怎么分块、怎么跨 request 复用和回收，是姊妹篇
+的内容。这里只讲\cnemph{凭什么可以缓存}。
+
+\begin{misconception}{KV cache 之所以成立，是因为过去的 token 不会变}
+已经生成的 token 是不变的，所以它们对应的 K 和 V 也不变，存下来复用就行了。
+\end{misconception}
+
+这句不能说错，但它不构成解释——是把结论换了个说法。week2-retro §2.1 自己点了这条，并追问了真正
+的问题：\cnemph{为什么过去 token 的 K/V 不需要重算？}答案是 causal mask。在 decoder-only
+transformer 里位置 $i$ 只能看到 $0 \ldots i$，写成 dependency chain：
+
+\begin{lstlisting}[style=hlplain]
+h[l][i] = f( h[l-1][0..i] )     # (*@\rmfamily 第 $\ell$ 层位置 $i$，只依赖下层左边@*)
+K[l][i] = W_k @ h[l-1][i] ; V[l][i] = W_v @ h[l-1][i]
+
+# (*@\rmfamily 追加新 token $n{+}1$ 时：对任意 $i \le n$，$h[l][i]$ 的输入集合没有变化@*)
+#   (*@\rmfamily $\Rightarrow$ $h[l][i]$ 不变 $\Rightarrow$ $K[l][i], V[l][i]$ 不变@*)
+\end{lstlisting}
+
+关键在中间那步，而且它必须\cnemph{逐层}成立——这正是 retro §2.1 特意提醒的地方（"注意 KV Cache
+有很多层"）。只在最后一层论证会漏掉一个可能性：新 token 会不会通过某个下层绕上来影响旧位置？
+答案是不会，因为 causal mask 在\cnemph{每一层}都成立，性质沿层向上传递。把它讲成归纳，比讲成
+"过去的不变"扎实得多。
+
+层数不是抽象的。GPT-2 small 有 12 层，实测：
+
+\begin{lstlisting}[style=hlrepl]
+>>> out = model(input_ids=torch.tensor([[15496, 11, 616]]), past_key_values=None)
+>>> type(out.past_key_values), len(out.past_key_values)
+(<class 'transformers.cache_utils.DynamicCache'>, 12)
+>>> out.past_key_values[0]
+TypeError: 'DynamicCache' object is not subscriptable
+\end{lstlisting}
+
+最后一行值得留意。\code{lm_engine.py} 给 KV 写的类型标注是
+\codeb{List[Tuple[torch.Tensor, torch.Tensor]]}（\codeat{inferenceLM/engine/lm\_engine.py}{39}、
+\codeat{}{53}、\codeat{}{63}），那是 HuggingFace 的\cnemph{旧}缓存格式；本仓库锁的
+\code{transformers>=5.5.3} 上流过来的实际是 \code{DynamicCache}，能 \code{len()} 但不能下标。
+运行时不受影响（标注不强制，而这份代码对它只做"接住、原样传回"），但这个不一致本身说明：
+\cnemph{我们对这个对象的了解只到"能原样传回去"为止}。要往里看、按 block 切、跨 request 复用，
+就必须先撕开这层抽象——那是姊妹篇在做的事。
+
+\begin{checkpoint}{kv_cache_legality}{把"KV cache 为什么成立"讲成 dependency chain}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 用一句话解释合法性，句子里必须出现 causal mask，不能出现"过去的 token 不会变"。
+  \item 为什么"只在最后一层论证"不够？
+  \item encoder-only 模型（BERT）能不能用同样的 KV cache？为什么？
+\end{enumerate}
+\hint 先问"位置 $i$ 的第 $\ell$ 层输入来自哪些位置"，再问这个答案会不会因为序列变长而改变。
+\ifshowanswers
+\tcblower
+\answer (a) 参考说法：causal masking 保证任何位置只 attend 到自己和左侧，追加新 token 不会进入
+既有位置的可见集合，所以先前算出的 K/V 仍然有效。retro §2.1 的英文版是 "Because causal masking
+prevents earlier tokens from depending on future tokens, previously computed K/V remain reusable
+when new tokens are appended."
+
+(b) 因为 K/V 每层各一份（GPT-2 small 12 份）。要断言第 12 层旧位置的 K/V 不变，得先断言第 11
+层旧位置的输出不变，一路递归到 embedding。没有这一步，"新 token 从下层绕上来影响旧位置"在逻辑
+上没有被排除。
+
+(c) 不能。BERT 是双向注意力，往后加一个 token，前面所有位置的上下文都变了，K/V 全部失效。这正
+说明合法性来自 mask 的形状，而不是"token 值不变"——BERT 的旧 token 值同样没变。
+\whereincode \codeat{docs/retro/week2-retro.md}{331--379}、
+\codeat{inferenceLM/engine/lm\_engine.py}{60}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{shape 是一个 systems concern}
+\label{sec:a-loop-shape}
+\anchor{a:prefill-decode-shape}
+
+prefill 和 decode 最省事的区分是"一个读 prompt，一个生成 token"。这话对，但推不出系统结论。
+retro §2.2 换成\cnemph{input shape}，结论就自己掉出来：prefill 是 \code{[batch, seq_len]}，
+decode 是 \code{[batch, 1]}。
+
+在这份代码里 \code{batch} 恒等于 1，两个 shape 分别造于
+\codeat{inferenceLM/engine/lm\_engine.py}{95}（\code{unsqueeze(0)} 把 token 列表变成
+\code{(1, seq_len)}）和 \codeat{}{43}/\codeat{}{67}（\code{argmax(...).unsqueeze(1)} 产出
+\code{(1, 1)}）。注意后者：decode 下一步要吃的 \code{[B,1]} 就是上一步 argmax 的输出直接
+unsqueeze 出来的，中间不经过任何拼接——"decode 每次只喂一个 token"不是一条策略，是 shape 自然
+导出的。
+
+输出侧更能说明问题。实测 prefill（3 个 prompt token）的 \code{logits.shape} 是
+\code{[1, 3, 50257]}，decode 是 \code{[1, 1, 50257]}。prefill 那次算出了\cnemph{全部三个位置}
+的 logits，而代码只取最后一个（\codeat{inferenceLM/engine/lm\_engine.py}{38}）。前两个被直接
+丢掉——它们不是没用（训练时 teacher forcing 要的正是这些），但在推理路径上是纯浪费，prompt
+越长浪费越多。
+
+由此掉出三条系统结论，都会在 \secref{sec:a-batching} 兑现：\cnemph{decode step 之间天然好
+batch}（$n$ 条的输入都是 \code{[1,1]}，堆起来就是 \code{[n,1]}）；\cnemph{prefill 和 decode
+混在一个 forward 里不自然}（一条要 \code{[1,S]} 一条要 \code{[1,1]}，$S$ 还各不相同，要塞进同
+一个 forward 就得 padding 或 ragged attention，而 \codeb{docs/progress/week3-discussion.md} 记的
+正是 HF 的 \code{model()} 不支持 packed/ragged，所以 batching 必须 stage-homogeneous）；
+\cnemph{chunked prefill 是真实优化点}，因为它把那个大而不定的 $S$ 切成 scheduler 能管理的固定
+单位。
+
+还有一条常被一起讲、但\cnemph{不是本仓库实测}的结论，这里标明来源：prefill 算术强度高、通常
+compute-bound，decode 一次只算一个位置却要读全部权重、通常 memory-bandwidth-bound。这是社区的
+标准结论，本项目\cnemph{没有做过 roofline 或带宽测量}来验证，讲义在这里只是引用。
+
+\begin{checkpoint}{prefill_decode_shape}{shape 差异会传导到哪些设计决定}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 写出两次 forward 的 \codet{input\_ids} 和 \codet{logits} shape（\codet{batch}=1，
+        prompt 长度 $S$）。
+  \item prefill 算出来的 logits 有多少被用上？剩下的在别的场景下有用吗？
+  \item 为什么"把一条 prefill 和一条 decode 拼进同一个 forward"比"把两条 decode 拼在一起"
+        难得多？
+\end{enumerate}
+\hint 第三问先写出两种情况下拼出来的 tensor 形状，答案就在形状里。
+\ifshowanswers
+\tcblower
+\answer (a) prefill：\codet{[1, S]} 和 \codet{[1, S, vocab]}（实测 \codet{[1, 3, 50257]}）。
+decode：\codet{[1, 1]} 和 \codet{[1, 1, vocab]}。
+
+(b) 只有最后一个（lm\_engine.py:38 的 \codet{[:, -1, :]}），$S$ 个里丢掉 $S-1$ 个。它们在训练时
+每个都是一个监督信号；推理时除了最后一个之外都对应已知 token。speculative decoding 是例外——
+验证草稿 token 要的正是这些中间位置的 logits。
+
+(c) 两条 decode 拼起来是 \codet{[2, 1]}，形状齐整。prefill 加 decode 需要
+\codet{[2, max(S, 1)]}，短的要 padding，而 padding 位置的 K/V 会污染 cache，还得配 mask；两条
+prefill 的 $S$ 不同也一样。真正的解法是 ragged/packed attention，HF 的 \codet{model()} 不提供，
+所以本项目在 \secref{sec:a-batching} 采用 stage-homogeneous batching。
+\whereincode \codeat{inferenceLM/engine/lm\_engine.py}{38}、\codeat{}{43}、\codeat{}{95}、
+\codeat{docs/retro/week2-retro.md}{383--432}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{四个方法逐行读}
+\label{sec:a-loop-four-methods}
+\anchor{a:lmengine-four-methods}
+
+\code{prefill()} 的执行体做三件事：守卫、一次 forward、一次 argmax。
+
+\lstinputlisting[style=hlnum, firstline=32, lastline=47, firstnumber=32]%
+  {../../inferenceLM/engine/lm_engine.py}
+
+\code{torch.no_grad()} 包住 forward（第 35 行）是必须的，不然每步都建计算图、显存单调上涨。
+第 43 行产出 \code{(1, 1)}，正好是 decode 要吃的形状。\code{decode()} 几乎是同一段代码：
+
+\lstinputlisting[style=hlnum, firstline=59, lastline=70, firstnumber=59]%
+  {../../inferenceLM/engine/lm_engine.py}
+
+唯一的实质差别在第 60 行：\code{past_key_values=latest_kv}，而且\cnemph{显式传了}
+\code{use_cache=True}。回头看 prefill 第 36 行——\code{past_key_values=None}，\cnemph{没有传
+use\_cache}。这是一处真实的不对称，留到 checkpoint 里讲。串起两者的是 \code{inference()}：
+
+\lstinputlisting[style=hlnum, firstline=88, lastline=110, firstnumber=88]%
+  {../../inferenceLM/engine/lm_engine.py}
+
+按顺序看四处。第 89--91 行拿 \code{model.config.n_positions} 当上界，是\cnemph{唯一}一处
+\code{LMEngine} 读模型配置做校验、也是唯一能拦住"用户要 2048 但模型只有 1024"的地方。第 95 行
+没有指定 \code{device}：今天所有测试在 CPU 上跑所以没暴露，模型一旦 \code{.to("cuda")}，这行
+就会造出 CPU tensor 喂给 GPU 模型。第 102 行的 \code{.item()} 是每一步的\cnemph{同步点}。
+第 105 行的 \codeb{stopping_criteria(len(tokenized_data), ...)} 就是
+\secref{sec:a-shape-two-classes} 埋的那条线——\code{__len__} 重载在这里兑现。
+
+\begin{checkpoint}{use_cache_asymmetry}{prefill 没传 use\_cache，decode 传了}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 两个方法调 \codet{self.model(...)} 时各传了哪些参数？差在哪一个？
+  \item 既然 prefill 没要求返回 cache，为什么下一行还能取到东西而不是 \codet{None}？
+  \item 这是 bug 吗？如果不是，它错在哪一层？
+\end{enumerate}
+\hint 去查 \codet{GPT2Config} 里 \codet{use\_cache} 的默认值，再想"默认值兜底"和"显式声明意图"
+是不是同一件事。
+\ifshowanswers
+\tcblower
+\answer (a) prefill：\codeb{input_ids=input_ids, past_key_values=None}，\cnemph{没有
+\codet{use\_cache}}。decode：\codeb{input_ids=latest_token, past_key_values=latest_kv,
+use_cache=True}。
+
+(b) HuggingFace 的 config 默认就是开的：实测
+\codeb{GPT2LMHeadModel.from_pretrained("gpt2")} 之后 \codet{model.config.use\_cache} 是
+\codet{True}，不传等价于传 \codet{True}，\codet{outputs.past\_key\_values} 照样是一个
+\codet{DynamicCache}（实测 \codet{len} 为 12）。这段代码今天正确，靠的是\cnemph{默认值兜底}。
+
+(c) 不是 bug——行为上没问题，\codet{tests/lm\_engine\_test.py} 三个 case 逐 token 对上
+\codet{generate()} 就是证据。它错在\cnemph{意图表达}：同一个类的两个姊妹方法对同一个参数一个说
+一个不说，读者只能推断"大概 prefill 不需要 cache"，而事实恰恰相反——prefill 产出的 cache 正是
+decode 全部工作的前提。风险也真实：换一个 \codet{use\_cache} 默认为 \codet{False} 的配置
+（从训练 checkpoint 加载时很常见），prefill 会安静地返回 \codet{None}，然后在 decode 第一步
+炸掉，报错位置离病因隔了一个函数。加上 \codet{use\_cache=True} 是一个字符的修复。
+\whereincode \codeat{inferenceLM/engine/lm\_engine.py}{36}（无）与
+\codeat{inferenceLM/engine/lm\_engine.py}{60}（有）
+\fi
+\end{checkpoint}
+
+\begin{examplebox}{greedy_matches_hf}{手写 loop 与 generate() 逐 token 相同}
+这是本仓库对"手写没写错"的核心证据。greedy 是确定性的，所以两条路径应当输出\cnemph{完全相同}的
+token 序列——不是"意思差不多"，是列表相等。ADR-001 把这一点写成了选 greedy 的理由之一。实跑
+（\codet{gpt2}，CPU，\codet{prompt = "Yifan Yu is "}，\codet{max\_length=20}）：
+
+\begin{lstlisting}[style=hlrepl]
+>>> input_ids[0].tolist()
+[56, 361, 272, 10605, 318, 220]                       # 6 (*@\rmfamily 个 prompt token@*)
+>>> hf_out = model.generate(input_ids, do_sample=False, max_length=20,
+...             pad_token_id=tok.eos_token_id, eos_token_id=tok.eos_token_id)
+>>> hf_new = hf_out[0].tolist()[input_ids.shape[1]:]  # (*@\rmfamily 必须切掉 prompt@*)
+[1849, 64, 1849, 35465, 1849, 805, 508, 468, 587, 2877, 287, 262, 1748, 329]
+
+>>> td = TokenizedData(request_id="r0", tokens=input_ids[0].tolist())
+>>> eng_new = await LMEngine(model).inference(td, do_sample=False, max_length=20)
+[1849, 64, 1849, 35465, 1849, 805, 508, 468, 587, 2877, 287, 262, 1748, 329]
+>>> hf_new == eng_new, len(input_ids[0]) + len(eng_new)
+(True, 20)
+>>> tok.decode(eng_new)
+'\xa0a\xa0young\xa0man who has been living in the city for'
+\end{lstlisting}
+
+\cnemph{比的是 token id 不是文本}：解码后字符串相同只说明差不多，token 列表相等才排除"某一步
+选错但恰好解回同一个字符串"。断言写死在 \codeat{tests/lm\_engine\_test.py}{40}。
+
+\cnemph{必须切掉 prompt}：\codet{generate()} 的返回值\cnemph{包含} prompt token，
+\codet{inference()} 只返回新生成的（docstring 在
+\codeat{inferenceLM/engine/lm\_engine.py}{76}）。忘了这步两边永远不等，而错误信息会把你引向
+"是不是 sampling 没关"。
+
+\cnemph{6 + 14 = 20}：\codet{max\_length} 管的是总长，由
+\codeat{inferenceLM/engine/lm\_engine.py}{119} 强制，和 \codet{generate()} 语义一致。
+
+仓库里的正式版本是参数化的三个 case（\codeat{tests/lm\_engine\_test.py}{16--40}）。这类差分
+测试的方法论——为什么拿 HF 当 oracle、oracle 本身错了怎么办——归 \secref{sec:a-testing}。
+\end{examplebox}
+
+% ---------------------------------------------------------------------------
+\subsection{那句 await asyncio.sleep(0)}
+\label{sec:a-loop-weak-async}
+\anchor{a:weak-async}
+
+\code{inference()} 里有两行看起来可以删掉的代码（\codeat{inferenceLM/engine/lm\_engine.py}{101}
+和 \codeat{}{107}）。"睡 0 秒"读起来像是没有作用。要讲清它，得先把两件都叫 async 的事分开。
+
+\cnemph{第一层，GPU async}：PyTorch 的 op 是 eager 执行 + 异步下发，\code{y = x @ x} 把 kernel
+塞进队列就立刻返回一个 handle，CPU 继续往下跑；真正的等待发生在\cnemph{同步点}，比如
+\code{.item()}、\code{.cpu()}。\cnemph{第二层，Python asyncio}：单线程 event loop 上的
+cooperative scheduling，一个 coroutine 能不能推进与 GPU 完全无关，只取决于有没有别的 coroutine
+通过 await 把控制权还回来。retro §2.3 把这两层分开之后列了三条一旦混淆就会得出的错误结论：
+"用了 asyncio 所以 GPU/CPU 就 overlap 了"、"在 loop 里 yield 一下就能减少 GPU wait"、
+"async inference 本身就意味着 compute parallelism"。三条都不成立。
+
+\paragraph{它做了什么。}
+只有一件事：把控制权交还给 event loop 一次。\code{asyncio.sleep(0)} 被特殊处理——不注册定时器，
+就是一次裸 yield，让 event loop 跑一轮已经 ready 的回调然后立刻回来。落到这个系统里，"别的
+coroutine"具体指 \codeat{inferenceLM/request\_receiver/request\_receiver.py}{59} 那句
+\codeb{await self.pending_queue.put(...)}。所以这两行买到的是：\cnemph{decode 每走一步，新
+request 有一次进入 queue 的机会}。retro §1.2 称之为 scheduling contract。
+
+\paragraph{它做不到什么。}
+不让 CPU 和 GPU 重叠。看顺序：yield 在 \code{prefill()} 返回之后、\code{.item()} 之前。
+event loop 拿到控制权的那一刻，GPU 的活刚下发完还没被同步；此时别的 coroutine 能跑，但只能跑到
+\cnemph{它们自己的下一个 await}。控制权转回来后 \code{.item()} 照样从头 block 到 GPU 算完，
+这段时间 event loop 上\cnemph{谁也跑不了}。整个 step 里其他 coroutine 拿到的是一个短窗口，
+不是一段与 GPU 并行的时间。
+
+ADR-001 给这个状态起的名字是 \cnemph{Weak Async}（\codeat{docs/decisions/adr001-inference.md}{32}）：
+"不是真正的 async GPU execution——CPU 在 \code{tensor.item()} 时仍会 block 等 GPU。真正的
+GPU/CPU 并行需要 CUDA stream 或 event-based sync，defer 到 Week 3/4。"而这份 ADR 的 Status
+至今仍是 \cnemph{Proposed}（\codeat{docs/decisions/adr001-inference.md}{3}），同目录的 ADR-000
+是 Accepted，整个 \code{docs/decisions/} 里只有这一份没升级。它诚实地反映了状态：这个 async
+方案的作者自己没有把它定案。
+
+还有一件必须说清的：\cnemph{今天所有测试都在 CPU 上跑}，而 CPU 上没有异步 kernel 下发，
+\code{.item()} 不 block 任何东西。也就是说在当前测试环境里，这两句 \code{sleep(0)} 的全部效果
+就是一次纯粹的 yield，上面关于"GPU 还没算完"的讨论一行都还没被真实验证过。
+
+\begin{examplebox}{sleep_zero_race}{用 draft.py 把 event loop 被占住这件事测出来}
+仓库根目录有一个 \codet{draft.py}，就是为这件事写的草稿：一个每 50\,ms 打时间戳的
+\codet{ticker}，加两个假的 inference 协程。
+
+\lstinputlisting[style=hlnum, firstline=3, lastline=21, firstnumber=3]%
+  {../../draft.py}
+
+\codet{main()} 里 v2 那一行是\cnemph{注释掉的}，所以这个实验要跑\cnemph{两次}，中间手工改一行：
+
+\lstinputlisting[style=hlnum, firstline=23, lastline=28, firstnumber=23]%
+  {../../draft.py}
+
+第一次直接跑；第二次把第 24 行注释掉、第 27 行取消注释，再跑一次。（注意它写的是
+\codet{device='mps'} 不是 CUDA——这是一台 Mac 上的草稿。没有 MPS 的机器要把两处改成
+\codet{'cpu'}，但那样两个版本几乎没有差别，因为 CPU 上不存在"kernel 已下发但没算完"这个状态。）
+
+本机实测（Apple Silicon + MPS，各跑两遍，只记 tick 间隔；标称 0.05\,s）：
+
+\begin{lstlisting}[style=hlrepl]
+# v1: sleep(0) + (*@\rmfamily 直接@*) .item()
+gaps: [0.15, 0.10, 0.05, 0.05, ... 0.05]   max 0.15   total 1.12 / 1.13
+# v2: to_thread
+gaps: [0.06, 0.05, 0.05, 0.05, ... 0.05]   max 0.06   total 0.98 / 0.97
+# (*@\rmfamily 标称：19 个间隔 $\times$ 0.05 = 0.95@*)
+\end{lstlisting}
+
+差别是真的，但比 \codet{draft.py} 里那句注释（"看 ticker 在 v1 期间几乎完全停 tick"）小得多：
+只有开头两三个 tick 被拖长。原因是 10 次 matmul 在这台机器上总共只要 0.2 秒左右。把
+\codet{range(10)} 改成 \codet{range(100)}，信号就没有歧义了：
+
+\begin{lstlisting}[style=hlrepl]
+# v1, range(100):  gaps [0.14, 0.11, 0.10, 0.11, ... 0.11]   total 2.05
+# v2, range(100):  gaps [0.06, 0.05, 0.05, 0.05, ... 0.05]   total 0.97
+\end{lstlisting}
+
+v1 的每一个间隔都从 0.05 涨到 0.11——ticker 想每 50\,ms 醒一次，但每次醒来前都要排队等
+\codet{.item()} 把 event loop 还回来，整条 trace 被拖长一倍多。v2 全程纹丝不动。
+
+\cnemph{这个实验不能说明什么}——这一段比上面的数字更重要：
+
+\begin{itemize}[leftmargin=1.4em, topsep=3pt, itemsep=1pt]
+\item 它测的是 \codet{4096} 见方的 MPS matmul，\cnemph{不是 GPT-2 的 forward}。真实 decode step
+      的计算量小得多、kernel 数量多得多，阻塞时长量级完全不同，数字\cnemph{不能}外推到
+      \codet{LMEngine}。
+\item 它说明的是\cnemph{event loop 被占住}，\cnemph{不说明 GPU 利用率}。两个版本下 GPU 做的
+      matmul 一样多、耗时一样；v2 没让 GPU 更忙，只是让另一个 coroutine 不再被拖。把它读成
+      "v2 提升了吞吐"是错的。
+\item v2 为什么有效，依赖 PyTorch 在等待时释放 GIL 这一层行为。\cnemph{这一层本实验没有验证}，
+      只是我们相信的解释。
+\item \codet{draft.py} 不在 \codet{tests/} 里，没有断言、没有 CI，两次运行之间要手工改一行。
+      它是 scratch，不是回归测试。每个数字都是单次测量，没有重复、没有方差、没有控制后台负载。
+\end{itemize}
+\end{examplebox}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+ & \codet{fake\_inference\_v1} & \codet{fake\_inference\_v2} \\
+\midrule
+让出方式 & \codet{await asyncio.sleep(0)} & \codeb{await asyncio.to_thread(...)} \\
+         & （裸 yield，不设定时器） & （真正挂起，直到线程返回） \\
+让出位置 & kernel 下发后、\codet{.item()} 前 & \codet{.item()} 整个搬进工作线程 \\
+ticker 是否继续 & 只在那一瞬；\codet{.item()} 期间停 & 全程继续 \\
+实测 tick 间隔 & 0.15 / 0.10 后回落（\codet{range(10)}） & 0.05--0.06 \\
+               & 全程 0.10--0.11（\codet{range(100)}） & 全程 0.05（\codet{range(100)}） \\
+CPU/GPU 重叠 & 不产生 & event loop 线程与等待重叠 \\
+代价 & 零：无线程、无额外同步 & 每步一次线程切换；隐含依赖 PyTorch \\
+     &  & 等待时释放 GIL；线程池大小成为新调优面 \\
+今天用的 & 是（lm\_engine.py:101, :107） & 否 \\
+\bottomrule
+\end{tabular}
+\caption{\codet{draft.py} 里两个假 inference 协程的对照。数字是本机 Apple Silicon + MPS 的单次
+  实测，标称 tick 间隔 0.05\,s。注意"代价"一行：v2 不是免费的升级，它把一个隐含依赖引进了
+  正确性论证里。}
+\label{tab:draft-two-coros}
+\end{table}
+
+\begin{checkpoint}{sleep_zero_semantics}{sleep(0) 到底做了什么}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item \codet{await asyncio.sleep(0)} 和 \codeb{await asyncio.sleep(0.001)} 在 event loop 里
+        的行为差别是什么？
+  \item 在 \codet{inference()} 里，这一句买到的好处是什么？指名道姓说出是哪个 coroutine 的
+        哪一行因此有了机会。
+  \item 把这两句删掉，\codet{tests/} 里哪个测试会失败？
+\end{enumerate}
+\hint 第三问要小心：先想清楚"行为变差"和"测试变红"是不是同一件事。
+\ifshowanswers
+\tcblower
+\answer (a) \codet{sleep(0)} 是特例，不注册定时器，只做一次裸 yield：event loop 跑一轮
+\cnemph{已经 ready} 的回调就回来。\codet{sleep(0.001)} 会注册定时器，当前 coroutine 至少 1\,ms
+之后才可能被恢复——在一个每 token 都走一次的循环里，那是白加了一毫秒的下限。
+
+(b) 买到的是 \codeat{inferenceLM/request\_receiver/request\_receiver.py}{59} 的
+\codeb{await self.pending_queue.put(tokenized_data)} 有机会推进，也就是正在生成的 request
+不会把新 request 的接收饿死。
+
+(c) \cnemph{一个都不会失败。} 今天没有任何测试断言 event loop 的公平性。
+\codet{tests/data\_flow\_test.py} 里 \codeb{test_inference_running_while_input_new_requests}
+看起来最接近，但它在两次提交之间 \codet{await asyncio.sleep(0.5)}
+（\codeat{tests/data\_flow\_test.py}{74}），半秒足够整个 inference 跑完，所以就算 inference
+独占 event loop 它也会绿。这正是 \codet{draft.py} 存在的理由——它测的东西还没有变成断言。
+\whereincode \codeat{inferenceLM/engine/lm\_engine.py}{101}、\codeat{}{107}、
+\codeat{docs/retro/week2-retro.md}{57--104}
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{weak_async_alternative}{Weak Async 之外的三条路}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item "Weak" 弱在哪里？给一个可以被观测到的判据，不要形容词。
+  \item 举出两种能做到真正 CPU/GPU 重叠的做法，各说一个代价。
+  \item 这份 ADR 的 Status 是什么？和 ADR-000 一样吗？说明了什么？
+\end{enumerate}
+\hint 第一问的判据可以是"存在一段时间，event loop 上没有任何 coroutine 能推进"。
+\ifshowanswers
+\tcblower
+\answer (a) 弱在让出发生在\cnemph{同步点之前}，同步本身仍然独占线程。可观测判据：让另一个
+coroutine 定时打点，若打点间隔明显大于设定值，就说明存在一段"event loop 上谁也跑不了"的时间——
+\codet{draft.py} 测的正是这个（\codet{range(100)} 时 0.05 变成 0.11）。
+
+(b) 其一，把阻塞的同步搬到线程池（\codet{asyncio.to\_thread}，即 v2），代价是每步一次线程切换，
+且正确性依赖 PyTorch 在等待时释放 GIL。其二，CUDA event + 非阻塞轮询：下发后 \codet{record()}
+一个 event，再 \codeb{while not event.query(): await asyncio.sleep(0)}，代价是轮询烧 CPU 且
+需要真正管理 stream，复杂度高一个量级。ADR-001 把这两类统称为 "CUDA stream 或 event-based
+sync"，defer 到 Week 3/4。
+
+(c) ADR-001 是 \codet{Proposed}（\codeat{docs/decisions/adr001-inference.md}{3}），ADR-000 是
+\codet{Accepted}（\codeat{docs/decisions/adr000-request.md}{3}）；\codet{docs/decisions/} 下只有
+这一份停在 Proposed。说明这个决定被实现了、被依赖了、被写进了测试，但从没有被正式接受——代码
+先跑起来了，判断还悬着。
+\whereincode \codeat{docs/decisions/adr001-inference.md}{3}、\codeat{}{32}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{run() 是 launcher 不是 runner}
+\label{sec:a-loop-run}
+
+\lstinputlisting[style=hlnum, firstline=61, lastline=72, firstnumber=61]%
+  {../../inferenceLM/engine/inference_engine.py}
+
+\code{run()} 没有 \code{async}，返回一个 \code{asyncio.Task}。它不执行 engine loop，它
+\cnemph{注册} engine loop 然后立刻返回。retro §1.3 把这句话说成一条接口设计原则："一个
+function 的 return behavior，必须和它在系统里的角色一致"——launcher 就该 non-blocking return，
+terminal execution 才该 block 到完成，不能名字叫 \code{run()} 而语义混在中间。
+
+反例是写成 \codeb{async def run(self): await self._keep_get_request_and_inference()}。
+ADR-001 对它的分析在 \codeat{docs/decisions/adr001-inference.md}{84}：\code{run()} 永远不返回，
+caller 拿不回控制权，于是\cnemph{连 \code{kill()} 都调不到}——因为 \code{kill()} 必须写在
+\code{run()} 的下一行，而那一行永远执行不到。这是一个自锁：唯一能停下循环的开关，被循环本身
+挡在了后面。落到测试里，正确的形态是固定的三步（launch、等完成信号、收尾），在 \code{tests/}
+里出现了六次：\codeb{inference_engine_test.py} 的 :55、:90、:121，\code{data\_flow\_test.py}
+的 :35 和 :65，\codeb{trained_model_integration_test.py} 的 :123。
+
+\begin{misconception}{run() 返回 Task 是为了以后能调用 kill()}
+ADR-001 论证 \codet{run()} 必须返回 Task 时用的理由是"否则我们根本没有机会去调用
+\codet{kill()}"。所以这个设计的收益就是：caller 拿回控制权之后可以在合适的时机
+\codet{engine.kill()}，让循环干净地退出。
+\end{misconception}
+
+论证成立，但兑现方式和它说的不一样，有两处对不上。第一，\code{kill()} 在整个仓库里\cnemph{没有
+任何调用点}——\code{grep -rn "kill("} 只命中它自己的定义
+（\codeat{inferenceLM/engine/inference\_engine.py}{68}），六处收尾用的全是 \code{task.cancel()}。
+所以真实收益不是"能调 \code{kill()}"，是\cnemph{caller 拿到了一个可以 cancel 的句柄}，那是
+\code{asyncio.Task} 给的。第二，就算调了也停不下来：\code{while self.open} 的条件只在处理完一条
+request 之后才重新求值，而循环体第一句是 \codeb{await self.pending_queue.get()}，队列空时就阻塞
+在那里。所以 \code{kill()} 之后循环仍挂在 \code{get()} 上，要等\cnemph{下一条 request 进来并被
+处理完}才会退出——对一个"关掉引擎"的接口来说，这语义是反的：越空闲越关不掉。
+
+这不是没被发现：BACKLOG.md 的 P0 第一条就是 engine lifecycle management，要求明确的 shutdown
+机制（cancel pending tasks + drain queue），并点名目前"依赖 pytest event loop cleanup 做兜底"。
+（那一条把协程名写成 \code{keep_fetching_requests}，代码里实际叫
+\codeb{_keep_get_request_and_inference}——又一处文档漂移。）
+
+\begin{checkpoint}{run_returns_task}{把 run() 改成 async def，哪个测试会挂死}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 把 \codet{run()} 改成 \codet{async def} 并在里面 await engine loop，但\cnemph{测试一个
+        字不改}（还是 \codeb{task = inference_engine.run()}）。会发生什么？在哪一行卡住？
+  \item 如果同时把测试改成 \codeb{await inference_engine.run()}，又会怎样？
+  \item 这两种失败在 pytest 输出里长得一样吗？哪一种更难查？
+\end{enumerate}
+\hint 一个 \codet{async def} 被调用但没有被 await，函数体里的第一行执行了吗？
+\ifshowanswers
+\tcblower
+\answer (a) \codet{run()} 返回一个\cnemph{协程对象}，函数体一行都没跑——\codet{self.open} 还是
+\codet{False}，也没有任何 task 被注册。于是没有消费者，
+\codeat{tests/inference\_engine\_test.py}{56} 的 \codeb{await pending_queue.join()} 永远等不到
+\codet{task\_done()}，测试挂死在这一行；后面的 \codet{task.cancel()} 也会炸（协程对象没有
+\codet{cancel()}），但那行根本执行不到。同样的挂死会发生在
+\codeb{inference_engine_test.py} 的 :91 和 :122、\codet{data\_flow\_test.py} 的 :36 和 :77、
+\codeb{trained_model_integration_test.py} 的 :124。
+
+(b) 挂在 \codeb{await inference_engine.run()} 这一行。循环真的跑起来了，request 也会被处理完，
+但循环永远不退出——它阻塞在 \codeat{inferenceLM/engine/inference\_engine.py}{45} 等下一条。
+后面的 \codet{join()} 和 \codet{cancel()} 一行都执行不到。这正是 ADR-001 描述的自锁。
+
+(c) 都是超时，但 (a) 更难查：症状在 \codet{join()} 那一行，病因在 \codet{run()} 的定义里，中间
+没有任何报错；Python 顶多在解释器退出时补一句 \codeb{RuntimeWarning: coroutine ... was never
+awaited}，很容易被 pytest 输出淹没。(b) 至少卡在你刚改的那一行上。
+\whereincode \codeat{inferenceLM/engine/inference\_engine.py}{61--66}、
+\codeat{tests/inference\_engine\_test.py}{55--57}、
+\codeat{docs/decisions/adr001-inference.md}{84}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{try / finally 与 task\_done()}
+\label{sec:a-loop-task-done}
+
+\lstinputlisting[style=hlnum, firstline=43, lastline=59, firstnumber=43]%
+  {../../inferenceLM/engine/inference_engine.py}
+
+\code{asyncio.Queue} 内部维护一个 \code{unfinished_tasks} 计数：\code{put()} 加一，
+\code{task_done()} 减一，\code{join()} 一直等它归零。这个计数和"队列里还有没有元素"是
+\cnemph{两件事}——元素被 \code{get()} 走了计数并不减少，必须显式 \code{task_done()}。
+
+于是：一条 request 中途抛异常而 \code{task_done()} 没被调用，\code{unfinished_tasks} 永远差一个，
+\code{join()} 永远不返回。而 \code{join()} 是所有测试等待"处理完了"的唯一手段。症状不是"这一条
+失败了"，是\cnemph{整个测试套件挂死}。BACKLOG.md 有一条 \code{[BUG]} 专门记着这件事
+（\codeat{BACKLOG.md}{27--32}），理由写得很准。有意思的是这一条今天\cnemph{还挂在 P0 未完成区}，
+而代码（\codeat{inferenceLM/engine/inference\_engine.py}{58--59}）已经实现了它——和
+\secref{sec:a-shape-dead-enum} 那个枚举是同一类文档漂移，只是方向相反：那边文档超前于代码，
+这边代码超前于文档。
+
+测试是有的，走了两条不同路径：\codeb{test_inference_engine_reject_prompt_equals_max_len}
+（\codeat{tests/inference\_engine\_test.py}{70}）走真实异常，
+\codeb{test_inference_engine_handle_lm_engine_exception}
+（\codeat{tests/inference\_engine\_test.py}{99}）用 \code{AsyncMock} 换掉
+\code{LMEngine.inference}。两者都在异常之后照常 \codeb{await pending_queue.join()}——能返回，
+就证明 \code{finally} 生效了。
+
+\paragraph{代价：这个 except 块吞掉了很多东西。}
+\code{except Exception} 之后只有两件事：置 \code{FAILED}，然后 \code{print} 一行
+（\codeat{inferenceLM/engine/inference\_engine.py}{57}）。代价是：\code{print} 不是 logger，
+没有级别、时间戳和结构化字段；没有 traceback，只有 \code{str(e)}，一个 \code{KeyError} 打出来
+是个裸 key，看不出它来自 \codeat{inferenceLM/engine/inference\_engine.py}{48} 还是模型内部；
+异常类型全部拍平，OOM 和 \code{NotImplementedError} 都是同一个 \code{FAILED}；错误信息没有写回
+request（\code{RequestData} 上没有 error 字段，见 \secref{sec:a-shape} 的表
+\ref{tab:field-owners}），用户能看到的只有 \code{status=4} 和空的 \code{generated_tokens}；
+\cnemph{FAILED 之后没人再看它}——没有重试、没有 dead-letter、没有告警。
+
+顺带点出一处运气：\code{task.cancel()} 引发的 \code{asyncio.CancelledError} 在 Python 3.8 之后
+继承 \code{BaseException} 而不是 \code{Exception}，所以\cnemph{不会}被这个 \code{except} 抓住，
+测试收尾时不会有 request 被误标成 \code{FAILED}。代码里没有注释说明这一点——它是对的，但不是被
+论证过的对。
+
+\begin{checkpoint}{task_done_finally}{为什么 task\_done() 必须在 finally 里}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 把 \codet{task\_done()} 挪到 \codet{try} 块的最后一行（成功路径上），失败的 request 会
+        导致什么？症状出现在哪个函数里？
+  \item \codet{queue.task\_done()} 和"队列里还有没有元素"是同一件事吗？
+  \item 这个 \codet{except} 块除了置 \codet{FAILED}，还应该做什么？列出三件今天没做的。
+\end{enumerate}
+\hint 想清楚 \codeb{await pending_queue.join()} 到底在等一个什么值归零。
+\ifshowanswers
+\tcblower
+\answer (a) \codet{unfinished\_tasks} 永远差一个，\codet{join()} 永不返回。症状出现在
+\cnemph{调用方}——测试卡在 \codet{join()} 那一行直到超时，而 engine 自己看起来一切正常（它已经
+去处理下一条了）。典型的"病因和症状不在同一个模块"。
+
+(b) 不是。\codet{get()} 只把元素取走，计数不变；只有显式 \codet{task\_done()} 才减一。所以队列
+可以是空的而 \codet{join()} 仍然阻塞——\secref{sec:a-shape} 的 \codet{request\_lifecycle\_trace}
+里能直接看到：T2 时 \codet{qsize} 已经是 0，但 \codet{join()} 还没返回。
+
+(c) 任选三件：用 logger 并打 traceback；把错误信息写回 \codet{RequestData}（需要先加一个 error
+字段）；按异常类型分流（OOM 可重试，\codet{NotImplementedError} 不可重试，\codet{KeyError} 是
+内部 bug 该告警）；加 metrics 计数；把失败的 request 送进 dead-letter 结构以便事后检查。
+\whereincode \codeat{inferenceLM/engine/inference\_engine.py}{49--59}、
+\codeat{tests/inference\_engine\_test.py}{99--126}、\codeat{BACKLOG.md}{27--32}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{分层：LMEngine 知道什么，不知道什么}
+\label{sec:a-loop-layering}
+
+retro §1.5 把这一周的分层结论写成两张清单：\code{LMEngine} 只做 pure compute，
+\code{InferenceEngine} 负责 orchestration。理由不是审美，是"一旦 \code{LMEngine} 开始知道
+request lifecycle，coupling 会快速扩散"——而扩散的第一步通常极其自然："inference 做完了顺手把
+status 改成 DONE"，一行代码，看起来还省事。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{ll}
+\toprule
+\codet{LMEngine} 知道 & \codet{LMEngine} 不知道 \\
+\midrule
+token id 列表（lm\_engine.py:95）      & \codet{request\_id}（对象在手，从不读） \\
+prompt 长度（\codet{len()}，:105）      & \codet{RequestStatus}（import 了，从不用） \\
+\codet{max\_length}（形参，:73）         & \codet{request\_store} 的存在 \\
+\codet{model} 与 \codet{model.config}（:89, :119） & \codet{pending\_queue} / \codet{task\_done()} \\
+上一步的 token 与 KV（:106）            & 谁在等它、跑完之后谁写回 \\
+何时该停（:113--119）                   & 失败之后该怎么办 \\
+\bottomrule
+\end{tabular}
+\caption{\codet{LMEngine} 的知识边界，逐条 \codet{grep} 核对。右列第一行值得强调：
+  \codet{inference()} 收到的是完整的 \codet{TokenizedData}，\codet{request\_id} 就挂在上面伸手
+  可及，但代码里一次都没读过——\codeb{grep -n "request_id" lm_engine.py} 零命中。边界不是靠
+  "拿不到"守住的，是靠"拿得到也不碰"守住的。}
+\label{tab:lmengine-knows}
+\end{table}
+
+这条边界在\cnemph{行为上}守住了：\code{lm_engine.py} 里没有出现过 \code{request_id}、
+\code{request_store} 或任何 queue，状态转移三处全在 \code{inference_engine.py}（:48、:54、:56）。
+但在\cnemph{声明上}漏了——\codeat{inferenceLM/engine/lm\_engine.py}{5--6} 那两行
+import 了 \code{RequestData} 和 \code{RequestStatus}，两个都\cnemph{从未被使用}：
+
+\begin{lstlisting}[style=hlshell]
+$ uv run ruff check inferenceLM/engine/lm_engine.py --select F401 --output-format=concise
+lm_engine.py:5:38: F401 `inferenceLM.data.request.RequestData` imported but unused
+lm_engine.py:6:45: F401 `inferenceLM.data.request_status.RequestStatus` imported but unused
+Found 4 errors.   # (*@\rmfamily 另两条是 \texttt{AutoTokenizer}(:2) 和 \texttt{typing.Dict}(:4)@*)
+\end{lstlisting}
+
+（同一条命令跑 \code{inference_engine.py} 是干净的。）这四行不影响任何行为，但它们让 import
+清单说了假话：一个"不知道 request status"的模块，头上写着它 import 了 \code{RequestStatus}。
+实际的风险是，下一个来改这个文件的人（很可能是三个月后的自己）看到这行 import，会得出"这里本来
+就可以碰 status"的结论，然后顺手写下 retro §1.5 警告的那一行。\code{ruff} 已经是 dev
+dependency，只是还没有任何 CI 或 pre-commit 在跑它。
+
+\begin{checkpoint}{layer_ownership}{status 更新该归哪一层}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item "inference 跑完把 status 改成 DONE"这行写在 \codet{LMEngine} 里会怎样？列出两个具体
+        后果，不要只说"耦合变高"。
+  \item \codet{LMEngine.inference()} 的入参里其实有 \codet{request\_id}。既然拿得到，说它
+        "不知道 request id"是不是自欺欺人？
+  \item \codet{lm\_engine.py} import 了 \codet{RequestStatus} 却从不使用。这只是一个 lint 警告，
+        还是一个分层问题？
+\end{enumerate}
+\hint 第一问从"这个模块以后还能不能被单独测试/复用"入手。
+\ifshowanswers
+\tcblower
+\answer (a) 其一，\codet{LMEngine} 必须持有 \codet{request\_store} 才能改 status，于是
+\codet{\_\_init\_\_} 多一个参数，所有单测都要先造一个 store——今天
+\codeat{tests/lm\_engine\_test.py}{38} 只要 \codet{LMEngine(model)} 一行。其二，
+\secref{sec:a-batching} 做 batching 时一次 forward 对应多条 request，"跑完改 status"会变成
+"跑完改一批 status"，而这批是谁由 scheduler 决定——compute layer 会被迫理解调度策略。retro §1.5
+的"下周注意事项"就是这条：不要把 batch metadata 塞进 \codet{LMEngine}。
+
+(b) 不是自欺欺人，但要把话说准：边界不是"拿不到"，是"拿得到也不碰"，而且这一条\cnemph{可核实}
+——\codeb{grep -n "request_id" inferenceLM/engine/lm_engine.py} 零命中。更强的版本是让
+\codet{inference()} 只收 \codet{list[int]}，那样连拿都拿不到；今天没这么做，是因为
+\codet{TokenizedData} 还兼着"用 \codet{\_\_len\_\_} 报 prompt 长度"的职责
+（\secref{sec:a-shape-two-classes}）。所以这里的边界确实靠纪律，不靠类型。
+
+(c) 两者都是，后者更值得修。lint 警告是症状；真正的问题是 import 清单是一份公开的依赖声明，
+它现在声明了一条不存在的依赖。修法是删掉那两行——一秒钟的事，但需要有人在 CI 里跑
+\codet{ruff}，今天还没有。
+\whereincode \codeat{inferenceLM/engine/lm\_engine.py}{5--6}、
+\codeat{inferenceLM/engine/inference\_engine.py}{48}、\codeat{}{54}、\codeat{}{56}、
+\codeat{docs/retro/week2-retro.md}{233--290}
+\fi
+\end{checkpoint}
+
+\begin{tipbox}{在 CPU 上跑完整的 engine 测试}
+这一章涉及的测试都不需要 GPU。模型是 \codet{gpt2}（124M），fixture 是 module 级的，每个文件
+只加载一次权重：
+
+\begin{lstlisting}[style=hlshell]
+uv run pytest tests/lm_engine_test.py -q --durations=5
+uv run pytest tests/inference_engine_test.py tests/request_receiver_test.py -q
+\end{lstlisting}
+
+本机实测（Apple Silicon，纯 CPU 路径，权重已缓存）：第一条 \codet{5 passed in 24.09s}，最慢的
+\codet{[long\_seq]} 占 \codet{16.65s}；第二条 \codet{7 passed in 25.79s}。\codet{long\_seq} 把
+\codet{max\_length} 设成 1024（\codeat{tests/lm\_engine\_test.py}{20}），跑到模型上下文上限，
+而且 \codet{generate()} 和我们的 loop 各跑一遍。想更快就把那个 1024 临时改小，但不要删掉它——
+它是唯一会走到 \codet{n\_positions} 边界的 case。首次运行会下载 \codet{gpt2} 权重（约 500\,MB）。
+
+\resources CPU 即可，无需 GPU/MPS；两条命令合计约 50 秒（权重已缓存）。\codet{draft.py} 的实验
+需要 MPS 或 CUDA 才有意义，见 \codet{sleep\_zero\_race}。
+\end{tipbox}
+
+这一章的每个决定单独看都可以说"这样也行，那样也行"。检验在 \secref{sec:a-batching}：把一条
+request 变成一批的时候，只有 loop 体归自己所有、只有 prefill 和 decode 是两个能分别调度的单位、
+只有每个 step 之间有一个真实的让出点，continuous batching 才写得下去。这一章的代码是那一章的
+前提，不是它的雏形。

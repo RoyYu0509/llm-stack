@@ -1,0 +1,60 @@
+{
+  "dataset_mode": "tinystories",
+
+  "tinystories_train_url": "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-train.txt",
+  "tinystories_valid_url": "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-valid.txt",
+
+  "raw_train_text": "data/ts_train.txt",
+  "raw_valid_text": "data/ts_valid.txt",
+
+  "vocab_path": "data/bpe_tokenizer/vocab.pkl",
+  "merges_path": "data/bpe_tokenizer/merges.pkl",
+  "tokenizer_num_processes": 20,
+  "tokenizer_vocab_size": 300,
+
+  "tokenized_train": "data/tokenized/ts_train_smoke.npy",
+  "tokenized_valid": "data/tokenized/ts_valid_smoke.npy",
+  "build_dataset_num_workers": 20,
+
+  "model": {
+    "vocab_size": 300,
+    "context_length": 128,
+    "num_layers": 2,
+    "d_model": 128,
+    "num_heads": 4,
+    "d_ff": 512,
+    "rope_theta": 10000.0
+  },
+
+  "training": {
+    "tr_batch_size": 8,
+    "val_batch_size": 8,
+    "val_bat_num": 2,
+    "epochs": 1,
+    "lr": 0.0006,
+    "weight_decay": 0.01,
+    "beta1": 0.9,
+    "beta2": 0.999,
+    "adam_eps": 1e-8,
+    "grad_clip": 1.0,
+    "max_iters": 8,
+    "warmup_iters": 2,
+    "dtype": "float32",
+    "compile": false,
+    "seed": 0
+  },
+
+  "checkpointing": {
+    "checkpoint_dir": "checkpoints_smoke",
+    "log_interval": 1,
+    "eval_interval": 4,
+    "checkpointing_interval": 6
+  },
+
+  "wandb": {
+    "project": "Train_Transformer_LM-smoke"
+  },
+
+  "attention_kernel": "scaled_dot_prod_attention",
+  "ddp_wrapper": "none"
+}

@@ -1,0 +1,110 @@
+@inproceedings{vaswani2017attention,
+  title     = {Attention Is All You Need},
+  author    = {Vaswani, Ashish and Shazeer, Noam and Parmar, Niki and Uszkoreit, Jakob
+               and Jones, Llion and Gomez, Aidan N. and Kaiser, {\L}ukasz and Polosukhin, Illia},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2017},
+  url       = {https://arxiv.org/abs/1706.03762},
+}
+
+@inproceedings{yu2022orca,
+  title     = {Orca: A Distributed Serving System for Transformer-Based Generative Models},
+  author    = {Yu, Gyeong-In and Jeong, Joo Seong and Kim, Geon-Woo and Kim, Soojeong and Chun, Byung-Gon},
+  booktitle = {16th USENIX Symposium on Operating Systems Design and Implementation (OSDI)},
+  year      = {2022},
+  note      = {Introduces iteration-level (continuous) batching},
+}
+
+@inproceedings{kwon2023vllm,
+  title     = {Efficient Memory Management for Large Language Model Serving with PagedAttention},
+  author    = {Kwon, Woosuk and Li, Zhuohan and Zhuang, Siyuan and Sheng, Ying and Zheng, Lianmin
+               and Yu, Cody Hao and Gonzalez, Joseph E. and Zhang, Hao and Stoica, Ion},
+  booktitle = {Proceedings of the 29th Symposium on Operating Systems Principles (SOSP)},
+  year      = {2023},
+  url       = {https://arxiv.org/abs/2309.06180},
+}
+
+@inproceedings{dao2022flashattention,
+  title     = {FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness},
+  author    = {Dao, Tri and Fu, Daniel Y. and Ermon, Stefano and Rudra, Atri and R{\'e}, Christopher},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2022},
+  url       = {https://arxiv.org/abs/2205.14135},
+}
+
+@inproceedings{sennrich2016bpe,
+  title     = {Neural Machine Translation of Rare Words with Subword Units},
+  author    = {Sennrich, Rico and Haddow, Barry and Birch, Alexandra},
+  booktitle = {Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (ACL)},
+  year      = {2016},
+  url       = {https://arxiv.org/abs/1508.07909},
+}
+
+@inproceedings{xiong2020prenorm,
+  title     = {On Layer Normalization in the Transformer Architecture},
+  author    = {Xiong, Ruibin and Yang, Yunchang and He, Di and Zheng, Kai and Zheng, Shuxin
+               and Xing, Chen and Zhang, Huishuai and Lan, Yanyan and Wang, Liwei and Liu, Tie-Yan},
+  booktitle = {Proceedings of the 37th International Conference on Machine Learning (ICML)},
+  year      = {2020},
+  url       = {https://arxiv.org/abs/2002.04745},
+}
+
+@misc{hf_transformers,
+  title        = {Transformers: Generation with LLMs},
+  author       = {{Hugging Face}},
+  howpublished = {\url{https://huggingface.co/docs/transformers/llm_tutorial}},
+  note         = {Documentation for \texttt{generate()} and \texttt{past\_key\_values}},
+}
+
+@misc{python_asyncio,
+  title        = {asyncio --- Asynchronous I/O},
+  author       = {{Python Software Foundation}},
+  howpublished = {\url{https://docs.python.org/3/library/asyncio.html}},
+}
+
+@misc{cs336,
+  title        = {CS336: Language Modeling from Scratch},
+  author       = {{Stanford University}},
+  year         = {2025},
+  howpublished = {\url{https://stanford-cs336.github.io/}},
+  note         = {Assignment 1 (Basics) 与 Assignment 2 (Systems) 是本项目的原始教材},
+}
+
+@misc{repo_design,
+  title        = {v0-lm-backend: Design Document},
+  author       = {Yu, Yifan},
+  year         = {2026},
+  howpublished = {\path{docs/designs/DESIGN.md}},
+  note         = {Approved 2026-04-09; batching 与 scheduling 部分已被 week3-discussion 取代},
+}
+
+@misc{repo_adr000,
+  title        = {ADR-000: Request 与 TokenizedData 的设计结构},
+  author       = {Yu, Yifan},
+  year         = {2026},
+  howpublished = {\path{docs/decisions/adr000-request.md}},
+  note         = {Accepted 2026-04-11},
+}
+
+@misc{repo_adr001,
+  title        = {ADR-001: Inference Engine 的设计},
+  author       = {Yu, Yifan},
+  year         = {2026},
+  howpublished = {\path{docs/decisions/adr001-inference.md}},
+  note         = {Proposed 2026-04-15，至今未升 Accepted},
+}
+
+@misc{repo_week2retro,
+  title        = {Week 2 Retrospective},
+  author       = {Yu, Yifan},
+  year         = {2026},
+  howpublished = {\path{docs/retro/week2-retro.md}},
+}
+
+@misc{repo_week3,
+  title        = {Week 3 Design Discussion Log},
+  author       = {Yu, Yifan},
+  year         = {2026},
+  howpublished = {\path{docs/progress/week3-discussion.md}},
+  note         = {2026-04-21，batching 与 scheduling 的现行 SSOT},
+}

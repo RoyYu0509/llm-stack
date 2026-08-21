@@ -1,0 +1,730 @@
+\section{预训练：0.19B / 492M token，以及一次诊断错误}
+\label{sec:b-pretrain}
+
+难的不是写训练循环。训练循环三个月前就写好了，Triton FlashAttention kernel 和自研 bucketed DDP 也早就跑通过。这一章真正的题目是另一个：
+
+\begin{quote}
+在一个\cnemph{固定 7 小时、两张 3090、无人值守}的预算里，怎么保证这 7 小时不是在乘 NaN。
+\end{quote}
+
+这个约束会把很多平时无所谓的东西变成阻塞项。一个只在第 250 步之后才发作的初始化 bug，平时是「跑一次重跑一次」；在这里它是「烧掉半个预算」。一个只写进 W\&B 而不打到 stdout 的 loss，平时是风格问题；在这里它意味着你 SSH 上去 \code{tail} 日志，看到的只有一根 tqdm 进度条，而模型其实已经发散了 300 步。
+
+\code{real_pretrain_config.json} 里有八个 \code{_NOTE_*} 字段，每一条都是一次这样的教训被写回配置文件。本章按主题把它们展开：
+
+\begin{table}[t]
+\centering
+\begin{tabular}{lll}
+\toprule
+\codeb{real_pretrain_config.json} 字段 & 一句话 & 本章 \\
+\midrule
+\codeb{_NOTE_approx_param_count}  & untied head + SwiGLU 三矩阵，参数量算错两次 & \secref{subsec:params} \\
+\codet{\_NOTE\_tokenizer\_swap}       & 自训 BPE 要 20 小时，换 tiktoken 花 92 秒   & \secref{subsec:tokenizer} \\
+\codet{\_NOTE\_batch\_size\_oom}      & 漏算 logits 张量的 6.6GB                    & \secref{subsec:oom} \\
+\codet{\_NOTE\_divergence\_fix}       & 第一次诊断：缺 LR warmup（\cnemph{诊断错了}）& \secref{subsec:nan} \\
+\codet{\_NOTE\_ffn\_init\_bug}        & 真根因：FFN 三个矩阵按 std=1.0 初始化       & \secref{subsec:nan} \\
+\codet{\_NOTE\_eval\_frequency}       & 全程只做约 5 次 eval，以及那条曲线的问题    & \secref{subsec:valcurve} \\
+\codeb{_NOTE_wandb_artifact_hang} & 2.3GB artifact 上传撞上 NCCL 600 秒看门狗   & \secref{subsec:gates} \\
+\codet{\_NOTE\_max\_iters}            & 30000 步怎么定出来的，以及 token/param 的取舍 & \secref{subsec:budget} \\
+\bottomrule
+\end{tabular}
+\caption{配置文件里的八条注记与本章小节的对应。把失败写回\cnemph{下一个要改这个文件的人一定会读到的地方}，比写进某个 markdown 有用。}
+\label{tab:notes-map}
+\end{table}
+
+以下 \codet{FlashDDP\_runner.py} 一律指 \codeb{cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}。
+
+% ---------------------------------------------------------------------------
+\subsection{模型定型：两次把参数量算错}
+\label{subsec:params}
+
+用户给的区间是 50--200M 参数，要求「把 24GB 显存吃满」。定型过程反复了两轮，两次都是被\cnemph{真实日志}打脸的。
+
+第一次按「embedding 和 output head 共享权重（tied）+ FFN 两个矩阵」估，选了 \codeb{num_layers=12, d_model=1024, d_ff=3584}。启动之后日志直接打出 \codeb{model initialized with 0.29B parameters}——比计划的 190M 多了一半。两个假设都错：
+
+\begin{enumerate}[label=(\arabic*)]\itemsep2pt
+  \item \codeb{TransformerLM.in_embedding}（\codeat{cs336-basics/cs336\_basics/lm.py}{152}）和 \code{TransformerLM.head}（\codeat{cs336-basics/cs336\_basics/lm.py}{180}）是\cnemph{两个独立矩阵}，没有 tie。词表 50257、$d=768$ 时，这一项就是 $2Vd = 77.2$M——占最终模型的 40\%。
+  \item FFN 是 SwiGLU，\cnemph{三个}矩阵（\code{W1}/\code{W3} 升维，\code{W2} 降维，\codeat{cs336-basics/cs336\_basics/transfromer/pointwise\_ffn.py}{22}），不是普通 FFN 的两个。
+\end{enumerate}
+
+正确的公式：
+\[
+N \;=\; L\,(4d^{2} + 3\,d\,d_{\mathrm{ff}}) \;+\; 2\,V\,d \;+\; (2L+1)\,d ,
+\]
+其中最后一项是 RMSNorm 的 gain 向量（每个 block 两个、最后一个，\codeat{cs336-basics/cs336\_basics/transfromer/transformer.py}{72}）。重算之后选了 $L=16$、$d=768$、12 头、$d_{\mathrm{ff}}=2048$（正好是 SwiGLU 常用的 $8d/3$），日志确认 \code{0.19B}。
+
+\begin{table}[t]
+\centering
+\begin{tabular}{llr}
+\toprule
+参数组 & 公式 & 数量 \\
+\midrule
+每层 attention（\codet{W\_Q/W\_K/W\_V/W\_O}） & $4d^{2}$                       & 2{,}359{,}296 \\
+每层 SwiGLU FFN（\codet{W1/W2/W3}）          & $3\,d\,d_{\mathrm{ff}}$        & 4{,}718{,}592 \\
+每层小计                                      &                                & 7{,}077{,}888 \\
+\midrule
+16 层                                         & $16 \times 7{,}077{,}888$      & 113{,}246{,}208 \\
+\codet{in\_embedding}                         & $Vd$                           & 38{,}597{,}376 \\
+\codet{head}（untied，独立矩阵）              & $Vd$                           & 38{,}597{,}376 \\
+RMSNorm gains                                 & $(2\cdot16+1)\times768$        & 25{,}344 \\
+\midrule
+合计                                          &                                & \textbf{190{,}466{,}304} \\
+\bottomrule
+\end{tabular}
+\caption{$L=16$、$d=768$、$d_{\mathrm{ff}}=2048$、$V=50257$、\codet{context\_length}=1024 下的参数量拆解。日志打印的是 \codet{0.19B}。配置文件的 \codeb{_NOTE_approx_param_count} 给的公式漏掉了 RMSNorm 那一项，得 190{,}440{,}960，差 0.013\%——可以忽略，但要知道它被忽略了。}
+\label{tab:param-breakdown}
+\end{table}
+
+\begin{checkpoint}{param_count_formula}{参数量公式里最容易漏的两项}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 写出这个模型参数量的公式。哪两个结构假设一旦搞错，会让估计偏离 50\% 以上？
+  \item $V$ 从 10000 涨到 50257，模型总参数量涨多少？涨的那部分\cnemph{全部}集中在哪里？
+  \item 如果把 embedding 和 head tie 起来，能省多少？为什么这个项目没有 tie？
+\end{enumerate}
+\hint 不要从论文里回忆公式，去数 \codeb{TransformerLM.__init__} 里创建了几个 \codet{Parameter}。
+\ifshowanswers
+\tcblower
+\answer (a) $N = L(4d^{2}+3\,d\,d_{\mathrm{ff}}) + 2Vd + (2L+1)d$。两个致命假设：head 是否与 embedding 共享权重（决定 $2Vd$ 还是 $Vd$），以及 FFN 是两矩阵还是 SwiGLU 三矩阵（决定 $2\,d\,d_{\mathrm{ff}}$ 还是 $3\,d\,d_{\mathrm{ff}}$）。这次两个都猜错了，日志报 0.29B 而不是计划的 190M。
+
+(b) $2\Delta V d = 2\times40257\times768 \approx 61.8$M，\cnemph{全部}集中在 embedding 和 head 两个矩阵上，Transformer 层一个参数都没变。这也解释了为什么这个模型 40\% 的参数在做「查表和投影」而不是在做计算。
+
+(c) 省 $Vd \approx 38.6$M（约 20\%）。没有 tie，因为 \code{lm.py} 里这两个就是分开声明的两个模块（\code{Embedding} 和 \code{Linear}），tie 需要改模型结构；而这次冲刺的原则是不动已经通过测试的模型代码。代价是记住它没 tie，别在估参数量时按 tied 算——这正是踩过的坑。
+\whereincode \codeat{cs336-basics/cs336\_basics/lm.py}{152} 与 \codeat{cs336-basics/cs336\_basics/lm.py}{180}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{tokenizer 换掉：BPE merge 的单步成本由什么决定}
+\label{subsec:tokenizer}
+
+项目里有一个自己写的 BPE tokenizer，在 TinyStories 上训 vocab=10000 大约半小时跑完。换成真实混合语料（web + wiki + instruction）之后，merge 阶段的速度掉到了完全不可接受的程度。
+
+日志里的实测（\codeb{run_logs/master_pipeline.log}，全量语料）：
+
+\begin{lstlisting}[style=hlrepl]
+Merging BPE pairs:   1%|  | 100/9743 [14:48<21:57:35,  8.20s/merge]
+Merging BPE pairs:   1%|  | 104/9743 [15:19<20:43:16,  7.74s/merge]
+\end{lstlisting}
+
+约 7.7--8.7 秒一个 merge，tqdm 给出的 ETA 在 21--23 小时之间。配置文件的 \code{_NOTE_tokenizer_swap} 记的是「约 7.5 s/merge、约 20 小时」——方向对，但比日志略乐观，\cnemph{以日志为准}。9743 次 merge（目标 vocab 10000 减去初始的字节级基元和特殊 token）会把整个时间预算全砸在训 tokenizer 上。
+
+第一反应是「语料太大，采样一部分」。按 4\% 比例采样重跑，日志里是（\codeb{run_logs/tokenizer_sample_train.log}）：
+
+\begin{lstlisting}[style=hlrepl]
+Merging BPE pairs:   0%|  |  1/9743 [00:01<3:59:57,  1.48s/merge]
+Merging BPE pairs:   1%|  | 67/9743 [01:14<2:40:33,  1.00merge/s]
+\end{lstlisting}
+
+约 1.0--1.5 秒一个 merge，ETA 仍有 2.6--4.0 小时。\cnemph{语料缩到 1/25，单步成本只降到 1/6}。这个不成比例的关系就是这一节真正的知识点：
+
+\begin{quote}
+BPE 每一步 merge 的成本，由\cnemph{词汇多样性}（distinct pair 的数量、pretoken 表的规模）决定，不是由原始字节数决定。
+\end{quote}
+
+TinyStories 是刻意用受限词表写的儿童故事，distinct pair 的数量小得多；换成 C4 加 Wikipedia，同样的 merge 循环要在一个大出一两个数量级的 pair 表上找最大值并更新。按比例采样只能线性地削掉「重复出现的常见 pair」的计数工作量，削不掉 pair 表本身的多样性。
+
+解法不是优化那个循环，是\cnemph{不做这件事}：换 \codeb{tiktoken.get_encoding("gpt2")}（50257 词表，本来就是项目依赖）。实测（\codeb{run_logs/tiktoken_encode.log}）：
+
+\begin{lstlisting}[style=hlrepl]
+[encode] train: 780,002,594 chars -> 173,972,065 tokens in 86.0s
+[encode] valid:  20,012,169 chars ->   4,516,054 tokens in  5.9s
+\end{lstlisting}
+
+92 秒，对 20 小时。代价是 \code{vocab.pkl} / \code{merges.pkl} 现在是占位文件（flashddp 训练路径不读它们的内容，只有 \code{stage_train_tokenizer} 的 exists-check 会看），以及 \code{cs336_basics/text_gen.py} 从此用不了——它要 \codeb{Tokenizer.from_files(vocab.pkl, merges.pkl)}，所以另写了 \code{sample_from_checkpoint.py}。换来的是把省下的 20 小时全部花在真正的训练上。
+
+\begin{checkpoint}{bpe_merge_cost}{为什么采样到 4\% 只快了 6 倍}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 同一份 BPE 实现，TinyStories 上 vocab=10000 半小时跑完，真实混合语料上一个 merge 就要 8 秒。语料大小之外，还有什么变了？
+  \item 按 4\% 采样，语料缩到 $1/25$，单步成本只降到约 $1/6$。这个不成比例说明成本主要花在什么上？
+  \item 什么情况下「训一个自己的 tokenizer」仍然值得？（提示：想想这次换成 gpt2 词表之后，\secref{subsec:oom} 里那个 OOM 是怎么来的。）
+\end{enumerate}
+\hint 一次 merge 要做的事是：在 pair 计数表里找最大值、合并、更新受影响的 pretoken。哪一步和语料\cnemph{字节数}成正比，哪一步和\cnemph{distinct pair 数量}成正比？
+\ifshowanswers
+\tcblower
+\answer (a) 词汇多样性。TinyStories 是受限词表的儿童故事，distinct pretoken 和 distinct pair 都少一两个数量级；C4 加 Wikipedia 有拼写变体、专名、数字、多语言残留、URL 片段。每一步 merge 都要扫这张表。
+
+(b) 主要花在\cnemph{维护和扫描 pair 表}上，而不是扫语料字节。按比例采样削掉的是常见 pair 的\cnemph{计数}（和字节数成正比的那部分），削不掉表的\cnemph{基数}——罕见 pair 大多在 4\% 的样本里也还留着至少一个实例。
+
+(c) 目标语域和现成 tokenizer 差很远的时候：非英语、代码、化学式、DNA。这次不值得，因为语料本来就是英文 web 文本，gpt2 词表就是在这个分布上训的。代价也是真的：50257 的词表把 \code{2Vd} 撑到 77M 参数，而且直接引出了 \secref{subsec:oom} 的 OOM——\cnemph{换掉 tokenizer 不是一个局部决定}。
+\whereincode \codeat{cs336\_systems/experiments/real\_pretrain\_config.json}{65}（\codet{\_NOTE\_tokenizer\_swap}）
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{OOM：漏算的那个 logits 张量}
+\label{subsec:oom}
+
+\code{tr_batch_size=32} 是从 vocab=10000 那版计划里带过来的。换到 50257 词表之后，两张卡\cnemph{同时}炸：
+
+\begin{lstlisting}[style=hlrepl]
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 96.00 MiB.
+GPU 1 has a total capacity of 23.56 GiB of which 25.00 MiB is free.
+\end{lstlisting}
+
+漏算的是前向最后那个 logits 张量：
+
+\[
+\underbrace{32}_{\mbox{batch}} \times \underbrace{1024}_{\mbox{ctx}} \times \underbrace{50257}_{V} \times \underbrace{4}_{\mbox{fp32}}
+= 6{,}587{,}285{,}504\ \mbox{B} \approx 6.6\ \mbox{GB},
+\]
+
+这还没算 cross-entropy 里 softmax 和反向的中间 buffer。关键在于\cnemph{这一项和 $V$ 成正比}：词表从 10000 涨到 50257，别的都没动，光这一项就翻了 5 倍。在一张 24GB 卡上，6.6GB 只是 logits 一个张量，模型权重加 AdamW 一二阶矩（fp32，190M 参数约 2.3GB）还要单算。
+
+降到 8 之后稳定运行，配置里保守地停在这里没往上试（\code{_NOTE_batch_size_oom} 说 16 大概也能跑，但无人值守的多小时任务不值得为这点吞吐冒险）。
+
+\begin{checkpoint}{logits_oom}{显存预算里最容易漏的一项}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 一个 $L$ 层、$d$ 维、词表 $V$、batch $B$、上下文 $T$ 的模型，前向过程中\cnemph{单个最大}的激活张量通常是哪个？写出它的大小。
+  \item 这一项和 $L$ 有关吗？和 $d$ 有关吗？这意味着「加层」和「扩词表」哪个对显存更危险？
+  \item 这次把 batch 从 32 降到 8 解决了问题。还有哪两种不降 batch 的解法？它们各自的代价是什么？
+\end{enumerate}
+\hint 别去数 attention 的 $BHT^{2}$——这个模型用的是 Triton FlashAttention，那一项根本没有物化。
+\ifshowanswers
+\tcblower
+\answer (a) 输出 logits：$B\,T\,V\times 4$ 字节（fp32）。这里是 $32\times1024\times50257\times4 \approx 6.6$ GB。
+
+(b) 和 $L$、$d$ \cnemph{都无关}。所以扩词表更危险：加一层只增加约 7.1M 参数和对应的激活，而词表翻 5 倍会让这个张量直接翻 5 倍，且不受任何 checkpointing 策略保护（它是最后一层的输出，必须留着算 loss）。
+
+(c) 其一，把 head 和 loss 融合（chunked / fused cross-entropy），不物化完整 logits，只按块算——省显存但要改 loss 实现；其二，混合精度（bf16 激活）把这一项减半——但这次全程 fp32，改动会波及数值稳定性，而当时正在追一个 NaN（\secref{subsec:nan}），不能同时动两个变量。
+\whereincode \codeat{cs336\_systems/experiments/real\_pretrain\_config.json}{69}（\codet{\_NOTE\_batch\_size\_oom}）
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{NaN，以及一次错误的诊断}
+\label{subsec:nan}
+
+这一节是本章的重点。它值得讲的不是「最后修好了」，而是\cnemph{中间那个看起来非常合理、证据也齐全、但就是错的假设，是被哪一个具体事实推翻的}。六步，顺序不能倒。
+
+\subsubsection*{第一步：症状}
+
+第一次正式标定跑，lr 从 step 0 起固定 $6\times10^{-4}$：
+
+\[
+\mbox{val loss } 6.90\ (\mbox{step }100)\ \longrightarrow\ 6.60\ (\mbox{step }200)\ \longrightarrow\ \mbox{\ttfamily nan}\ (\mbox{step }300+)
+\]
+
+前两个点在正常下降，第三个点直接 \code{nan}。
+
+\subsubsection*{第二步：错误假设——缺 LR warmup}
+
+当时的判定是「没有 LR warmup」。这个假设\cnemph{在当时看起来非常成立}，因为有三条独立的证据同时指向它：
+
+\begin{enumerate}[label=(\arabic*)]\itemsep3pt
+  \item \cnemph{代码里确实缺}。\codeb{cs336_basics/train/optimizer.py} 里的 \code{lr_scheduler}（linear warmup + cosine decay）一直存在，但只接在单卡 \code{local_train} 路径上；flashddp 这条路径从来没调用过它，确实是 step 0 就直接上满 lr。
+  \item \cnemph{lr 的取值确实不对}。$6\times10^{-4}$ 是 GPT-2 small 在约 0.5M tokens/batch 下的取值，而这次是 2 卡 $\times$ batch 8 $\times$ 1024 ctx $= 16$K tokens/batch，小了约 30 倍。同一个 lr 配一个小 30 倍的 batch，梯度噪声大得多。
+  \item \cnemph{症状形状对得上}。「训几百步、loss 正常下降、然后突然 NaN」是学习率过大导致发散的教科书形状。
+\end{enumerate}
+
+于是接上了 warmup、把峰值 lr 降到 $3\times10^{-4}$。这两个改动本身\cnemph{都是对的}，也都保留了下来（\code{grad_clip=1.0} 全程开着，同样没能救回来）。
+
+\begin{misconception}{降低学习率并加上 warmup 之后还是炸，说明学习率降得还不够。}
+这是当时最容易走上的那条岔路，也是最贵的一条——每试一个更低的 lr 就要烧掉几十分钟 GPU，而且每次失败都会强化「再降一点就好了」的直觉。真正终结这条路的不是又试了一个 lr，是去看\cnemph{第二次是在什么 lr 上炸的}。
+\end{misconception}
+
+\subsubsection*{第三步：否证}
+
+改完之后重跑，NaN 从 step 约 250 推迟到了 step 约 820。看起来「有改善」。但把当时的 lr 算出来之后，这个「改善」变成了否证：
+
+第一次正式 run 的 \code{warmup_iters=963}、峰值 $3\times10^{-4}$，采用 linear warmup，所以 step 820 时的学习率是
+\[
+3\times10^{-4}\times\frac{820}{963} \approx 2.55\times10^{-4},
+\]
+\cnemph{还在爬坡段，从没到过峰值}。也就是说：
+
+\begin{quote}
+第一次在 $6\times10^{-4}$ 上炸，第二次在 $2.55\times10^{-4}$ 上炸。\cnemph{学习率降了 2.4 倍，模型还是炸了。}
+\end{quote}
+
+一个真正由学习率过大引起的发散，不会在一个\cnemph{更小}的学习率上重现。这一个事实就足够把「LR 假说」判死——不需要再试第三个 lr，不需要 loss 曲线，不需要梯度范数。假设空间从 \{LR、初始化、数据、数值实现\} 塌缩到剩下几个，而其中只有初始化能解释「和 lr 无关地在几百步后爆炸」。
+
+\begin{examplebox}{refuting_the_lr_hypothesis}{把假设空间从四个砍到一个}
+\noindent\textbf{假设空间（第一次 NaN 之后）}
+\begin{enumerate}[label=H\arabic*., leftmargin=3em]\itemsep2pt
+  \item 学习率过大 / 缺 warmup
+  \item 权重初始化有问题
+  \item 数据里有异常值（超长 token id、越界索引、编码错误）
+  \item 数值实现问题（Triton kernel、混合精度、loss 里的 logsumexp）
+\end{enumerate}
+
+\medskip\noindent\textbf{证据 1}：三条独立线索都支持 H1（调度器没接上、lr 取自 30 倍大的 batch 规模、症状形状匹配）。
+\cnemph{行动}：接 warmup，lr $6\times10^{-4}\to3\times10^{-4}$。
+
+\medskip\noindent\textbf{证据 2（决定性的那一条）}：NaN 从 step 250 移到 step 820，而 step 820 时 lr 只有 $2.55\times10^{-4}$。
+\cnemph{推理}：若 H1 为真，在更小的 lr 下发散应当\cnemph{更晚或不发生}，而不是仍然发生。观察到的是「在更低的 lr 上照炸」，因此 H1 被否证。注意这里\cnemph{不是}「H1 解释力不够」，是「H1 预测了一个没发生的事」。
+\cnemph{代价}：一次约 12 分钟的 run，加上算一次 warmup 的 lr。
+
+\medskip\noindent\textbf{排除 H3}：如果数据里有异常值，发散时刻应当和\cnemph{数据顺序}绑定（换 seed 会换发散步数），而且 step 0 的 loss 不会恰好等于 $\ln V$。两次发散的 step 数差了三倍多，且初始 loss 一直是 10.82，不像数据问题。
+
+\medskip\noindent\textbf{排除 H4}：Triton kernel 和 loss 实现都有测试，而且第一次 NaN 之前 loss 正常下降了两百多步——一个数值实现 bug 通常在第一步就露馅，不会等到第 250 步。
+
+\medskip\noindent\textbf{剩下 H2}，于是不再猜，直接去读初始化代码。从「决定去读代码」到「找到 bug」花了几分钟——\cnemph{真正贵的是前面那两次 run，而不是最后那次阅读}。
+\end{examplebox}
+
+\subsubsection*{第四步：真根因}
+
+去读初始化代码，问题在一个默认参数上。工具函数的签名是：
+
+\begin{lstlisting}[style=hlnum, firstnumber=6]
+def trunct_normal_para_init(dim_out, dim_in, mu=0, var=1, truc_magnitude=3, device="cpu", dtype=torch.float16):
+    """
+    Return the initialized parameters value using truncated normal.
+    """
+    device = device if device is not None else "cpu"
+    dtype = dtype if dtype is not None else torch.float16 
+    tensor = torch.empty(dim_out, dim_in, dtype = dtype, device = device)
+    weight_mat: Float[torch.Tensor, "dim_out, dim_in"] = tensor 
+    nn.init.trunc_normal_(
+        weight_mat, mean=mu, std=math.sqrt(var), 
+        a=mu-truc_magnitude, b=mu+truc_magnitude,
+    )
+
+    return weight_mat
+\end{lstlisting}
+\noindent 来源：\codeat{cs336-basics/cs336_basics/transfromer/para_init.py}{6--19}，已直接抄入正文。
+
+\code{var} 的默认值是 \textbf{1}。而 SwiGLU FFN 里那三次调用\cnemph{都没有传 var}，于是 \code{W1}/\code{W2}/\code{W3} 全部按 $\sigma=1.0$ 初始化。模型里其他所有矩阵（\code{Linear}、\code{W_Q}/\code{W_K}/\code{W_V}/\code{W_O}）都老老实实传了 Xavier 的 $2/(d_{\mathrm{out}}+d_{\mathrm{in}})$。对 FFN 该有的值是
+\[
+\sigma_{\mbox{FFN}} = \sqrt{\frac{2}{d_{\mathrm{ff}} + d}} = \sqrt{\frac{2}{2048+768}} \approx 0.0266 ,
+\]
+也就是说实际用的标准差比应该用的\cnemph{大了约 37 倍}。修复就是把这个方差显式传进去：
+
+\begin{lstlisting}[style=hlnum, firstnumber=13]
+        # Xavier variance, matching Linear (linear_module.py) and the attention projections
+        # (multiheads_attention.py). Passing it explicitly matters: trunct_normal_para_init's
+        # `var` defaults to 1, and these three calls used to omit it, so every FFN matrix was
+        # initialized at std=1.0 instead of ~0.027. Pre-norm hides that at step 0 (RMSNorm
+        # renormalizes, so initial loss is still exactly ln(vocab_size)), but the FFN branch
+        # writes values with RMS ~2.5e4 into a residual stream whose branches should be
+        # contributing ~0.4 -- a ~65,000x overshoot that reliably diverges to NaN a few
+        # hundred steps in, once the LR is high enough to actually move those weights.
+        ffn_var = 2 / (dim_ff + dim_model)
+        self.W1: Float[torch.Tensor, "dim_ff, d_model"]= torch.nn.Parameter(trunct_normal_para_init(dim_ff, dim_model, 0, ffn_var, 3, device, dtype))
+        self.W3: Float[torch.Tensor, "dim_ff, d_model"]= torch.nn.Parameter(trunct_normal_para_init(dim_ff, dim_model, 0, ffn_var, 3, device, dtype))
+        self.W2: Float[torch.Tensor, "d_model, dim_ff"]= torch.nn.Parameter(trunct_normal_para_init(dim_model, dim_ff, 0, ffn_var, 3, device, dtype))
+\end{lstlisting}
+\noindent 来源：\codeat{cs336-basics/cs336_basics/transfromer/pointwise_ffn.py}{13--24}，已直接抄入正文。
+
+\subsubsection*{第五步：为什么一直没被发现}
+
+这才是这个 bug 真正有意思的地方：\cnemph{pre-norm 架构把它藏住了}。
+
+每个 block 的输入先过 RMSNorm 再进分支，所以不管 FFN 的权重多大，\cnemph{下一个} block 拿到的东西都会被重新归一化；最后一层之后还有一个 \code{self.norm}，然后才进 head。于是 step 0 的 loss 恰好还是均匀分布的交叉熵：
+
+\[
+\ln(50257) = 10.8248 ,
+\]
+
+日志里第 20 步打出来的是 \code{train loss 10.7412}——完全正常。前几百步 loss 也在正常下降。日志上\cnemph{什么都看不出来}。
+
+真正被破坏的是残差流的尺度。实测（拿纯 torch 复算，见下）FFN 分支往残差流里写的值 RMS 约 $2.5\times10^{4}$，而正常情况下各分支应该贡献约 $0.37$——约 \cnemph{6.5 万倍}的超调。RMSNorm 会把这个尺度在下一层的入口重新压回来，所以前向数值不会立刻溢出；但只要 lr 大到能真正推动这些权重，AdamW 的更新就会在这个被放大了四个数量级的分支上迅速失控。这解释了两件事：为什么「降 lr + 加 warmup」只能\cnemph{推迟}而不能阻止，以及为什么第二次是在\cnemph{更低}的 lr 上炸的（warmup 让权重被推动得更慢，所以晚了几百步，仅此而已）。
+
+\begin{checkpoint}{prenorm_hides_init_bug}{pre-norm 帮了什么倒忙}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 三个 FFN 矩阵按 $\sigma=1.0$ 初始化（该是 $0.0266$），为什么 step 0 的 loss 仍然精确等于 $\ln V$？
+  \item 如果这是一个 post-norm 模型，这个 bug 会在第几步暴露？为什么？
+  \item 「初始 loss 等于 $\ln V$」这个健康检查，能证明什么、不能证明什么？
+\end{enumerate}
+\hint 顺着一个 token 的向量从 embedding 走到 head，数一数中间经过几次 RMSNorm，以及最后一次 RMSNorm 在 head \cnemph{之前}还是之后。
+\ifshowanswers
+\tcblower
+\answer (a) 因为 head 之前有一个 \code{self.norm}（\codeat{cs336-basics/cs336\_basics/lm.py}{177}）。不管残差流被 FFN 撑到多大，进 head 之前都会被归一化回单位尺度；而 head 自己的权重是正确的 Xavier 初始化，所以输出 logits 近似零均值小方差，softmax 近似均匀分布，loss 就是 $\ln V$。\cnemph{这个检查测的是最后一层归一化之后的东西，对之前发生了什么免疫}。
+
+(b) post-norm 里归一化在残差\cnemph{加法之后}，FFN 分支的输出会直接进入下一层的主干而不是先被压回去，尺度会逐层累乘——很可能第一次前向就 inf 或者 loss 明显异常。也就是说 post-norm 会\cnemph{更早报错}，而 pre-norm 的稳定性在这里反过来变成了掩盖能力。
+
+(c) 能证明：embedding 和 head 的初始化大致合理、loss 函数没写反、词表大小和数据对得上。不能证明：中间任何一层的初始化、残差流的尺度、梯度的量级。要覆盖后者，得直接量\cnemph{每类矩阵的 std} 和\cnemph{各分支写进残差流的 RMS}——这正是下面那个 Tip 要做的事。
+\whereincode \codeat{cs336-basics/cs336\_basics/transfromer/pointwise\_ffn.py}{13}
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{rms_overshoot}{那个 65000 倍是怎么来的}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item FFN 分支往残差流里写的 RMS 约 $2.5\times10^{4}$，正常应该约 $0.37$。这两个数是\cnemph{推导}出来的还是\cnemph{量}出来的？这个区别为什么要在讲义里写明？
+  \item 既然前向数值没有溢出（loss 一直是有限的），为什么这个超调最终一定会导致 NaN？
+  \item （开放）你能不能\cnemph{解析地}估出 $2.5\times10^{4}$ 这个量级？
+\end{enumerate}
+\hint (b) 想想 AdamW 的更新量和梯度大小的关系，以及一个被放大了四个数量级的分支在反向里会产生多大的梯度。
+\ifshowanswers
+\tcblower
+\answer (a) \cnemph{量出来的}——用纯 torch 复算：按两种方差各初始化一次 FFN，喂一个 RMSNorm 之后的输入，直接读输出张量的 RMS。\cnemph{不是解析推导}。写明这一点是因为「$2.5\times10^{4}$」看起来很像一个从公式里落出来的数，而它不是；一个读者如果照着某个式子复现不出这个数，应该怀疑那个式子而不是怀疑自己。（顺带一提：\code{pointwise_ffn.py} 的注释把正常值写成约 $0.4$，配置文件的 note 写的是 $0.37$，两处是同一个实测量的不同取整。）
+
+(b) 因为 pre-norm 只在\cnemph{前向}把尺度压回去，不改变权重本身有多大。反向传播经过这个分支时梯度同样被放大，AdamW 的分母（二阶矩）虽然会做归一化，但一旦这些权重开始移动，被放大四个数量级的分支输出会以同样的比例变化，残差流的相对结构被瞬间破坏。\code{grad_clip=1.0} 只限制全局范数，不能修复「某一个分支的尺度本身就错了四个数量级」这件事——实测它确实没救回来。
+
+(c) \cnemph{留作开放小问，我们没有做这个推导}。要做的话，需要的量都在手边：RMSNorm 之后输入每个分量的尺度、$\sigma=1$ 时 $W_1x$ 的 fan-in 放大、SiLU 在大输入上的近似行为、门控那一步是\cnemph{两个都被放大过的量相乘}（这一步最容易被低估），以及 $W_2$ 再做一次投影。如果你推出来了，拿它和实测的 $2.5\times10^{4}$ 比一下：差在一个数量级以内就说明你的心智模型是对的；差得更多，多半是漏掉了门控那一次相乘。
+\whereincode \codeat{cs336\_systems/experiments/real\_pretrain\_config.json}{63}（\codet{\_NOTE\_ffn\_init\_bug}）
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{lr_hypothesis_refuted}{哪一个具体事实否掉了 LR 假说}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 「缺 warmup」这个假设当时有三条证据支持。加上 warmup 并把 lr 降到 $3\times10^{-4}$ 之后，NaN 从 step 250 推迟到 step 820。\cnemph{哪一个具体事实}让你判定这个假设是错的？请给出一个数。
+  \item 为什么「NaN 推迟了」\cnemph{不能}算作假设成立的证据？
+  \item 如果当时 \codet{warmup\_iters} 设成 100（而不是 963），step 820 时 lr 已经过了峰值并开始 cosine 衰减。这会不会让这次否证失效？
+\end{enumerate}
+\hint 去算 step 820 那一刻的学习率，然后和第一次发散时的 $6\times10^{-4}$ 比。
+\ifshowanswers
+\tcblower
+\answer (a) \cnemph{第二次发散发生在 $2.55\times10^{-4}$ 这个学习率上}（$3\times10^{-4}\times820/963$，warmup 还没爬到峰值）。第一次是在 $6\times10^{-4}$ 上炸的。学习率降了 2.4 倍，发散照样发生——一个由学习率过大引起的现象不会在更小的学习率下重现。这一条是决定性的；「推迟了」不是。
+
+(b) 因为「推迟」和两个假设都相容。若根因是初始化，降低 lr 会让那些坏权重被推动得更慢，发散自然更晚——\cnemph{推迟恰恰是初始化假说也预测的}。一个不能区分两个假设的观察，对判定这两个假设中的哪一个为真没有信息量。真正有信息量的是「在更低的 lr 上仍然炸」这个\cnemph{方向性}事实。
+
+(c) 会削弱。如果 step 820 时 lr 已经衰减到比 $6\times10^{-4}$ 更高或相当的值，就没法说「在更低的 lr 上炸」。这次否证之所以干净，是因为 warmup 长（963 步）恰好保证了发散点落在爬坡段，lr 明确低于第一次。\cnemph{这是运气，不是设计}——一个更稳的做法是发散时把当时的 lr 一起打进异常信息里，这正是第六步 fail-fast 做的事。
+\whereincode \codeat{cs336\_systems/experiments/real\_pretrain\_config.json}{66}（\codet{\_NOTE\_divergence\_fix}）
+\fi
+\end{checkpoint}
+
+\subsubsection*{第六步：修复、验证，以及两道防止重演的闸}
+
+修复本身是三行。验证做了三件事：\code{FNN.W1} 的实测 std 对上 Xavier 目标（差 0.4\%）、初始 loss 等于 $\ln V$、global grad norm 有限（2.15），前反向全部有限。另外确认了 \code{tests/} 里没有任何测试依赖 FFN 的随机初始化（adapter 都是喂固定权重进去的），所以这个改动不动测试基线。
+
+比修复更重要的是两道闸，因为它们保证\cnemph{下一次}不会再瞒这么久：
+
+\begin{lstlisting}[style=hlnum, firstnumber=507]
+            # Fail fast on divergence. Without this the job happily burns its whole
+            # wall-clock budget multiplying NaNs, and nothing in stdout says so until the
+            # next eval -- which can be thousands of steps away.
+            if not math.isfinite(loss_value):
+                raise RuntimeError(
+                    f"Rank {rank}: training DIVERGED -- non-finite loss ({loss_value}) at "
+                    f"global_step {global_step} (lr={current_lr if use_lr_schedule else peak_lr:.3e}). "
+                    f"Aborting instead of burning the rest of the budget."
+                )
+
+            if log_every_n_steps is not None and global_step % log_every_n_steps == 0:
+                # Also to stdout, not just W&B: the run log is the only thing available when
+                # reconnecting over SSH, and previously it showed nothing but a tqdm bar.
+                lr_str = f" | lr {current_lr:.3e}" if use_lr_schedule else ""
+                print(f"Rank {rank} | step {global_step:06d} | train loss {loss_value:.4f}{lr_str}", flush=True)
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}{507--521}，已直接抄入正文。
+
+第一道是 \code{math.isfinite(loss_value)}：一旦非有限立刻 \code{raise}，并把当时的 \code{global_step} 和 \code{lr} 一起打出来——而不是继续拿 NaN 乘 7 小时。
+
+第二道是第 521 行那个 \code{print(..., flush=True)}：训练 loss 从此\cnemph{同时}打到 stdout，不只进 W\&B。这条看起来最不起眼的改动，恰恰是整件事的关键——第二次发散能瞒到 step 1100 才被发现，就是因为当时 loss 只进 W\&B，SSH 上 \code{tail} 日志只看得到一根 tqdm 进度条，最后是去查 W\&B API 才发现的。\cnemph{一个无人值守的任务，它的健康状态必须出现在你最可能去看的那个地方}。
+
+\begin{tipbox}{在笔记本上验初始化，不需要 GPU}
+这个 bug 完全可以在 Day 0 用一段不到二十行的 CPU 代码抓出来，代价约一分钟，能省下 7 小时 GPU 和两次发散。做法：
+
+\begin{enumerate}[label=\arabic*.]\itemsep2pt
+  \item 用小配置构造一个 \code{TransformerLM}（\code{d_model=128} 之类，结构和大模型一样就行）；
+  \item 遍历 \code{named_parameters()}，对每个二维矩阵打印它的 \code{std()}，以及它和 $\sqrt{2/(\mbox{fan\_out}+\mbox{fan\_in})}$ 的\cnemph{比值}；
+  \item 看那一列比值。所有正常矩阵应该在 1.0 附近；这个 bug 下 \code{W1}/\code{W2}/\code{W3} 会是 30--40。
+\end{enumerate}
+
+打\cnemph{比值}而不是打 std 本身很关键：不同矩阵的 fan-in/fan-out 不同，std 的绝对值本来就该不一样，一列参差不齐的数字看不出问题；一列本该全是 1.0 的数字里混进三个 37，一眼就能看见。
+
+顺带再打一次前向的 loss（应该等于 $\ln V$）和一次反向的 global grad norm，就覆盖了本章两个最贵的失败模式。
+
+\resources CPU 或 MPS 即可，约一分钟。注意这条路径以前是走不通的——\code{cs336_basics} 的 \code{@nvtx.range} 注解在非 CUDA build 上一调用就炸，正是它当时挡住了这个本地检查；修法见 \secref{subsec:gates}。
+\end{tipbox}
+
+% ---------------------------------------------------------------------------
+\subsection{\codet{\_orig\_mod.} 前缀：影响面比看起来大得多}
+\label{subsec:orig-mod}
+
+训练跑到 step 7500 出第一个中途 checkpoint 时，顺手拿采样脚本做了个冒烟测试，当场炸出来：
+
+\begin{lstlisting}[style=hlrepl]
+RuntimeError: Error(s) in loading state_dict for TransformerLM:
+  Missing key(s) in state_dict: "in_embedding.embed_mat", ...
+  Unexpected key(s) in state_dict: "_orig_mod.in_embedding.embed_mat", ...
+\end{lstlisting}
+
+根因：\code{compile: true} 时 \code{torch.compile} 把模块包成 \code{OptimizedModule}，它的 \code{state_dict()} 会给每个 key 加上 \code{_orig_mod.} 前缀；而保存端只 unwrap 了 DDP 那一层（\code{.module}），没 unwrap compile 这一层。
+
+\paragraph{影响面。}这里最该学的不是修法，是\cnemph{正确评估影响面}。「采样脚本跑不了」听起来像一个可以放到最后处理的小麻烦，实际上同一个前缀会让：
+
+\begin{itemize}\itemsep2pt
+  \item \code{load_ddp_checkpoint}（断点续训）一样失败；
+  \item Day 3--4 的 serving adapter 加载这个 checkpoint 时必然踩到（\secref{sec:b-kv}）；
+  \item \code{eval_checkpoint.py} 对所有 arm 打分时全部失败。
+\end{itemize}
+
+也就是说：\cnemph{这次训练的产出，对下游全是不可用的}。一个「采样脚本的小问题」实际上等价于「7 小时白训」。
+
+\paragraph{修法（两端都改）。}保存端 unwrap，让\cnemph{以后}的 checkpoint 直接是干净的 plain key：
+
+\begin{lstlisting}[style=hlnum, firstnumber=115]
+    if rank == 0:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        ckpt_path = os.path.join(checkpoint_dir, f"checkpoint_{tag}_{epoch:04d}.pt")
+        raw_model = model.module if hasattr(model, "module") else model
+        # Unwrap torch.compile too, so checkpoints are written with plain module keys and
+        # stay loadable by anything that builds a bare TransformerLM (the sampler, the
+        # serving adapter). Otherwise every key carries an "_orig_mod." prefix.
+        raw_model = getattr(raw_model, "_orig_mod", raw_model)
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}{115--122}，已直接抄入正文。
+
+加载端统一做一次 \codeb{k.removeprefix("_orig_mod.")}，对没有前缀的 checkpoint 是 no-op——三处都改了：\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{175}（续训）、\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{351}（\code{init_from}）、\codeat{cs336\_systems/experiments/eval\_checkpoint.py}{73}（打分）。
+
+正因为加载端做了兼容，\cnemph{正在跑的那个 run 没有为此重启}——已经写出去的带前缀 checkpoint 靠加载端读得回来。这是「两端都改」相对「只改保存端」的全部价值。
+
+\begin{checkpoint}{orig_mod_prefix}{哪一层 wrapper 没被 unwrap}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 保存时模型外面套了几层？分别是什么？\codet{save\_ddp\_checkpoint} 原来只 unwrap 了哪一层？
+  \item 修法为什么要\cnemph{两端都改}？只改保存端会有什么后果、只改加载端呢？
+  \item \codet{removeprefix} 对一个没有前缀的 checkpoint 做了什么？这个性质为什么重要？
+\end{enumerate}
+\hint 数 \codet{parallel\_train} 里对 \codet{model} 做过几次赋值。
+\ifshowanswers
+\tcblower
+\answer (a) 两层：外面是 \code{DDPOverlapBucketed}（通过 \code{.module} 取内层），里面是 \code{torch.compile} 产生的 \code{OptimizedModule}（通过 \code{._orig_mod} 取内层，\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{368}）。原来只 unwrap 了 DDP 那一层。
+
+(b) 只改保存端：已经写出去的那些 checkpoint（包括当时训练已经产出的）永远读不回来，等于必须重启训练。只改加载端：checkpoint 文件本身一直带着一个和训练配置耦合的前缀，任何不知道这件事的下游（别人的脚本、serving adapter）都会踩；而且 \code{compile: false} 重跑时又不带前缀，schema 变得不稳定。两端都改才既救了旧文件又让新文件干净。
+
+(c) no-op——\code{str.removeprefix} 在前缀不存在时原样返回。正因为是 no-op，加载端可以\cnemph{无条件}调用，不需要先判断 checkpoint 是哪种；一个不需要 \code{if} 的兼容层，出错面比一个需要判断的小。
+\whereincode \codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{122}
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{why_verify_early}{为什么只花了 2 分钟就发现}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 这个 bug 是在训练跑到 step 7500（全程 25\%）时发现的，不是训练结束时。是什么安排让它这么早暴露？
+  \item 如果等到 step 30000 训完再去验证加载路径，代价是什么？把它折算成小时。
+  \item 列举另外两个「产物在中途就该验一次」的例子。（提示：这次冲刺里至少还有两个。）
+\end{enumerate}
+\hint \codeb{checkpoint_every_n_steps=7500} 这个配置项存在的理由不止「防断电」一个。
+\ifshowanswers
+\tcblower
+\answer (a) \codeb{checkpoint_every_n_steps=7500}（\codeat{cs336\_systems/experiments/real\_pretrain\_config.json}{49}）让训练在 25\% 处就产出一个真 checkpoint，然后\cnemph{特意}拿采样脚本对它跑了一次加载。关键动作是「产出第一个中途产物之后立刻验证下游能不能吃它」，而不是「等全部跑完再说」。
+
+(b) 6.5 小时训练全部作废（产物对下游不可用），加上重跑的 6.5 小时——约 13 小时，而实际代价是 2 分钟的发现加上几分钟的修复，而且\cnemph{不需要重启正在跑的 run}。
+
+(c) 其一，标定阶段的 NaN 门禁：500 步标定跑完必须有两个有限的 val loss，否则 FATAL 中止，宁可不跑也不拿没验证过的配置烧 7 小时。其二，KV cache 的正确性门禁必须\cnemph{拿最终权重}再过一次——拿别的权重过的门禁不算这批权重的门禁（\secref{sec:b-kv}）。共同的形状是：\cnemph{在还有便宜的退出机会时验证，而不是在唯一的退出机会已经过去之后}。
+\whereincode \codeat{cs336\_systems/experiments/real\_pretrain\_config.json}{49}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{那条 val loss 曲线，其实只测了 web 域头部约 1800 个 token}
+\label{subsec:valcurve}
+
+训练跑完之后才发现的，必须如实说。
+
+\begin{table}[t]
+\centering
+\begin{tabular}{rr}
+\toprule
+step & val loss \\
+\midrule
+6000  & 4.4579 \\
+12000 & 4.2015 \\
+18000 & 4.0937 \\
+24000 & 4.0288 \\
+30000 & \textbf{4.0057} \\
+\bottomrule
+\end{tabular}
+\caption{训练内的五次 eval（\codeb{run_logs/full_pretrain_run.log}）。\cnemph{不要把 4.0057 说成「混合验证集上的 val loss」}——它测的是 \codet{valid.txt} 开头约 1800 个 token，全部来自 C4，从头到尾没碰过 wiki 和 instruction。理由见正文。}
+\label{tab:val-curve}
+\end{table}
+
+三件本身都合理的事叠在一起，产生了一个不合理的结果：
+
+\begin{enumerate}[label=(\arabic*)]\itemsep3pt
+  \item \code{build_mixed_corpus.py} 是\cnemph{按域顺序}写 \code{valid.txt} 的：先写完全部 web，再写 wiki，最后写 instruction（\codeat{cs336\_systems/data\_harvest/build\_mixed\_corpus.py}{187}），不是打散的。
+  \item \codeb{val_sampler = DistributedSampler(..., shuffle=False)}（\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{324}），所以每个 rank 拿到的是\cnemph{按顺序}交错的窗口下标。
+  \item \code{_run_eval} 用 \codeb{itertools.islice(val_iter, val_bat_num)} 取\cnemph{前} 50 个 batch（\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{417}）。
+\end{enumerate}
+
+算一下覆盖范围：\code{val_batch_size=8}、50 个 batch，每个 rank 取 400 个窗口；\code{DistributedSampler} 在 \code{shuffle=False} 下按 \code{indices[rank::world_size]} 切，所以两个 rank 合起来覆盖的窗口下标是 $0$ 到 $799$；\code{TokenStreamDataset} 是滑窗索引，下标 $i$ 的窗口是 token $[i,\,i+1024)$。合起来：
+
+\[
+\mbox{每次 eval 覆盖的 token} = [0,\ 799+1024) \approx 1800\ \mbox{个 token},
+\]
+
+也就是 \code{valid.txt} 最开头那几篇 C4 网页文档，每次 eval 都是同一批。
+
+\begin{retraction}{预训练的 val loss 曲线 4.4579 $\to$ 4.0057 是模型在混合验证集上的表现。}
+\cnemph{这条曲线仍然有意义}，别一起丢掉：每次 eval 打的是完全相同的一批样本，等于天然配对，step 之间比较的方差极低，「loss 在下降」这个结论是成立的，而且比一个每次重新随机采样的曲线更干净。
+
+\cnemph{不成立的是它的标签}。它不是「混合验证集上的 val loss」，是「\code{valid.txt} 开头约 1800 个 web token 上的 val loss」。跑完之后用 \code{eval_checkpoint.py}（200 个随机 batch、固定 seed）测出来的才是正经的数：\code{general} 3.5866 / \code{web} 3.8469。
+
+\cnemph{没有中途去改}：改成 \code{shuffle=True} 会让曲线前后不可比，而真正用来排序微调 arm 的本来就是 \code{eval_checkpoint.py} 那套方法。留给下一次 run 修：\code{val_sampler} 打开 shuffle，或者在 \code{_run_eval} 里对 \code{val_bat_num} 做随机采样而不是取前 $N$ 个。
+\end{retraction}
+
+三个数字的大小关系完全自洽，这本身就是这个解释成立的一个旁证：
+
+\begin{table}[t]
+\centering
+\begin{tabular}{llr}
+\toprule
+测的是什么 & 规模 & loss \\
+\midrule
+训练内 val（\codet{valid.txt} 开头约 1800 token，全是 C4） & 约 1.8K token & 4.0057 \\
+\codet{domain\_valid\_web}（C4 validation，200 个随机 batch）  & 267K token    & 3.8469 \\
+\codet{mixed\_valid}（三域混合，200 个随机 batch）             & 4.52M token   & 3.5866 \\
+\bottomrule
+\end{tabular}
+\caption{窄 web 切片 $>$ 完整 web $>$ 三域混合。窄切片最难（几篇特定文档，运气成分大）；混合最容易（20\% 的 Wikipedia 和 10\% 的 instruction 都比 web 好预测，把平均拉低了）。}
+\label{tab:three-losses}
+\end{table}
+
+\paragraph{顺带：为什么全程只做 5 次 eval。}\code{eval_every_n_steps=6000} 是\cnemph{故意}设稀的（\code{_NOTE_eval_frequency}）。每次 eval 本身就是验证流上的一次采样估计，自带误差棒；把频率提高十倍买到的是噪声不是信号，只是白烧 GPU。标定阶段例外，那时在 step 250 加一次，纯粹是为了有两个 val 数可以做 NaN 门禁。
+
+这里有个值得记的对照：微调那边反而把 eval 从每 300 步\cnemph{加密}到每 100 步，因为微调的收益几乎全在前 100 步、之后单调过拟合，3 个点根本看不出那个拐点。同一个「eval 频率」参数，在两个阶段的正确方向相反——决定它的是\cnemph{你想看的现象的时间尺度}，不是什么通用最佳实践。
+
+\begin{checkpoint}{val_curve_is_not_what_it_says}{三个合理的决定叠出一个不合理的结果}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 三件事各自都有正当理由：按域顺序写 \codet{valid.txt}、\codet{shuffle=False}、\codet{islice} 取前 50 个 batch。分别说出它们的理由，再说出叠加之后发生了什么。
+  \item 算出每次 eval 实际覆盖了多少 token。（需要的量：\codet{val\_batch\_size}=8、\codet{val\_bat\_num}=50、\codet{world\_size}=2、\codet{context\_length}=1024，以及 \codet{TokenStreamDataset} 是滑窗。）
+  \item 这条曲线还剩下什么可以说的结论？哪一句话必须收回？
+\end{enumerate}
+\hint (b) 的陷阱在滑窗：400 个窗口\cnemph{不}等于 $400\times1024$ 个 token。
+\ifshowanswers
+\tcblower
+\answer (a) 按域顺序写：最简单、可复现、manifest 里的分域统计也好算。\code{shuffle=False}：验证集不需要 shuffle，而且关掉它能让不同 step 的 eval 可比。\code{islice} 取前 50：验证集有 28 万个 batch/rank，不设上限一次 eval 要约 12 小时。叠加之后：每次 eval 都落在同一段、同一个域、同几篇文档上。\cnemph{每一条单独看都是对的}，这正是这类 bug 难发现的原因。
+
+(b) 每 rank 400 个窗口，2 个 rank 交错覆盖下标 $0..799$；下标 $i$ 的窗口是 token $[i, i+1024)$，所以并集是 $[0, 1823)$，约 1800 个 token。
+
+(c) 还能说的：loss 在单调下降，而且因为每次是同一批样本，这个下降的信噪比很高。必须收回的：「这是混合验证集上的 val loss」。正经的混合数字是 \code{eval_checkpoint.py} 打出来的 3.5866。
+\whereincode \codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{407}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{其他几道工程闸门}
+\label{subsec:gates}
+
+四个都不复杂，但每一个都能单独毁掉一次无人值守的运行。
+
+\paragraph{(1) NCCL watchdog 把整个 job SIGABRT 掉。}标定 run 在写完最后一个 checkpoint 之后被杀。根因是 \code{save_ddp_checkpoint} 原来走 \code{save_checkpoint_and_log}，会把每个约 2.3GB 的 checkpoint（fp32 权重 + AdamW 一二阶矩）当 W\&B artifact 上传：rank 0 卡在阻塞式上传里，rank 1 在紧跟其后的 \code{dist.barrier()} 里干等，超过 NCCL 默认的 600 秒超时，watchdog 抛异常，整个进程组 abort。
+
+修了四处：checkpoint 只存本地（靠 rsync 取回，\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{123}）；process group timeout 提到 60 分钟（\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{56}）；最后的 \code{dist.barrier()} 挪到 \code{wandb.finish()} \cnemph{之前}（\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{609}）；新增 checkpoint 轮转只保留最近 2 个（实例根分区只有约 10GB 可用，4 个 checkpoint 就能撑爆，\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{69}）。
+
+背后是一条通用的东西：\cnemph{任何 rank-0-only 的慢操作，都不能夹在两个集合通信之间}。
+
+\paragraph{(2) \codet{if i == 100: break}。}训练循环里曾经有一行 \codeb{if i == 100: break  # TODO: Remove it}。后果是：不管 config 里 \code{max_iters} 填多少，flashddp 这条路径每个 epoch 硬编码只跑 100 个 batch；而 \code{run_pipeline.py} 的 \code{stage_train_ddp} 也从来没把 \code{max_iters} 传给这个函数（只传了 \code{epochs}）。Day 0 的 smoke test 日志里其实已经露过馅（进度条打的是 \code{Epoch 1: 99/121803}），当时只关注「跑没跑通」，没深究那个数字。
+
+修法不是删掉那一行了事，而是补上一个\cnemph{真的}步数预算：跨 epoch 累计的 \code{global_step}，到点跳出（\codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{539}）。因为原来的 checkpoint / eval / train-loss 记录全部是\cnemph{按 epoch 粒度}的，而真实训练一个 epoch 都跑不完（\code{max_iters} 会在 epoch 1 中途截断），所以还额外加了 \code{checkpoint_every_n_steps} / \code{eval_every_n_steps} / \code{log_every_n_steps} 三个按步数触发的版本，并把 \code{grad_clip}（原来只有单卡路径在用）也接到了这条路径上。
+
+\paragraph{(3) 静默训练 0 步的「成功」续训。}\code{save_checkpoint} 的 schema 只有一个 \code{iter} 字段，而 \code{save_ddp_checkpoint} 在 \code{tag="step"} 时传的是 \code{global_step}、\code{tag="epoch"} 时传的是 epoch——\cnemph{同一个字段两种语义}。加载端把它当 epoch 喂给 \codeb{range(start_epoch, epochs)}：
+
+\begin{lstlisting}[style=hlrepl]
+>>> list(range(15000, 100))   # step checkpoint 被当成 epoch
+[]
+>>> list(range(100, 100))     # epoch checkpoint，已经是最后一个 epoch
+[]
+\end{lstlisting}
+
+两种都是空 range。于是「续训」会正常启动、正常打印、\cnemph{一步不训直接退出，而且不报错}。
+
+修法：\code{global_step} 和 \code{epoch} 分开存；resume 时恢复 \code{global_step}（否则就算循环跑起来，LR 也会从头 warmup）；旧 checkpoint 因字段有歧义\cnemph{明确报错}并提示改用 \code{init_from}：
+
+\begin{lstlisting}[style=hlnum, firstnumber=179]
+    # Prefer the unambiguous fields. Older checkpoints only have "iter", which was written
+    # with a *step* count for tag="step" files and an *epoch* count for tag="epoch" files;
+    # feeding either into `range(start_epoch, epochs)` produced an EMPTY range
+    # (range(15000, 100) and range(100, 100) alike), so resuming silently trained for zero
+    # steps and exited looking like a successful run. global_step was never restored at
+    # all, so even a non-empty range would have restarted the LR warmup from scratch.
+    epoch = checkpoint.get("epoch")
+    global_step = checkpoint.get("global_step")
+    if epoch is None or global_step is None:
+        raise RuntimeError(
+            f"{resume_from} predates the checkpoint schema fix and records only "
+            f"iter={checkpoint.get('iter')}, which is ambiguous between a step count and "
+            f"an epoch count -- resuming from it cannot be done correctly. Use --init_from "
+            f"to start a fresh run from its weights instead."
+        )
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py}{179--193}，已直接抄入正文。
+
+\paragraph{(4) NVTX：探测一次，而不是猜。}\code{cs336_basics} 有 8 个文件用 \code{@nvtx.range(...)} 标注 forward。\code{torch.cuda.nvtx} 在非 CUDA build 上\cnemph{导入正常、一调用就炸}（\codeb{RuntimeError: NVTX functions not installed}），意味着 \code{TransformerLM} 在 CPU/MPS 机器上根本跑不起来——上面那个「在笔记本上验初始化」的 Tip，当初就是被它挡住的。
+
+\code{nvtx_compat.py} 的做法是 import 时探测一次：
+
+\begin{lstlisting}[style=hlnum, firstnumber=32]
+def _nvtx_is_usable() -> bool:
+    """Probe rather than infer. ``torch.cuda.is_available()`` is the wrong question --
+    it asks about a *device*, while NVTX is about whether the *build* has the symbols,
+    and the two come apart (a CUDA build on a machine with no GPU still has NVTX)."""
+    try:
+        _torch_nvtx.range_push("_nvtx_probe")
+        _torch_nvtx.range_pop()
+        return True
+    except Exception:
+        return False
+
+
+NVTX_AVAILABLE = _nvtx_is_usable()
+\end{lstlisting}
+\noindent 来源：\codeat{cs336-basics/cs336_basics/nvtx_compat.py}{32--44}，已直接抄入正文。
+
+这里的教学点在那三行注释上：\cnemph{不能靠 \code{torch.cuda.is_available()} 猜}。那个函数问的是「这台机器上有没有可用的 GPU 设备」，而 NVTX 问的是「这个 torch build 里有没有编进 NVTX 符号」——两者会脱钩（一个 CUDA build 装在没有 GPU 的机器上，NVTX 照样可用）。\cnemph{当一个能力可以被直接试一次时，不要用一个相关但不等价的条件去推断它。}
+
+\begin{checkpoint}{silent_zero_step_resume}{为什么续训跑了 0 步却不报错}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item \codet{range(15000, 100)} 和 \codet{range(100, 100)} 分别对应什么场景？为什么两种都是空的？
+  \item 空 range 会让整个训练脚本走完哪些步骤？为什么\cnemph{没有任何一处}会抛异常？
+  \item 就算把循环修好、让 range 非空，还有一个东西会被静默重置。是什么？会造成什么后果？
+\end{enumerate}
+\hint (b) 想想一个「一步不训」的 run 和一个「正常训完」的 run，在退出码、日志结构、产物文件上分别有什么区别。
+\ifshowanswers
+\tcblower
+\answer (a) 第一个是从一个 \code{tag="step"} 的 checkpoint 续训：\code{iter=15000} 是步数，被当成 epoch 喂进去，而 \code{epochs=100}，所以 $15000 > 100$，空。第二个是从 \code{tag="epoch"} 的 checkpoint 续训：\code{iter=100} 正好等于 \code{epochs}，$\mbox{range}(100,100)$ 也空。\cnemph{一个字段两种语义，两种语义各自都能产生空 range}。
+
+(b) 走完全部：初始化进程组、建模型、加载权重和优化器、打印「resuming at epoch ...」、跳过空的 epoch 循环、跑最后那次 \code{_run_eval}、保存一个最终 checkpoint、\code{wandb.finish()}、干净退出，\cnemph{exit code 0}。没有一处抛异常，因为「空的 for 循环」在 Python 里是完全合法的——\cnemph{沉默失败的本质是「没有任何一处在断言我期望发生的事真的发生了」}。这也是为什么修法要\cnemph{主动 raise} 而不是继续跑。
+
+(c) \code{global_step}。它原来在 resume 之后被无条件重置为 0，所以就算循环跑起来，LR schedule 也会从头重新 warmup——在一个已经训了一半的模型上重跑 warmup，等于把学习率曲线拦腰接错，训练动力学和从头训完全不同。现在 \code{global_step} 和 \code{epoch} 分开存、分开恢复。
+\whereincode \codeat{cs336\_systems/Parallelization/FlashDDP/FlashDDP\_runner.py}{179}
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{nvtx_probe_not_guess}{探测一次，而不是靠一个相关条件去猜}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item \codeb{torch.cuda.is_available()} 和「NVTX 能不能用」问的分别是什么？给出一个两者不一致的具体场景。
+  \item 为什么这个探测放在\cnemph{模块 import 时}只做一次，而不是每次调用 \codet{range()} 时都 try/except？
+  \item 退化版的 \codet{range} 用了 \codet{contextlib.contextmanager}。如果直接写成一个返回 \codet{None} 的普通函数，会在什么用法上炸？
+\end{enumerate}
+\hint (c) 去看 \codet{@nvtx.range("...")} 是怎么用的，再看 \codet{with nvtx.range("..."):} 是怎么用的。
+\ifshowanswers
+\tcblower
+\answer (a) 前者问\cnemph{设备}：这台机器上有没有可见且可用的 CUDA GPU。后者问\cnemph{build}：这份 torch 二进制里有没有编进 NVTX 符号。不一致的场景：一台装了 CUDA 版 torch 但没插 GPU（或 \code{CUDA_VISIBLE_DEVICES=""}）的机器，\code{is_available()} 是 \code{False}，而 NVTX 调用完全正常。反过来也有：某些精简 build 有 CUDA runtime 但没有 NVTX。
+
+(b) 因为答案在进程生命周期内不会变，而 \code{@nvtx.range} 装饰的是 forward——每步前向都要走一遍，每层都有。在热路径上放 try/except 是白付代价。探测一次、把结果固化成两套函数定义，调用点零开销。
+
+(c) 炸在\cnemph{装饰器}用法上。\code{@nvtx.range("...")} 要求 \code{range(...)} 的返回值是一个可调用的装饰器；而 \code{with nvtx.range("..."):} 要求它是一个上下文管理器。\code{contextlib.contextmanager} 产生的是 \code{ContextDecorator}，同时满足两种——这正是 torch 自己的实现方式，所以退化版和真版行为一致。返回 \code{None} 的普通函数在 \code{with} 上就会 \code{AttributeError}。
+\whereincode \codeat{cs336-basics/cs336\_basics/nvtx\_compat.py}{32}
+\fi
+\end{checkpoint}
+
+% ---------------------------------------------------------------------------
+\subsection{训练预算：2.6 token/param，是 wall-clock 决定的}
+\label{subsec:budget}
+
+最后这一节讲的是一个\cnemph{取舍}，不是一个失败，但它必须被主动说出来，否则看到数字的人会以为是配置失误。
+
+\code{max_iters} 是这么定出来的：先跑 500 步标定，从\cnemph{训练进度条}解析真实吞吐（稳态约 1.30 batch/s），再按目标 wall-clock 反推步数。最终 \code{max_iters=30000}、\code{warmup_iters=900}，对应约 6.5 小时。折算：
+
+\[
+30000\ \mbox{step} \times \underbrace{2}_{\mbox{rank}} \times \underbrace{8}_{\mbox{batch}} \times \underbrace{1024}_{\mbox{ctx}}
+= 491{,}520{,}000\ \mbox{token} \approx 492\mbox{M} .
+\]
+
+对 190.4M 参数，这是 \textbf{2.58 token/param}。Chinchilla 建议的 20 倍需要约 3.8B token，也就是要训约 51 小时——\cnemph{差了 7.7 倍}。
+
+\paragraph{三个必须一起说清楚的数。}这三个数容易被混起来，分开写：
+
+\begin{itemize}\itemsep2pt
+  \item \cnemph{2.58 token/param}：$491.5\mbox{M} / 190.4\mbox{M}$，衡量的是模型训得够不够。
+  \item \cnemph{2.83 遍语料}：$491.5\mbox{M} / 174.0\mbox{M}$（unique token），衡量的是数据被重复了几次。
+  \item \cnemph{2.8 token/param}：这是\cnemph{标定阶段}按 \code{max_iters=32119}（526M token）算的数，最终 run 缩到 30000 步之后不再适用。冲刺日志里两个数都出现过，容易看混——以 2.58 为准。
+\end{itemize}
+
+\paragraph{这是取舍，不是失误。}在「固定 7 小时、2 张 3090」这个预算下，只有两个选项：训一个明显欠训、但曲线干净、产物完整可用的 190M；或者训一个 Chinchilla-optimal 但只能跑到 1/8 进度就没时间的模型。选了前者，因为这次冲刺要的是\cnemph{一条打通的链路}（语料 $\to$ 训练 $\to$ 微调 $\to$ serving），不是一个 SOTA 数字。面试里要主动把这句话说出来，别等人问。
+
+\paragraph{下一次的瓶颈不是步数，是数据。}语料只有 174M unique token，已经训了 492M（2.83 遍）。继续加步数只是在同一批数据上多转几圈。正确的方向是把 \code{build_mixed_corpus.py} 的字符预算从 780MB 提到约 3GB（C4 和 Wikipedia 都是流式的，取之不尽），得到约 700M token，再训到约 2B token（10.5 token/param）。估计成本：建语料 2--3 小时，训练约 12 小时。\cnemph{这个 loss 预测（3.59 $\to$ 约 3.2）是外推，没有做过。}
+
+\medskip
+\noindent 这一章的产物是一个 checkpoint 和一堆数字。下一章要做的是回答「这些数字里哪些是真的」——\secref{sec:b-sft} 拿它做指令微调 ablation，\secref{sec:b-kv} 把它送进 serving 链路。

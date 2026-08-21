@@ -1,0 +1,350 @@
+% CANONICAL: llm-serving/docs/handout/handout.sty
+%
+% Shared style for the two retrospective handouts:
+%   Assignment A -- llm-serving/docs/handout/assignment-a.tex
+%   Assignment B -- LLM-system-project/docs/handout/assignment-b.tex
+%
+% The two live in separate git repositories, so this file is copied rather than
+% symlinked: either repo must build after a standalone clone. The version string
+% below is what makes drift visible -- if the two copies disagree, say so.
+%
+% Engine: XeLaTeX (required, for xeCJK). Build with
+%   latexmk -xelatex assignment-a.tex
+% No -shell-escape needed; code highlighting is listings, not minted.
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{handout}[2026/07/29 v1.0 CS336-style retrospective handout]
+
+% ---------------------------------------------------------------------------
+% Layout
+% ---------------------------------------------------------------------------
+\RequirePackage[margin=1in]{geometry}
+\RequirePackage{titlesec}
+\RequirePackage{fancyhdr}
+\RequirePackage{booktabs}
+\RequirePackage{tabularx}
+\RequirePackage{makecell}
+\RequirePackage{caption}
+\RequirePackage{enumitem}
+\RequirePackage{xcolor}
+\RequirePackage{graphicx}
+
+% ---------------------------------------------------------------------------
+% Fonts
+%
+% Deliberately NOT ctexart: that switches sectioning to Chinese-journal
+% conventions. We want CS336's western article layout with Chinese body text, so
+% article + ctex(scheme=plain) and ctex handles only CJK line breaking, punctuation
+% and font switching.
+%
+% fontset=none forces explicit font choices. Without it, ctex picks PingFang on
+% macOS -- which is NOT installed here -- and a missing font would silently
+% substitute instead of failing at build time.
+% ---------------------------------------------------------------------------
+\RequirePackage[UTF8, scheme=plain, fontset=none]{ctex}
+
+\setCJKmainfont{Songti SC}[BoldFont={Heiti SC Medium}]
+\setCJKsansfont{Heiti SC}[BoldFont={Heiti SC Medium}]
+\setCJKmonofont{Songti SC}
+% TeX Gyre ships with TeX Live but is not registered with fontconfig, so it has
+% to be addressed by filename rather than by family name.
+\setmainfont{texgyretermes}[
+  Extension      = .otf,
+  UprightFont    = *-regular,
+  ItalicFont     = *-italic,
+  BoldFont       = *-bold,
+  BoldItalicFont = *-bolditalic,
+]
+\setsansfont{texgyreheros}[
+  Extension      = .otf,
+  UprightFont    = *-regular,
+  ItalicFont     = *-italic,
+  BoldFont       = *-bold,
+  BoldItalicFont = *-bolditalic,
+]
+\setmonofont{Menlo}[Scale=MatchLowercase]
+
+% No CJK italic is set on purpose: slanted Chinese is a typographic mistake.
+% Chinese emphasis goes through the sans (Heiti) face instead, which \sffamily
+% already reaches via \setCJKsansfont.
+\newcommand{\cnemph}[1]{{\sffamily #1}}
+
+\titleformat{\section}{\sffamily\Large\bfseries}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\sffamily\large\bfseries}{\thesubsection}{0.7em}{}
+\titleformat{\subsubsection}{\sffamily\normalsize\bfseries}{\thesubsubsection}{0.6em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\sffamily\HandoutShortTitle}
+\fancyhead[R]{\small\sffamily\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\newcommand{\HandoutShortTitle}{}
+\newcommand{\sethandoutshorttitle}[1]{\renewcommand{\HandoutShortTitle}{#1}}
+
+% ---------------------------------------------------------------------------
+% Colors
+% ---------------------------------------------------------------------------
+\definecolor{cpOrange}{HTML}{E8710A}      % Checkpoint (self-test)
+\definecolor{cpOrangeBG}{HTML}{FEF3E7}
+\definecolor{tipBlue}{HTML}{1A73E8}       % Downscaling tip
+\definecolor{tipBlueBG}{HTML}{E8F0FE}
+\definecolor{misGrey}{HTML}{5F6368}       % Common misconception
+\definecolor{misGreyBG}{HTML}{F1F3F4}
+\definecolor{retRed}{HTML}{9A0007}        % Retracted result
+\definecolor{retRedBG}{HTML}{F5F0F0}
+
+\definecolor{codeBG}{HTML}{FAFAFA}
+\definecolor{codeComment}{HTML}{2E7D32}
+\definecolor{codeKeyword}{HTML}{0B57D0}
+\definecolor{codeString}{HTML}{A8500A}
+\definecolor{codeLineNo}{HTML}{9AA0A6}
+
+\definecolor{linkInternal}{HTML}{B3261E}  % internal cross-reference
+\definecolor{linkURL}{HTML}{00838F}       % external URL
+\definecolor{linkCite}{HTML}{2E7D32}      % bibliography
+
+% ---------------------------------------------------------------------------
+% Code listings
+%
+% listings rather than minted: pygmentize is installed on this machine but is not
+% on PATH, so minted would need -shell-escape plus a PATH fixup in every editor
+% integration. The code here is Python plus a little JSON and shell, which
+% listings handles, and the three effects the handout actually needs (italic green
+% comments, greyed-out elisions, escapes for inline Chinese notes) are one
+% \lstset key each.
+% ---------------------------------------------------------------------------
+\RequirePackage{listings}
+% url is what makes long identifiers and paths breakable (see \codeb and
+% \codeat). hyperref pulls it in too, but that happens further down this file,
+% and \DeclareUrlCommand is needed here.
+\RequirePackage{url}
+
+\lstdefinestyle{hlbase}{
+  basicstyle=\ttfamily\small,
+  commentstyle=\itshape\color{codeComment},
+  keywordstyle=\bfseries\color{codeKeyword},
+  stringstyle=\color{codeString},
+  numberstyle=\tiny\color{codeLineNo},
+  backgroundcolor=\color{codeBG},
+  % fullflexible + keepspaces is what makes CJK comments typeset correctly under
+  % XeLaTeX + xeCJK. The default columns=fixed positions every character on a
+  % monospace grid, and a double-width CJK glyph gets torn apart by it.
+  columns=fullflexible,
+  keepspaces=true,
+  extendedchars=true,
+  showstringspaces=false,
+  breaklines=true,
+  breakatwhitespace=false,
+  captionpos=b,
+  escapeinside={(*@}{@*)},
+  literate={...}{{\textcolor{codeLineNo}{...}}}3,
+}
+\lstdefinestyle{hlnum}{style=hlbase, language=Python,
+  numbers=left, numbersep=8pt,
+  frame=leftline, framerule=0.8pt, rulecolor=\color{black!20},
+  xleftmargin=1.2em,
+}
+\lstdefinestyle{hlplain}{style=hlbase, language=Python, numbers=none,
+  frame=single, rulecolor=\color{black!20},
+}
+\lstdefinestyle{hlrepl}{style=hlbase, numbers=none,
+  frame=single, rulecolor=\color{black!20},
+}
+\lstdefinestyle{hlshell}{style=hlbase, language=bash, numbers=none,
+  frame=single, rulecolor=\color{black!20},
+}
+\lstset{style=hlbase}
+
+% Two inline-code macros, and the difference matters:
+%
+%   \code{...}  -- body text ONLY. Backed by \lstinline, so _ # % & $ need no
+%                  escaping, but it is fragile and WILL fail inside a tcolorbox
+%                  title, a section heading, or a caption.
+%   \codet{...} -- robust, for box titles / headings / captions. Plain \texttt,
+%                  so you must escape _ yourself: \codet{pending\_queue}.
+%   \codeb{...} -- breakable. For long identifiers and paths in captions, table
+%                  cells and other narrow contexts, where the other two are one
+%                  unbreakable box and run off the margin. Verbatim like \code
+%                  (no escaping), but no syntax highlighting.
+\newcommand{\code}[1]{\lstinline[style=hlbase, language=Python]|#1|}
+\DeclareRobustCommand{\codet}[1]{\texorpdfstring{{\ttfamily #1}}{#1}}
+\makeatletter
+\DeclareUrlCommand\ho@codeb{\urlstyle{tt}\def\UrlFont{\ttfamily}}
+\DeclareRobustCommand{\codeb}[1]{\ho@codeb{#1}}
+\makeatother
+
+% ---------------------------------------------------------------------------
+% Answer visibility
+%
+% Defining \HANDOUTQUIZ produces a blank self-test edition, which is the point of
+% the Checkpoint boxes:
+%   latexmk -xelatex -jobname=assignment-a-quiz \
+%           -pretex='\def\HANDOUTQUIZ{}' -usepretex assignment-a.tex
+%
+% The switch is a plain \def rather than \showanswersfalse because -pretex runs
+% before \documentclass, i.e. before this package exists -- calling the boolean
+% directly there is an undefined control sequence.
+% ---------------------------------------------------------------------------
+\newif\ifshowanswers
+\showanswerstrue
+\makeatletter
+\@ifundefined{HANDOUTQUIZ}{}{\showanswersfalse}
+\makeatother
+
+% ---------------------------------------------------------------------------
+% Boxes
+% ---------------------------------------------------------------------------
+\RequirePackage[most]{tcolorbox}
+\tcbuselibrary{skins, breakable, listings}
+
+\tcbset{boxbase/.style={
+  breakable, enhanced,
+  boxrule=1pt, arc=2pt,
+  left=8pt, right=8pt, top=6pt, bottom=6pt,
+  fonttitle=\sffamily\bfseries,
+  toptitle=2pt, bottomtitle=2pt,
+}}
+
+% (1) Checkpoint -- orange. Not \newtcbtheorem, because [auto counter] plus an
+% explicit label={cp:#1} makes the slug and the LaTeX label the same string, so
+% cross-references never need a separate lookup table.
+% \detokenize is what lets the slug stay honest snake_case: an unescaped _ is a
+% math subscript and would be a hard error in the title. Authors write
+% {sleep_zero_semantics}, not {sleep\_zero\_semantics}.
+\newtcolorbox[auto counter, number within=section]{checkpoint}[2]{
+  boxbase,
+  colback=cpOrangeBG, colframe=cpOrange,
+  colbacktitle=cpOrange, coltitle=white,
+  title={Checkpoint~\thetcbcounter\ (\texttt{\detokenize{#1}}): #2},
+  label={cp:#1},
+}
+
+% (2) Downscaling tip -- blue. CS336 uses these for "how to do this without a
+% GPU"; same meaning here.
+\newtcolorbox{tipbox}[1]{
+  boxbase,
+  colback=tipBlueBG, colframe=tipBlue,
+  colbacktitle=tipBlue, coltitle=white,
+  title={Downscaling Tip: #1},
+}
+
+% (3) Example -- thin black frame, worked through, nothing to answer.
+\newtcolorbox[auto counter, number within=section]{examplebox}[2]{
+  boxbase,
+  colback=white, colframe=black!80,
+  boxrule=0.5pt, sharp corners,
+  colbacktitle=white, coltitle=black,
+  title={Example~\thetcbcounter\ (\texttt{\detokenize{#1}}): #2},
+  label={ex:#1},
+}
+
+% (4) Misconception -- grey. CS336 has no such box; these handouts need one,
+% because a large part of what they record is having been wrong. THE CONTENT OF
+% THIS BOX IS FALSE and is kept deliberately.
+\newtcolorbox{misconception}[1]{
+  boxbase,
+  colback=misGreyBG, colframe=misGrey,
+  colbacktitle=misGrey, coltitle=white,
+  title={常见误解: #1},
+}
+
+% (5) Retraction -- dark red. For results that were published inside this project
+% and later withdrawn. Kept visible rather than deleted, so the reasoning that
+% produced them stays inspectable.
+\newtcolorbox{retraction}[1]{
+  boxbase,
+  colback=retRedBG, colframe=retRed,
+  colbacktitle=retRed, coltitle=white,
+  title={撤回 (retracted): #1},
+}
+
+% ---------------------------------------------------------------------------
+% Run-in labels used inside boxes
+% ---------------------------------------------------------------------------
+\newcommand{\answer}{\par\medskip\noindent\textbf{参考答案:}\ }
+\newcommand{\hint}{\par\medskip\noindent\textbf{Hint}\ }
+\newcommand{\resources}{\par\medskip\noindent\textbf{Resource requirements:}\ }
+\newcommand{\whereincode}{\par\medskip\noindent\textbf{代码位置:}\ }
+
+% ---------------------------------------------------------------------------
+% Hyperlinks and cross-references
+% ---------------------------------------------------------------------------
+\RequirePackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=linkInternal,
+  urlcolor=linkURL,
+  citecolor=linkCite,
+  bookmarksnumbered=true,
+  bookmarksopen=true,
+  pdfstartview=FitH,
+}
+\RequirePackage{cleveref}
+
+\newcommand{\secref}[1]{\S\ref{#1}}
+
+% A code location is deliberately NOT a hyperlink: a file: URL is meaningless on
+% any machine other than the one that built the PDF.
+%
+% It is built on url's \path machinery purely for line breaking: repository paths
+% are long, \ttfamily offers TeX no break points, and a path in a narrow column
+% otherwise runs straight off the right margin.
+%
+% Robust, not \newcommand: \codeat lands inside captions and tcolorbox titles,
+% which are moving arguments, and url refuses to expand there. Declaring it
+% robust keeps it unexpanded until the caption is actually typeset.
+\makeatletter
+\DeclareUrlCommand\ho@codepath{\urlstyle{tt}\def\UrlFont{\ttfamily\small}}
+\DeclareRobustCommand{\codeat}[2]{{\color{black!70}\ho@codepath{#1:#2}}}
+\makeatother
+
+% Long unbreakable \ttfamily runs still push some lines over; let TeX stretch a
+% little rather than overfull-box them.
+\setlength{\emergencystretch}{3em}
+
+% ---------------------------------------------------------------------------
+% Cross-handout references
+%
+% Not xr-hyper: that needs the sibling's .aux at build time, and the two handouts
+% live in different repositories. Whoever clones one does not have the other.
+%
+% Instead: A declares stable anchors, dumps them to <jobname>.xrefs, and B keeps a
+% copied mapping file. An \extref to an unknown key warns and typesets [??: key],
+% mirroring how \ref reports a broken label, so drift shows up in the build log.
+% ---------------------------------------------------------------------------
+% \anchor is just a \label with a naming convention. The table itself is
+% extracted from the .aux afterwards by sync-xrefs.py.
+%
+% It used to \immediate\write the table straight out to \jobname.xrefs. That
+% silently dropped later entries and duplicated earlier ones once biblatex,
+% hyperref, tcolorbox and six \include'd files were all competing for output
+% streams -- and a cross-reference table that is quietly incomplete is worse
+% than none. The .aux is written by LaTeX's own label machinery, so reading it
+% cannot go half-missing the same way.
+\makeatletter
+\newcommand{\anchor}[1]{\label{#1}}
+% nameref supplies \@currentlabelname, i.e. the section title that ends up in
+% the .aux entry sync-xrefs.py reads. hyperref loads it; guard anyway.
+\@ifpackageloaded{nameref}{}{\RequirePackage{nameref}}
+
+\newcommand{\DeclareExternalAnchor}[3]{%
+  \expandafter\gdef\csname ho@xr@#1@sec\endcsname{#2}%
+  \expandafter\gdef\csname ho@xr@#1@name\endcsname{#3}%
+}
+\newcommand{\HandoutSiblingName}{Assignment A}
+\newcommand{\sethandoutsiblingname}[1]{\renewcommand{\HandoutSiblingName}{#1}}
+
+\newcommand{\extref}[1]{%
+  \@ifundefined{ho@xr@#1@sec}{%
+    \PackageWarning{handout}{Unknown external anchor `#1'}%
+    \textcolor{linkInternal}{\textbf{[??: \texttt{#1}]}}%
+  }{%
+    \textcolor{linkInternal}{%
+      \HandoutSiblingName~\S\csname ho@xr@#1@sec\endcsname
+      〈\csname ho@xr@#1@name\endcsname〉}%
+  }%
+}
+
+\makeatother
+
+\endinput

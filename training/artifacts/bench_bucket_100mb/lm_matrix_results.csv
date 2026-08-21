@@ -1,0 +1,2 @@
+kernel,ddp,gpus,epochs,steps_per_epoch,global_batch_size,local_batch_size,samples_per_epoch,wall_sec,sec_per_epoch,tokens_per_sec,peak_gpu_mb
+flash_attention_triton,Bucketed Overlapping DDP,2,2,51,16,8,816,206.205,103.103,8104.4,20735.7

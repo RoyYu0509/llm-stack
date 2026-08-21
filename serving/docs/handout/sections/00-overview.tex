@@ -1,0 +1,130 @@
+\section{讲义总览}
+\label{sec:a-overview}
+
+这份讲义回顾 \texttt{llm-serving} 这个仓库的前三周：一个从零写起的 LLM inference serving engine。
+
+它不是作业。代码已经写完了，题目已经做过了。讲义要做的是把当时的推理过程重新摊开——特别是那些\cnemph{被否决的方案}，因为在这个仓库里，被否决的方案比留下来的代码更值钱。
+
+\subsection{做成了什么，没做成什么}
+\label{sec:a-scope}
+
+CS336 的 handout 在这个位置写 ``What you will implement''。回顾式讲义没有将来时，所以这里必须同时写另一半：到此为止。
+
+\textbf{已经建成的：}
+
+\begin{enumerate}[label=\arabic*., itemsep=2pt]
+  \item 请求的数据契约与生命周期状态（\codet{RequestData} / \codet{RequestStatus} / \codet{TokenizedData}）
+  \item tokenizer 的隔离缝——一个约 30 行的包装，换掉底层实现时只有它要改
+  \item 单请求的 prefill \(\rightarrow\) decode 循环，手写驱动模型而不是调 \codet{generate()}
+  \item 协作式 async 调度（ADR-001 称之为 ``Weak Async''），一个 consumer 循环
+  \item 端到端差分测试：输出与 HuggingFace 的 \codeb{generate(do_sample=False)} token 级完全一致
+\end{enumerate}
+
+\textbf{没有建成的，讲义也不会假装讲了：}
+
+\begin{enumerate}[label=\arabic*., itemsep=2pt]
+  \item continuous batching——\secref{sec:a-batching} 讲的是它的\cnemph{设计}，Week 3 至今没有代码
+  \item scheduler 与 admission policy
+  \item 真正的 KV cache manager（现在是每请求一份，请求结束就扔）
+  \item \codet{output/} 层：detokenize 与流式回传，目录是空的
+  \item HTTP 层。\codeb{RequestReceiver.submit_request()} 就是这个系统对外的 API
+  \item CI、lint 配置、benchmark
+\end{enumerate}
+
+\subsection{你可以亲手跑什么}
+\label{sec:a-run}
+
+三条，都不需要 GPU。
+
+\begin{lstlisting}[style=hlshell]
+uv sync
+uv run pytest -q            # 44 passed, 1 skipped
+uv run python draft.py      # sleep(0) 赛跑实验，见 (*@\secref{sec:a-loop}@*)
+\end{lstlisting}
+
+\resources CPU 或 MPS 即可。第一次跑 \codet{pytest} 会下载 gpt2 权重（约 500\,MB），之后约 70 秒跑完。被 skip 的那一个是跨仓库集成测试，需要一份训练好的 checkpoint，见姊妹篇。
+
+\subsection{仓库长什么样}
+\label{sec:a-layout}
+
+\begin{lstlisting}[style=hlrepl]
+inferenceLM/
+  data/               三个数据契约            -> (*@\secref{sec:a-shape}@*)
+  request_receiver/   接收与 tokenize         -> (*@\secref{sec:a-shape}@*)
+  engine/
+    inference_engine.py   编排层              -> (*@\secref{sec:a-loop}@*)
+    lm_engine.py          纯计算层            -> (*@\secref{sec:a-loop}@*)
+    transformer_lm_adapter.py   见下方说明
+  output/             【空】detokenize/流式回传，尚未开始
+benchmarks/           【空】
+docs/
+  designs/DESIGN.md         v0 架构设计（部分已被取代，见 (*@\secref{sec:a-timeline}@*)）
+  decisions/adr00{0,1}-*.md 两份 ADR
+  progress/, retro/         周计划与复盘
+draft.py              独立实验脚本，不属于包    -> (*@\secref{sec:a-loop}@*)
+main.py               打印一行问候的桩，无人调用
+LICENSE               【0 字节】
+README.md             【仍是脚手架】写着 "[Project Name — TO BE DECIDED]"
+\end{lstlisting}
+
+两个空目录不是遗漏，它们是这个项目进度的一部分，所以要列出来。
+
+\codeb{inferenceLM/engine/transformer_lm_adapter.py} 需要单独说一句：它在物理上属于这个仓库，但它要讲的事情属于姊妹篇——它是把另一个项目里自己训练的模型接进 \codet{LMEngine} 的适配层。这份讲义不讲它，见 Assignment B 第 4 章。
+
+规模上：\codet{inferenceLM/} 下的 Python 约 514 行，\codet{tests/} 约 880 行，\codet{docs/} 下的 markdown 约 1502 行。文档是包代码的三倍——对一个 portfolio 项目来说这个比例本身就是一句论点。
+
+\subsection{怎么用这份讲义}
+\label{sec:a-howto}
+
+橙色的 \textbf{Checkpoint} 框是自测题，不是作业。用法：先合上代码，把题干答完，再看下半格的参考答案和代码位置。
+
+三条约定：
+
+\begin{itemize}[itemsep=2pt]
+  \item \textbf{代码是唯一的事实来源。} 每个 Checkpoint 都给了 \codet{file.py:line}。参考答案和代码冲突时以代码为准，并且请把讲义改掉。
+  \item \textbf{灰框和深红框里的内容是错的，故意保留。} 灰色的「常见误解」装的是当时真的这么想过、后来被推翻的说法；深红色的「撤回」装的是曾经报出去、后来撤回的结论。删掉它们会让讲义看起来更聪明，但会丢掉最有用的部分。
+  \item \textbf{建议读两遍。} 第一遍顺读，Checkpoint 全跳过；第二遍只做 Checkpoint，答不上来再翻回去。想要一份不带答案的版本：
+\end{itemize}
+
+\begin{lstlisting}[style=hlshell]
+latexmk -xelatex -jobname=assignment-a-quiz \
+        -pretex='\def\HANDOUTQUIZ{}' -usepretex assignment-a.tex
+\end{lstlisting}
+
+\subsection{文档时间线，以及哪一份现在算数}
+\label{sec:a-timeline}
+
+这是全篇最该先看的一张表。这个仓库的文档不是同时写的，也不是彼此一致的——照着过期的那份建，会建错东西。
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{llcX}
+\toprule
+文档 & 日期 & Status & 现在的效力 \\
+\midrule
+\codet{designs/DESIGN.md} & 2026-04-09 & Approved &
+  写于 Week 3 re-scope 之前。容量规划那部分仍然有效；
+  \cnemph{静态预分配 KV cache 与 2:1 prefill 优先调度已被取代} \\
+\codeb{decisions/adr000-request.md} & 2026-04-11 & Accepted & 现行 \\
+\codet{progress/week1-tasks.md} & --- & --- & 已完成 \\
+\codet{retro/week1-retro.md} & --- & --- & 三条失败模式与对应动作 \\
+\codet{progress/week2-tasks.md} & --- & --- & 已完成 \\
+\codeb{decisions/adr001-inference.md} & 2026-04-15 & \cnemph{Proposed} &
+  代码全部照它实现了，但这份 ADR \cnemph{至今没有升到 Accepted} \\
+\codet{retro/week2-retro.md} & --- & --- & 853 行，全仓库最长；\secref{sec:a-loop} 的主要素材 \\
+\codeb{progress/week3-discussion.md} & 2026-04-21 & --- &
+  \cnemph{batching 与 scheduling 上的现行 SSOT，取代 DESIGN.md} \\
+\codet{progress/future-tasks.md} & --- & --- &
+  DESIGN.md 时代的产物，与 week3 的方案不完全一致 \\
+\bottomrule
+\end{tabularx}
+\caption{文档时间线与现行效力。没有 Date / Status 字段的文档如实留空。}
+\label{tab:a-timeline}
+\end{table}
+
+两处值得单独记住：
+
+\codet{adr001} 的 Status 是 Proposed。ADR 模板里 Proposed 的意思是「提出，待定」，但代码已经完全照它建好了。这是流程与现实脱节的一个具体例子——\secref{sec:a-shape} 里那两个从未被赋值的枚举值是同一件事在类型系统里留下的痕迹。
+
+\codet{week3-discussion.md} 取代了 \codet{DESIGN.md}，但它\cnemph{自己内部也有一处不一致}。这一点留到 \secref{sec:a-batching} 展开。

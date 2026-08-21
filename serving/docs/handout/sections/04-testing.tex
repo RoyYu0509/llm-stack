@@ -1,0 +1,320 @@
+\section{测试一个 async serving 系统}
+\label{sec:a-testing}
+
+这个仓库的测试有一个很容易被忽略的特征：\cnemph{它几乎不 mock。}
+\code{tests/} 下九个文件、总共 880 行，\code{unittest.mock} 只出现在\cnemph{一个}测试函数里；
+其余每一个测试都加载真的 \code{gpt2} 权重，跑真的 forward pass。
+
+这不是懒。一个 inference engine 的核心断言是"我手写的 prefill/decode 循环和 HuggingFace 自己的
+\code{generate()} 生成同一串 token"——把模型 mock 掉，这个断言就没有了对象。
+所以整套测试的主要手段是\cnemph{差分测试}（differential testing）：
+不描述正确输出长什么样，而是让被测实现和一个可信参照跑同一个输入，比对两者。
+
+\subsection{差分测试：让参照实现来定义"正确"}
+\label{sec:test-diff}
+\anchor{a:differential-testing}
+
+仓库里有两条差分链路，各自对着一个不同的参照。第一条是 \code{Tokenizer} 对拍
+\codeb{transformers.AutoTokenizer}：\codet{tests/tokenizer\_test.py} 的八个用例全是这个形状——
+同一段文本喂给两边，断言 token 列表相等（第 21 行）、decode 结果相等（第 53 行），
+空串、特殊字符、100 次重复的长文本各来一遍。第二条是 \code{LMEngine.inference()} 对拍
+\code{model.generate()}：\codet{tests/lm\_engine\_test.py} 第 25 行的
+\codeb{test_lm_engine_matches_huggingface} 是全仓库最核心的一个测试——第 28--34 行调 HF 的
+\code{generate()}，第 35 行切掉 prompt 只留新 token，第 38 行跑我们自己的循环，
+第 40 行一句 \codeb{assert hf_new_tokens == engine_new_tokens}，三组 \code{max_length}
+（30 / 1024 / 200）走 \code{parametrize}。
+
+这套办法有一个硬前提：\cnemph{两边必须是确定性的}。只要采样带随机，逐 token 相等的断言就无从谈起。
+所以 \code{do_sample=False} 不是一个默认值，是差分测试的入场券。
+ADR-001 把这件事写进了决策理由（\codet{adr001-inference.md} "Inference Data Flow 的设计"第 3 条）：
+
+\begin{quote}
+生成 new\_token 的时候, 用 greedy sampling, 也就是选概率最高的 token 作为 new\_token,
+因为这样是 deterministic 的, 方便对比我们自己控制的 inference 和 model.generate() 是一致的。
+\end{quote}
+
+顺带说一句这份 ADR 的状态：它的 Status 至今是 Proposed，不是 Accepted，
+尽管它描述的每一条决策都已经写进代码并被测试覆盖了。
+
+第三条差分链路是后来加的，形状更精巧：\codeb{tests/transformer_lm_adapter_test.py}
+第 15--31 行的 \code{_LogitsOnly} 把 GPT-2 剥成 \codeb{(batch, seq) -> (batch, seq, vocab)}
+这个最朴素的签名——没有 config、没有 cache、没有输出 dataclass，正好长得像我们从零写的
+\code{TransformerLM}——再拿它穿过 adapter 的无缓存重算路径去对拍 HF 带缓存的
+\code{generate()}（第 62--83 行）。命题很干净：\cnemph{不带 KV cache 的贪心解码，
+必须和带 cache 的逐 token 相同；重算只会更慢，不会不一样。}
+
+\begin{checkpoint}{differential_testing}{差分测试的前提和边界}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 差分测试和"断言期望值"相比，各自适合测什么？这个仓库为什么主要用前者？
+  \item \code{do_sample=False} 在这里是性能选择还是正确性前提？说出理由。
+  \item 差分测试测不出哪一类 bug？举一个这个仓库里的具体例子。
+\end{enumerate}
+\hint 想想"参照实现和被测实现共享了什么"。
+\ifshowanswers
+\tcblower
+\answer (a) 断言期望值适合输出短、可枚举、语义稳定的东西（\code{RequestData} 的字段、异常类型）；
+差分测试适合输出长、且"正确"只能由另一个实现定义的东西（一串 token）。
+这个仓库的核心产物正是后者——手写 prefill/decode 循环的输出没有别的方式能写出期望值。
+(b) 正确性前提。逐 token 相等的断言要求两边确定性；一旦 \code{do_sample=True}，
+两次运行取样不同，断言必然失败。ADR-001 明写选 greedy 就是为了能和 \code{generate()} 对比。
+(c) 测不出\cnemph{两边共有的}错误。参照是 HF 自己，所以权重加载错了（比如加载成另一个
+checkpoint）两边照样一致，测试全绿；\codet{tokenizer\_test.py} 八个用例都以
+\code{AutoTokenizer} 为准，我们的封装和它一起错时测试也没有意见。
+\whereincode \codeat{tests/lm\_engine\_test.py}{40}、\codeat{tests/tokenizer\_test.py}{21}、
+\codeat{tests/transformer\_lm\_adapter\_test.py}{83}；理由见
+\codeat{docs/decisions/adr001-inference.md}{52}。
+\fi
+\end{checkpoint}
+
+\subsection{全仓库唯一一处 mock，以及它凭什么是合理的}
+\label{sec:test-mock}
+
+\code{unittest.mock} 在这个仓库里出现四次，全部集中在同一个文件的同一个测试里：
+导入在 \codeb{tests/inference_engine_test.py} 第 10--11 行，使用在第 118 行和第 120 行。
+
+\lstinputlisting[style=hlnum, firstline=118, lastline=123, firstnumber=118]%
+  {../../tests/inference_engine_test.py}
+
+被 mock 掉的是 \code{LMEngine.inference}，注入一个 \code{RuntimeError}；
+而这个测试要验证的东西在 \code{LMEngine} 之外：状态要变成 \code{FAILED}（第 125 行），
+\code{generated_tokens} 要保持为空（第 126 行），最要紧的是队列不能卡死——
+\code{finally} 块必须调到 \code{task_done()}（\codeat{inferenceLM/engine/inference\_engine.py}{59}）。
+规则于是可以写成一句话：\cnemph{mock 用来注入无法自然产生的失败，不用来替代被测对象。}
+
+对照同一文件里的另一个失败路径就更清楚：第 70 行的
+\codeb{test_inference_engine_reject_prompt_equals_max_len} 同样在测 \code{FAILED}，
+但它\cnemph{没有} mock——构造一个 prompt 长度恰好等于 \code{max_token_length} 的请求，
+让 \code{lm_engine.py} 第 99 行那个真实的 \code{RuntimeError} 自己抛出来。
+能自然触发的失败就自然触发，只有"GPU OOM"这类在 CPU 上没法复现的故障才值得伪造。
+
+\begin{checkpoint}{when_to_mock}{什么时候才允许 mock}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 仓库里唯一一处 mock 替换了什么？那个测试真正断言的是什么？
+  \item 同一个文件里还有一个测 \code{FAILED} 状态的用例却没 mock，两者的区别在哪？
+  \item 如果把 \codeb{test_inference_engine_async_fetch_all_requests} 里的模型也 mock 成
+        "返回固定 token 列表"，会失去什么？
+\end{enumerate}
+\hint 问"这个失败在真机上能不能自己发生"。
+\ifshowanswers
+\tcblower
+\answer (a) 替换 \code{LMEngine.inference}，注入 \code{RuntimeError}。断言的不是 \code{LMEngine}，
+而是 \code{InferenceEngine} 的错误处理契约：状态转 \code{FAILED}、不留半截 token、
+\code{finally} 里的 \code{task_done()} 照常执行所以队列不卡。
+(b) 区别是失败能不能自然产生。prompt 长度等于 \code{max_length} 是可构造的真实输入；
+而"inference 内部炸了"（OOM、driver 错误）在 CPU 上复现不了，只能注入。
+(c) 会失去它唯一的价值。它测的是十条请求经真实 async 循环走完并写回 \code{request_store}；
+模型一旦被替换，剩下的只是在验证"我们写的 mock 返回了我们写的值"。
+\whereincode \codeat{tests/inference\_engine\_test.py}{118} 与
+\codeat{tests/inference\_engine\_test.py}{120}；无 mock 的对照组在
+\codeat{tests/inference\_engine\_test.py}{70}。
+\fi
+\end{checkpoint}
+
+\subsection{async 测试的三行固定模式}
+\label{sec:test-async}
+
+每一个碰引擎的测试都长着同一个三行骨架，一个字都不差。它在仓库里出现六次
+（\codeb{inference_engine_test.py} 第 55、90、121 行；\codet{data\_flow\_test.py} 第 35、65 行；
+\codeb{trained_model_integration_test.py} 第 123 行）。
+
+\begin{examplebox}{async_test_pattern}{三行骨架，以及每行去掉会怎样}
+\begin{lstlisting}[style=hlnum, firstnumber=55]
+task = inference_engine.run()   # 不 await
+await pending_queue.join()      # 等队列被消费干净
+task.cancel()                   # 收尾
+\end{lstlisting}
+
+\textbf{第 1 行：\code{run()} 不 await。}它不是 \code{async def}，调
+\code{asyncio.create_task()} 后立刻返回那个 \code{Task}
+（\codeat{inferenceLM/engine/inference\_engine.py}{61}）。
+\cnemph{去掉会怎样：}写成 \codeb{await inference_engine.run()} 就再也回不来——循环体是
+\code{while self.open:}，只有 \code{kill()} 能把它置 False，而你已经没机会执行下一行去调它。
+测试永远挂住。这是 ADR-001 单列过的决定，\secref{sec:a-loop} 讲过。
+
+\textbf{第 2 行：\codeb{await pending_queue.join()}。}它等的是\cnemph{未完成计数归零}——
+每次 \code{put()} 加一，每次 \code{task_done()} 减一，而消费循环的 \code{finally} 块保证
+无论成功失败都会减（\codeat{inferenceLM/engine/inference\_engine.py}{59}），
+所以归零等于"所有请求都处理完了（DONE 或 FAILED）"。
+\cnemph{去掉会怎样：}下一行立刻 \code{cancel()}，引擎大概率还停在
+\codeb{await self.pending_queue.get()} 上一条没跑完，后面断言全挂。
+
+\textbf{第 3 行：\code{task.cancel()}。}往后台任务里扔一个 \code{CancelledError}，让它别再空转。
+\cnemph{去掉会怎样：}测试返回了，那个 task 还挂在 event loop 上等下一条请求，
+留给 pytest 关闭 loop 时销毁（asyncio 通常会为此打一条告警）。
+它不会让当前测试失败，所以很容易被忽略——\code{BACKLOG.md} 的 P0 正是冲这件事去的。
+\end{examplebox}
+
+第 2 行是这个模式里唯一一个需要想清楚的地方，因为有一个看起来更自然的写法：\code{await task}。
+
+\begin{checkpoint}{queue_join_semantics}{为什么是 \codet{join()}，不是 \codet{await task}}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item \code{pending_queue.join()} 到底在等什么？它和"引擎那个 task 结束"是不是一回事？
+  \item 把第 2 行换成 \code{await task} 会发生什么？
+  \item 是哪一行代码保证了 \code{join()} 一定能返回，哪怕请求推理失败？
+\end{enumerate}
+\hint 先回答：\codeb{_keep_get_request_and_inference()} 这个协程，在正常情况下会不会返回？
+\ifshowanswers
+\tcblower
+\answer (a) 等未完成计数归零，即每个 \code{put()} 都配上了一次 \code{task_done()}。
+和 task 结束完全不是一回事：task 跑的是 \code{while self.open:} 长循环
+（\codeat{inferenceLM/engine/inference\_engine.py}{43}），队列空了它就阻塞在
+\codeb{await self.pending_queue.get()} 上继续等，\cnemph{永远不会自己结束}。
+(b) 死锁。\code{await task} 等一个永不完成的 task；\code{kill()} 只把 \code{self.open}
+置 False（\codeat{inferenceLM/engine/inference\_engine.py}{72}），而循环这时正卡在
+\code{get()} 里，连那个条件都读不到。测试一直挂到超时。
+(c) \codeb{finally: self.pending_queue.task_done()}
+（\codeat{inferenceLM/engine/inference\_engine.py}{59}）。没有它，任何一条请求抛异常都会让
+计数永远差一，\code{join()} 永不返回——这正是 \code{BACKLOG.md} 那条 try/finally 条目要解决的。
+\whereincode \codeat{tests/inference\_engine\_test.py}{55}--57；
+契约在 \codeat{inferenceLM/engine/inference\_engine.py}{43} 与第 59 行。
+\fi
+\end{checkpoint}
+
+\subsection{测试暴露出来的设计后果}
+\label{sec:test-consequence}
+
+测试写起来别扭的地方，通常是设计有话要说的地方。这里有两处。
+
+\textbf{其一：请求 ID 是全局单调的，测试必须先读一眼计数器。}
+\codeb{tests/request_receiver_test.py} 第 16 行和第 54 行都有同一句
+\codeb{request_idx = RequestReceiver.index}，然后才拿它拼出期望的 ID 列表。
+原因在 \codeat{inferenceLM/request\_receiver/request\_receiver.py}{22}：\code{index} 是
+\cnemph{类属性}，每次 \code{submit_request()} 自增
+（\codeat{inferenceLM/request\_receiver/request\_receiver.py}{53}），
+新建实例不会清零；同一个 pytest 进程里 \codet{data\_flow\_test.py} 每提交一条请求也在推它。
+这个文件第 5--6 行还把 \code{pending_queue} 和 \code{request_store} 写成模块级全局变量，
+三个测试函数共享同一份。
+
+\textbf{其二：有几个测试把实现细节钉进了字符串。}
+\codet{tests/request\_test.py} 第 7--27 行逐字符断言 \code{str(RequestData)} 的输出，
+连换行位置和字段顺序都写死；同文件第 71 行断言一整条 JSON 字面量。
+\code{RequestData} 里任何一个字段改名、换位置、新增，这几个测试立刻红。
+要更正一个流传的说法：\cnemph{这不是全仓库唯一的脆性测试。}同类断言至少五处——
+\codet{request\_test.py} 第 16--26、42--52、71 行三处黄金字面量，
+外加 \codet{lm\_engine\_test.py} 第 51、67 行用 \codeb{pytest.raises(..., match=...)}
+匹配完整错误消息（消息里还嵌着 \code{max_length} 的具体数值）。
+后两处 \code{BACKLOG.md} 已经记成 P2，前三处没人记。
+
+\begin{checkpoint}{test_isolation_leak}{测试之间漏了什么状态}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 为什么 \codeb{request_receiver_test.py} 不能直接写
+        \codeb{request_ids = [str(i) for i in range(10)]}？
+  \item 除了 \code{RequestReceiver.index}，这个文件还共享了什么？
+  \item 这个泄漏是测试写法的问题，还是被测代码的设计问题？
+\end{enumerate}
+\hint 找出 \code{index} 是在哪个作用域上定义的。
+\ifshowanswers
+\tcblower
+\answer (a) 因为 \code{index} 是类属性，在整个 pytest 进程里单调递增，跨函数跨文件都不重置。
+第一个跑的测试拿到 0--9，第二个从 10 开始，而"第一个"是谁取决于收集顺序，
+所以测试只能\cnemph{先读当前值}再算期望。
+(b) 第 5--6 行的模块级 \code{pending_queue} 和 \code{request_store}，三个测试函数共用同一份。
+每个测试恰好提交 10 条又取走 10 条，队列才没有残留——这是巧合维持的平衡，不是隔离。
+(c) 是被测代码的设计问题，测试只是把它暴露出来。ID 分配是进程级全局计数器，
+既无注入点也无重置接口；将来跑多进程或需要可复现 ID 时就得改。
+\whereincode \codeat{tests/request\_receiver\_test.py}{16}、\codeat{tests/request\_receiver\_test.py}{5}；
+根因在 \codeat{inferenceLM/request\_receiver/request\_receiver.py}{22} 与
+\codeat{inferenceLM/request\_receiver/request\_receiver.py}{53}。
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{brittle_golden_string}{黄金字符串测的是契约还是格式}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item \codeb{test_request_data_str_matches_latest_format} 会因为哪些改动而失败？
+        这些改动里有几个是真的破坏了契约？
+  \item 这类断言在什么情况下是\cnemph{正当}的？
+  \item 同文件的序列化测试也断言了一整条 JSON 字面量，它和 \code{__str__} 那条是同一种脆性吗？
+\end{enumerate}
+\hint 分开问两件事：这个字符串有没有下游消费者？它是不是接口的一部分？
+\ifshowanswers
+\tcblower
+\answer (a) 加字段、改字段名、调整 \code{__str__} 里的换行或顺序，全都会红，
+而其中只有"改名"算破坏契约。信噪比很低：它锁住的是
+\codeat{inferenceLM/data/request.py}{31} 那一行 f-string 的排版。
+(b) 当这个字符串有真实消费者时——日志格式、要被别的进程解析、或本身就是对外 API。
+现在没有：\code{__str__} 只在人眼调试时被读到。
+(c) 不完全一样。序列化那条断言的是 \code{model_dump_json()} 的输出，
+而序列化格式\cnemph{确实}是跨进程契约（\codet{adr000-request.md} 就是为它写的），
+钉死它的正当性强得多——它的失败是在提醒你"你改了对外格式"。
+\whereincode \codeat{tests/request\_test.py}{16}（\code{__str__} 黄金串）、
+\codeat{tests/request\_test.py}{71}（JSON 字面量）；实现在
+\codeat{inferenceLM/data/request.py}{31}。
+\fi
+\end{checkpoint}
+
+\subsection{这套测试测不到什么}
+\label{sec:test-gaps}
+
+先把规模摆清楚。\codeb{uv run pytest --collect-only -q} 的结果是
+\cnemph{44 tests collected}，来自八个文件：
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.24\textwidth} r >{\raggedright\arraybackslash}X l c@{}}
+\toprule
+文件 & 用例 & 覆盖什么 & 手段 & 真模型 \\
+\midrule
+\codet{tokenizer\_test.py}          & 8 & encode/decode 与 HF tokenizer 一致；空串、特殊字符、长文本 & 差分 & 仅 tokenizer \\
+\codet{lm\_engine\_test.py}         & 5 & 手写循环对拍 \codet{generate()}；两条 \codet{max\_length} 越界拒绝 & 差分 + 异常断言 & 是 \\
+\codeb{inference_engine_test.py}  & 4 & 初始 \codet{open=False}；10 条请求全 DONE；两条 FAILED 路径 & 断言（含唯一 mock） & 是 \\
+\codet{data\_flow\_test.py}         & 2 & Receiver $\to$ 队列 $\to$ Engine 全链路；边收边推理 & 断言 & 是 \\
+\codet{request\_test.py}           & 13 & \codet{RequestData} 的 \codet{\_\_str\_\_}、序列化与六种非法输入 & 黄金字面量 + 异常断言 & 否 \\
+\codet{tokenize\_data\_test.py}     & 3 & \codet{TokenizedData} 的 \codet{\_\_str\_\_} 与 \codet{\_\_len\_\_} & 断言 & 否 \\
+\codeb{transformer_lm_adapter_test.py} & 6 & adapter 无缓存重算对拍 \codet{generate()}；前缀截断与增长 & 差分 + 断言 & 是 \\
+\codeb{trained_model_integration_test.py} & 0 & 自训练权重走完整请求路径 & --- & --- \\
+\midrule
+合计 & 44 & & & \\
+\bottomrule
+\end{tabularx}
+\caption{\codet{tests/} 下九个文件的覆盖面。最后一个文件贡献 0 个用例：
+它在第 36 行用 \codeb{pytest.importorskip("cs336_basics.lm")} 在模块层就跳过，
+再加第 38--41 行的环境变量 \codet{skipif}，本机默认环境下根本不会被收集。
+八个文件里三种手段并存，但只有前两行是真正的差分测试。}
+\label{tab:test-files}
+\end{table}
+
+下面是这 44 个用例\cnemph{测不到}的东西。这份清单是照着代码一条条核出来的，不是印象。
+
+\begin{enumerate}[label=\arabic*.]
+  \item \cnemph{并发正确性。}六处 \code{run()} 分布在六个测试里，每个测试只起\cnemph{一个}
+        引擎、配一个队列。多消费者抢同一个 \code{pending_queue} 的场景一次都没出现过，
+        \code{request_store} 这个共享 dict 的并发写也从未被压过。
+        今天没问题（只有一个 consumer），Week 3 之后会变成问题。
+  \item \cnemph{内存。}没有任何用例观察内存占用。"KV cache 用完即丢"（ADR-001 的 Consequences）
+        没有测试为它背书。
+  \item \cnemph{性能。}\code{benchmarks/} 下只有一个 \code{.gitkeep}。延迟、吞吐、TTFT、ITL——
+        这些词在 \code{DESIGN.md} 的验收标准里出现过，在测试里一次也没有。
+  \item \cnemph{关闭路径。}\code{kill()} 在
+        \codeat{inferenceLM/engine/inference\_engine.py}{68}，
+        但 \code{tests/} 里\cnemph{没有任何一处调用它}（grep \code{.kill(} 与
+        \code{shutdown}，零命中）。所有测试都用 \code{task.cancel()} 绕过去。
+        \code{BACKLOG.md} 的 P0 "Engine lifecycle management" 至今还开着。
+  \item \cnemph{采样路径。}\code{do_sample=True} 在
+        \codeat{inferenceLM/engine/lm\_engine.py}{45} 与
+        \codeat{inferenceLM/engine/lm\_engine.py}{70} 会抛 \code{NotImplementedError}，
+        而测试里它只作为 \code{RequestData} 的一个字段值出现过
+        （\codeat{tests/request\_test.py}{38}），从没被送进 \code{LMEngine}。
+  \item \cnemph{Week 3 的全部内容。}stage-homogeneous batching、admission policy、
+        batch 内的 cache 拼接与驱逐——\secref{sec:a-batching} 讨论的每一件事，
+        既没有实现也没有测试。
+\end{enumerate}
+
+第 4 条值得多说一句，因为它是一个循环：没有 \code{shutdown()} 所以测试只能 \code{cancel()}，
+而 \code{cancel()} 能让测试通过，所以没有人被迫去写 \code{shutdown()}。
+测试的绿色在这里不是证据，是麻醉。
+
+\begin{tipbox}{在没有 GPU 的机器上跑完整套测试}
+44 个用例全都能在 CPU 上跑：每个文件用 module 作用域 fixture 加载一次 \code{gpt2}
+（例如 \codet{lm\_engine\_test.py} 第 7--13 行），权重按文件加载而不是按用例。
+先 \codeb{uv run pytest --collect-only -q} 确认收到 44 个，再单跑
+\codeb{uv run pytest tests/lm_engine_test.py -v}。
+\resources CPU 即可。首次运行会下载 \code{gpt2} 权重（HF 缓存目录 525\,MB）。
+\codet{lm\_engine\_test.py} 里那个 \code{max_length=1024} 的用例会真的生成到上下文写满，
+是整套里最慢的一个。
+\end{tipbox}

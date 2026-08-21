@@ -1,0 +1,24 @@
+{
+  "checkpoint": "checkpoints_pretrain_v1/checkpoint_epoch_0100.pt",
+  "iter": 100,
+  "streams": {
+    "mv_web": {
+      "path": "data/tokenized/slice_mixedvalid_web.npy",
+      "loss": 3.7717387425899505,
+      "ppl": 43.45555721402389,
+      "batches": 200
+    },
+    "mv_wiki": {
+      "path": "data/tokenized/slice_mixedvalid_wikipedia.npy",
+      "loss": 3.5247250878810883,
+      "ppl": 33.94444059533671,
+      "batches": 200
+    },
+    "mv_instr": {
+      "path": "data/tokenized/slice_mixedvalid_instruction.npy",
+      "loss": 2.3863455700874328,
+      "ppl": 10.873684129716738,
+      "batches": 200
+    }
+  }
+}

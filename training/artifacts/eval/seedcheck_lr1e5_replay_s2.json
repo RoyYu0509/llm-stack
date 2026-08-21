@@ -1,0 +1,12 @@
+{
+  "checkpoint": "checkpoints_sft_lr1e5_replay/checkpoint_epoch_0100.pt",
+  "iter": 100,
+  "streams": {
+    "general": {
+      "path": "data/tokenized/mixed_valid.npy",
+      "loss": 3.5912576043605804,
+      "ppl": 36.27967272371919,
+      "batches": 200
+    }
+  }
+}

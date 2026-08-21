@@ -1,0 +1,500 @@
+\section{系统 benchmark 与测量噪声}
+\label{sec:b-bench}
+
+这一章要讲的，是整个冲刺里最想写进简历的一句话：\cnemph{“自研 bucketed overlapped DDP 比 naive DDP 快 X\%”}。
+这句话我们先写错了一次，然后用了一整轮复测才搞清楚自己\cnemph{有没有资格}说它。所以本章的主线不是
+“我们的 DDP 有多快”，而是：一个百分比的差异，要满足什么条件才配叫结论。
+
+前四章有一个共同的便利：它们比的是 loss，而 loss 是\cnemph{配对}打分的——同一批 batch、同一个固定 seed，
+两个 checkpoint 之间 0.005 的差都能分辨（\secref{sec:b-sft}）。这一章比的是 wall-clock。同一套代码、
+同一个配置，换个观测量，可信度整个塌一层。
+
+\subsection{第一版矩阵表}
+\label{subsec:matrix-v1}
+
+想回答的问题有四个，一张表就能同时覆盖：朴素 $O(N^2)$ attention 在真实 190M 模型上还跑不跑得动、
+Triton FlashAttention 比 vectorized PyTorch 快多少、自研 bucketed DDP 相对 naive DDP 和 PyTorch 官方 DDP
+什么位置、以及 bucket 的额外显存要多少。驱动脚本是 \code{benchmark_lm_matrix.py}，
+它对 \code{kernels} 与 \code{wrappers} 做笛卡尔积，每格跑 3 个不计时的 warmup epoch、再跑 3 个计时 epoch，
+每 epoch 固定 51 步（\codeat{cs336\_systems/experiments/benchmark\_lm\_matrix.py}{66}、
+\codeat{...}{67}、\codeat{...}{232}）。计时用的 wall-clock 在 rank 之间取 \code{MAX} 而不是平均，
+所以 tok/s 是按最慢的那张卡算的，不会被快卡拉高（\codeat{...}{288}）。
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+Kernel & Local (1 GPU) & Naive DDP & Bucketed（自研） & PyTorch DDP \\
+\midrule
+\codeb{scaled_dot_prod_attention} & OOM & OOM & OOM & OOM \\
+\codet{vectorized\_torch}           & 5213.3 & 7344.7 & 7706.3 & OOM \\
+\codet{flash\_attention\_triton}    & 5309.2 & 8188.7 & 8398.0 & 8532.3 \\
+\bottomrule
+\end{tabular}
+\caption{第一版矩阵，单位 tok/s，真实 0.19B 模型 / ctx 1024 / batch 8 每卡 / 2$\times$RTX 3090。
+每格只跑了一次。\codet{flash\_attention\_triton} 那一行的 per-GPU 峰值显存依次是
+20003.9 / 20004.7 / 20745.0 / 20731.4 MB，即 bucket 的额外显存是 +741.1 MB（+3.7\%）。
+数据源 \codeb{artifacts/bench_matrix/lm_matrix_results.csv}。}
+\end{table}
+
+\subsection{撤回：每格只跑了一次}
+\label{subsec:retraction}
+
+这张表当晚就被当成结论写出去了。第二天做 bucket size 复测时才第一次量到自己的测量噪声——
+同一个配置连测三次是 9590 / 9125 / 8553 tok/s，围绕均值上下约 $\pm$6\%。更难看的是隔夜重跑：
+同一个 Naive DDP 配置，前一晚 8188.7，第二天 8629，\cnemph{差 5.4\%，比表里报的任何一个“结论”都大}。
+
+\begin{retraction}{Bucketed 比 Naive 快 2.6\%；PyTorch DDP 比 Bucketed 快 1.6\%}
+这两句话来自上表里 8398.0 / 8188.7 / 8532.3 三个数，每个都是单次测量。已量到的单次 run-to-run
+噪声是 $\pm$6\%（bucket 复测）到 CV 9.5\%（5-rep 复测的非配对散布）。两个\cnemph{独立}单次测量作商，
+相对标准差还要再乘 $\sqrt{2}$，也就是 8.5\%--13\%。2.6\% 大约是 0.3$\sigma$，1.6\% 更小。
+两条都撤回。\codet{vectorized\_torch} 那行的 “Bucketed 快 4.9\%” 同样撤回。
+\end{retraction}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=0.34cm, y=1cm]
+  \fill[misGreyBG] (-8.5,-0.15) rectangle (8.5,1.45);
+  \fill[retRedBG]  (-6,-0.15) rectangle (6,1.45);
+  \draw[retRed, thick] (-6,-0.15) -- (-6,1.45);
+  \draw[retRed, thick] ( 6,-0.15) -- ( 6,1.45);
+  \draw[dashed, black!45] (0,-0.15) -- (0,1.45);
+  \draw[->, black!70] (-11,0) -- (12,0);
+  \foreach \x in {-10,-5,0,5,10}
+    \draw[black!70] (\x,-0.12) -- (\x,0.12) node[below=8pt, font=\scriptsize] {\x\%};
+  \foreach \x/\y/\lab in {%
+      1.6/0.35/{+1.6\% PyTorch vs Bucketed},
+      2.6/0.72/{+2.6\% Bucketed vs Naive (triton)},
+      4.9/1.09/{+4.9\% Bucketed vs Naive (vectorized)}} {
+    \draw[black!35] (\x,\y) -- (6.3,\y);
+    \fill[retRed] (\x,\y) circle (2pt);
+    \node[anchor=west, font=\scriptsize\sffamily, black!65] at (6.5,\y) {\lab};
+  }
+  \fill[black!75] (9.0,1.46) circle (2pt);
+  \node[anchor=west, font=\scriptsize\sffamily, black!65] at (9.4,1.46)
+       {+9.0\% Triton vs vectorized};
+\end{tikzpicture}
+\caption{把想报的效应放到量到的噪声带上。红带是单次测量本身的 $\pm$6\%，
+灰带是两次独立单次测量作商的 1$\sigma$（$\pm$8.5\%）。三个 DDP 差异全部落在红带内，
+跨 kernel 的 +9.0\% 只是刚探出灰带。作为对照，TF32 on/off 是 +43\%（远在画面右侧），
+那种量级单跑一对就够。}
+\end{figure}
+
+\subsection{哪些格子仍然成立}
+\label{subsec:survives}
+
+撤回不等于全废。同一张表里，结论的\cnemph{类型}不同，抗噪声的能力差好几个数量级。
+
+\textbf{完全不受影响的是二值结论。}\codeb{scaled_dot_prod_attention} 那一行四格全部 OOM，
+错误信息在 CSV 里逐条留着（\codeat{artifacts/bench\_matrix/lm\_matrix\_results.csv}{2}），
+“跑不跑得动”不是一个带误差棒的量。同理，\codet{vectorized\_torch} 那格 PyTorch DDP 也 OOM，
+而 Triton 那格能跑——只有 Triton 省下的显存余量够 PyTorch DDP 起来。这类结论和
+\extref{a:differential-testing} 是同一种形状：答案是 0 或 1，噪声进不来。
+
+\textbf{被我们高估了的是跨 kernel 的百分比。}当时的说法是“跨 kernel 的差距远大于噪声”。
+重新算一遍：Triton 相对 vectorized 的领先，在三种 wrapper 下分别是 +1.8\%（Local）、+11.5\%（Naive）、
++9.0\%（Bucketed）。三个观测同向，但\cnemph{幅度差了 6 倍}，而且中位数 +9.0\% 恰好压在噪声带边缘。
+更糟的是这三对根本不是干净的配对——脚本的循环是 \code{for kernel: for wrapper:}
+（\codeat{cs336\_systems/experiments/benchmark\_lm\_matrix.py}{710}），
+两个 kernel 是按\cnemph{块}跑的，中间隔了整整四格。这正是配对分析最怕的情形：条件和时间漂移被绑在一起。
+所以这一条应该降级成“方向可能对，幅度不可信”，而不是像当初那样当成安全区。
+
+\begin{checkpoint}{know_your_noise}{在报一个 2\% 的差异之前，你需要先知道什么}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 一张 $3\times4$ 的 benchmark 矩阵，每格跑一次。这张表能支撑的最小可报差异是多大？要先做什么实验才知道？
+  \item 已知单次测量的相对标准差是 $\sigma$。两个独立单次测量作商，这个比值的相对标准差是多少？
+\end{enumerate}
+\hint 噪声不是从表里读出来的，它只能\cnemph{另外测}——固定配置重复跑，看散布。
+\ifshowanswers
+\tcblower
+\answer (a) 无法从表本身判断，必须先做重复测量。我们后来量到单次噪声约 $\pm$6\%，
+于是这张表能支撑的只有二值结论（OOM/不 OOM）和远大于 10\% 的差异。
+(b) 约 $\sqrt{2}\sigma$。$\sigma=6\%$ 时是 8.5\%，所以两个数字差 2.6\% 时几乎没有信息量。
+这就是为什么撤回的门槛看起来比直觉高得多。
+\whereincode \codeat{artifacts/bench\_bucket\_50mb/lm\_matrix\_results.csv}{2}、
+\codeat{interview\_prep/PROGRESS.md}{142}
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{which_comparisons_survive}{同一张表里，哪些格子撤回、哪些不撤回}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 为什么“朴素 attention 全部 OOM”不需要重复测量就能报？
+  \item 脚本的外层循环是 kernel-major 的。这对“Triton 比 vectorized 快 9\%”这条结论有什么影响？
+\end{enumerate}
+\hint 一个是分类问题，一个是估计问题。
+\ifshowanswers
+\tcblower
+\answer (a) 它是二值的：进程要么完成要么抛 \code{torch.OutOfMemoryError}，没有分布可言。
+时间噪声不会把一次 OOM 变成不 OOM。
+(b) 两个 kernel 按块跑，kernel 和时间漂移完全混淆，所以那三个百分比不是配对观测。
+方向上 3/3 同向（+1.8\% / +11.5\% / +9.0\%），但 $n=3$ 的双侧 sign test 最小 $p$ 就是 0.25，
+形式上依然不显著。
+\whereincode \codeat{cs336\_systems/experiments/benchmark\_lm\_matrix.py}{710}
+\fi
+\end{checkpoint}
+
+\subsection{复测设计：5 轮 × 3 wrapper，按 rep 交替}
+\label{subsec:replication-design}
+
+复测只改了一件事：\cnemph{执行顺序}。不是把 Naive 连跑 5 次再把 Bucketed 连跑 5 次（wrapper-major），
+而是每一轮里三种 wrapper 各跑一次、跑完再进下一轮（rep-major），结果按 \code{rep<N>_.../} 分目录落盘，
+分析脚本按目录名解析轮次（\codeat{cs336\_systems/experiments/analyze\_ddp\_replicate.py}{29}）。
+
+顺序为什么是设计的一部分：机器在几十分钟的尺度上会漂（温度、显存碎片、page cache 冷热）。
+wrapper-major 的排法会让“策略”和“时刻”完全共线，第 1 个策略拿到的是冷机器、第 3 个拿到的是热机器，
+差多少都说不清是谁的。rep-major 让同一轮内的三次运行在时间上相邻，共享同一时刻的漂移，
+轮内作差就能把这部分消掉。脚本的 docstring 把这个前提写死了：如果按 wrapper 分块跑，
+这套分析\cnemph{直接失效}（\codeat{cs336\_systems/experiments/analyze\_ddp\_replicate.py}{14}）。
+
+\begin{tipbox}{没有 GPU 也能复现这一章的后半段}
+本章从 \secref{subsec:three-tests} 起用到的只有 15 个 tok/s 数字。把表~\ref{tab:three-tests} 的
+逐轮百分比抄成一个 Python list，照 \codeat{cs336\_systems/experiments/analyze\_ddp\_replicate.py}{88}
+那 12 行把 sign test 敲一遍，能原样复现 $p=0.062$；把 \code{2 * se} 那行敲一遍能复现 2SE$=$10.2\%。
+统计部分和 GPU 没有任何关系，这也正是它值得单独写成脚本的原因。
+\resources CPU 即可；不到 1 分钟。
+\end{tipbox}
+
+\subsection{三种检验，三个结论}
+\label{subsec:three-tests}
+
+复测跑完，同一批数据被三种方法各分析了一遍，得到的结论\cnemph{不一样}。这是本章最容易被拿去做坏事的地方，
+所以三个都列出来。
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lccc}
+\toprule
+ & Bucketed vs Naive & PyTorch vs Bucketed & PyTorch vs Naive \\
+\midrule
+逐轮领先 & +1.1 / +6.5 / +4.3 / +29.9 / +9.3\% & --- & --- \\
+胜场     & 5/5 & 4/5（偏向 Bucketed） & 3/5 \\
+中位数   & +6.5\% & $-$2.75\% & --- \\
+均值 vs 2SE & +10.3\% vs 10.2\%（勉强过） & --- & +10.4\%（过） \\
+sign test 双侧 $p$ & 0.062 & 0.375 & 0.375 \\
+\midrule
+结论 & \cnemph{可以报} & 分辨不出 & 两种方法打架，不报 \\
+\bottomrule
+\end{tabular}
+\caption{5 reps $\times$ 3 wrapper 复测的三种检验对照。“---” 表示这一格没有被记录下来：
+复测的原始 CSV（\codet{artifacts/ddp\_replicate/}）没有同步回本地，我们无法重算，
+所以宁可留空也不填一个推出来的数。逐轮百分比与胜场、中位数、$p$ 值出自
+\codeb{interview_prep/PROGRESS.md}。}
+\label{tab:three-tests}
+\end{table}
+
+三种检验各自在回答不同的问题：
+
+\textbf{非配对 Welch} 问的是“两个 wrapper 的\cnemph{总体均值}差多少”。它把 rep 配对结构丢掉了，
+于是 9.5\% 的 run-to-run 方差直接淹掉信号。脚本里旧版给出的结论是
+“$-11.1\% \pm 11.7\%$，within noise，分辨不出”。这个结论没有错，只是问错了问题。
+
+\textbf{配对 $t$} 问的是“轮内差值的均值是否显著非零”。判据写得很克制：只判断均值有没有越过 2 个标准误，
+不叫它 significance（\codeat{cs336\_systems/experiments/analyze\_ddp\_replicate.py}{77}）。
+Bucketed vs Naive 的均值 10.3\% 对 2SE 10.2\%——\cnemph{刚好压线}，而且这条线完全靠 r4 那个 +29.9\% 撑着。
+
+\textbf{sign test} 问的是“B 是不是\cnemph{一贯}比 A 快”。它只看符号，不看幅度，所以离群值动不了它。
+实现是精确的二项尾部，不是正态近似：
+
+\begin{lstlisting}[style=hlnum, firstnumber=88]
+            pos = sum(1 for d in diffs if d > 0)
+            n = len(diffs)
+
+            def _comb(n, k):
+                num = den = 1
+                for i in range(k):
+                    num *= n - i
+                    den *= i + 1
+                return num // den
+
+            tail = sum(_comb(n, k) for k in range(min(pos, n - pos) + 1))
+            p = min(1.0, 2 * tail / (2 ** n))
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/experiments/analyze_ddp_replicate.py}{88--99}，已直接抄入正文。
+
+\begin{checkpoint}{paired_vs_unpaired}{同一批数字，配对和非配对为什么给出相反的结论}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 非配对检验丢掉了什么信息？在什么前提下丢掉它是合理的？
+  \item 三种检验结论不一致时，为什么“挑一个自己喜欢的报”比只做一种检验更糟？
+\end{enumerate}
+\hint 配对的前提是执行顺序，不是统计选择。
+\ifshowanswers
+\tcblower
+\answer (a) 丢掉了“哪几次运行在时间上相邻”这个信息。只有当运行顺序本身是随机化的、
+没有共享漂移时，丢掉它才不亏。我们的顺序是刻意 rep-major 排的，丢掉就白排了。
+(b) 只做一种检验是无知；做了三种再挑一种报，是在已知它们不一致的情况下隐瞒。
+正确做法是三种都列，并说明为什么采信其中一种——这里采信 sign test，
+因为它不依赖 r4 那个 +29.9\% 的离群值，而配对 $t$ 完全靠它才勉强过线。
+\whereincode \codeat{cs336\_systems/experiments/analyze\_ddp\_replicate.py}{71}、\codeat{...}{88}
+\fi
+\end{checkpoint}
+
+\subsection{样本量的天花板：这个实验从设计上就到不了 \codet{p<0.05}}
+\label{subsec:n5}
+
+这是全章最重要的一条。双侧 sign test 在 $n$ 轮全胜时的精确 $p$ 值是
+\[
+p \;=\; 2\cdot\frac{{n \choose 0}}{2^{n}} \;=\; 2^{1-n}.
+\]
+$n=5$ 代入得 $p = 2/32 = 0.0625$。也就是说：\cnemph{哪怕 5/5 全胜，这个实验能拿到的最小 $p$ 也是 0.0625}，
+永远越不过 0.05。要越过至少需要 $n=6$（$2^{-5}=0.031$）。
+
+这件事的实际含义是：$p=0.062$ 不是“接近显著、再努力一点就能过”，而是\cnemph{已经到顶了}。
+样本量的天花板应该在\cnemph{设计实验的时候}算，不是在看到 $p$ 值之后再算——后者的顺序会诱导人去补跑第 6 轮，
+而补跑的动机来自已经看到的结果，那是标准的 $p$-hacking。
+
+\begin{checkpoint}{n5_ceiling}{为什么 \codet{n=5} 时 \codet{p<0.05} 是不可能的}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 写出双侧 sign test 在 $n$ 轮全胜下的 $p$ 值表达式，并算出 $n=4,5,6$ 的值。
+  \item 如果实验做完看到 $p=0.062$，然后决定“再补一轮凑 $n=6$”，问题出在哪？
+\end{enumerate}
+\hint 在零假设下，每一轮的符号是独立的公平硬币。
+\ifshowanswers
+\tcblower
+\answer (a) $p = 2^{1-n}$：$n=4$ 给 0.125，$n=5$ 给 0.0625，$n=6$ 给 0.031。
+所以 $n\le5$ 的双侧 sign test 无论如何达不到 0.05。
+(b) 停止规则依赖于已观测的结果，实际的第一类错误率会高于名义值。
+补轮次本身没错，错的是\cnemph{看到 $p$ 之后}才决定补。样本量该在跑之前定。
+\whereincode \codeat{cs336\_systems/experiments/analyze\_ddp\_replicate.py}{98}
+\fi
+\end{checkpoint}
+
+\subsection{唯一站得住的一条}
+\label{subsec:the-one-claim}
+
+在上面两个前提之下，能报的只有一条：\cnemph{Bucketed Overlapping DDP 快于 Naive DDP}，
+逐轮 +1.1 / +6.5 / +4.3 / +29.9 / +9.3\%，5/5 全胜，sign test 双侧 $p=0.062$（该样本量下的最小值），
+配对 $t$ 也过线。
+
+报的时候用\cnemph{中位数 +6.5\%}，不用均值 +10.3\%。原因是 r4 那个 +29.9\% 是离群值：
+五个值里其余四个落在 1--10\%，它一个把标准差抬到 11.3\%。均值被它拉高了近 4 个百分点，
+而中位数不动。脚本一次把 mean / median / sd / 2SE 四个都打出来，就是为了让这个选择必须当面做出，
+而不是默认取均值（\codeat{cs336\_systems/experiments/analyze\_ddp\_replicate.py}{103}）。
+
+\begin{misconception}{跑的次数越多，噪声就被平均掉了，所以 5 次的均值比单次可信}
+既然单次测量有 $\pm$6\% 的噪声，那跑 5 次取平均就能把噪声压到 $6\%/\sqrt{5} \approx 2.7\%$，
+于是 +10.3\% 这个均值已经安全地大于噪声了，可以直接报。
+\end{misconception}
+
+这段话有两处错。第一，$\sqrt{n}$ 只压\cnemph{均值的标准误}，压不掉分布的重尾——这里 sd 是 11.3\%，
+2SE 是 10.2\%，均值 10.3\% 只领先 0.1 个百分点，全靠一个离群值。第二，
+$n$ 同时也是 sign test 的天花板（\secref{subsec:n5}），多跑几次并不能无限换到显著性。
+
+\begin{checkpoint}{median_not_mean}{为什么报中位数 +6.5\% 而不是均值 +10.3\%}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 五个逐轮值是 +1.1 / +6.5 / +4.3 / +29.9 / +9.3\%。中位数和均值各是多少？差别从哪来？
+  \item 如果只能报一个数给面试官，报哪个？为什么另一个不算撒谎但仍然不该报？
+\end{enumerate}
+\hint 先问“去掉最大的那个值，结论还在不在”。
+\ifshowanswers
+\tcblower
+\answer (a) 中位数 6.5\%，均值 10.2--10.3\%。差别全部来自 r4 的 +29.9\%：
+去掉它之后剩下四个是 1.1/4.3/6.5/9.3，均值降到 5.3\%。
+(b) 报中位数。均值不是假数，但它对单个观测过度敏感，
+在 $n=5$、sd 11.3\% 的样本上把它当作效应量，等于把一次运行的偶然值写进结论。
+\whereincode \codeat{cs336\_systems/experiments/analyze\_ddp\_replicate.py}{103}
+\fi
+\end{checkpoint}
+
+\subsection{让脚本去否定实验设计本身}
+\label{subsec:pairing-check}
+
+rep-major 交替是为了降低方差。问题是：\cnemph{它真的降了吗}？这句话本身是可测的，
+所以分析脚本里专门留了一段去测它，而不是在报告里断言它成功了。代码注释直接写着“更早的版本只是宣布它有效”：
+
+\begin{lstlisting}[style=hlnum, firstnumber=127]
+    if unpaired_cvs and paired_sds:
+        u, p = st.mean(unpaired_cvs), st.mean(paired_sds)
+        n_pairs = max(len(sorted(set(data[a]) & set(data[b]))) for a in data for b in data if a != b)
+        print(f"\nPairing check: mean unpaired CV {u:.1f}% vs mean paired sd {p:.1f}%.")
+        if n_pairs < 4:
+            print(f"  With only {n_pairs} paired reps both estimates are themselves very "
+                  f"noisy -- this comparison is not yet meaningful either way.")
+        elif p < 0.6 * u:
+            print("  Paired spread is materially smaller: the rep-major interleaving is "
+                  "cancelling shared drift, as intended.")
+        else:
+            print("  Paired spread is NOT materially smaller than unpaired. The variance is "
+                  "then mostly within-run (each measurement is only ~78s), not shared drift "
+                  "-- longer measurements per run would help more than more reps.")
+\end{lstlisting}
+\noindent 来源：\codeat{cs336_systems/experiments/analyze_ddp_replicate.py}{127--140}，已直接抄入正文。
+
+实测结果是 \cnemph{paired sd 11.3\% vs unpaired CV 9.5\%——配对没有降低方差}，走的是上面的 \code{else} 分支。
+脚本 docstring 里预期的“配对标准差通常远小于非配对”
+（\codeat{cs336\_systems/experiments/analyze\_ddp\_replicate.py}{13}）被自己的输出否掉了。
+
+这个否定结论比它想验证的东西更有用。配对能消掉的只有\cnemph{运行之间}共享的漂移；
+配对没帮上忙，说明方差主要来自\cnemph{单次运行内部}。于是改进方向整个反了过来：
+\cnemph{不是“多跑几轮”，而是“每轮跑更久”}。多跑轮次只能把已经很大的单次方差除以 $\sqrt{n}$，
+还要付 \secref{subsec:n5} 那个天花板的代价；跑更久是直接把单次方差本身降下来。
+
+按脚本 docstring 的说法，复测里一次运行只有约 78 秒
+（\codeat{cs336\_systems/experiments/analyze\_ddp\_replicate.py}{6}）。
+这个数字我们\cnemph{没能核实}——复测的 CSV 没同步回本地，而本地留下的 bucket 扫描每次是
+2 个计时 epoch、wall 174--208 秒。所以“78 秒”按脚本自述记录，具体是哪种配置存疑。
+
+\begin{checkpoint}{pairing_did_not_help}{配对没有降低方差，说明了什么}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 配对（轮内作差）能消掉哪一类方差？消不掉哪一类？
+  \item 已知 paired sd $\approx$ unpaired CV。下一步该增加重复轮数还是延长单次时长？为什么？
+\end{enumerate}
+\hint 把总方差拆成“运行间共享的”和“运行内自有的”两项。
+\ifshowanswers
+\tcblower
+\answer (a) 消掉运行之间共享的漂移（温度、机器负载的慢变化）；消不掉每次运行内部自有的抖动
+（随机窗口带来的 page cache 冷热、allocator 状态等）。
+(b) 延长单次时长。配对无效说明共享项很小，总方差几乎全是运行内的；
+延长测量时间是在源头上摊薄它，而增加轮数只能除以 $\sqrt{n}$，还撞 $n$ 的显著性天花板。
+\whereincode \codeat{cs336\_systems/experiments/analyze\_ddp\_replicate.py}{130}、\codeat{...}{137}
+\fi
+\end{checkpoint}
+
+\subsection{两个诊断错误}
+\label{subsec:two-diagnoses}
+
+噪声这么大，很自然会去找原因。我们找错了两次，两次的错法都值得单独记。
+
+\textbf{无效的 throttle 检查。}第一次怀疑是过热降频，于是去读 GPU 的 throttle 状态——
+但那次查询发生在 \code{torch.compile} 阶段，GPU 当时是\cnemph{空闲}的。降频只在负载下才会发生，
+在空闲时查“有没有 throttle”，得到的“没有”不包含任何信息，等于什么都没测。
+后来在负载下重查，真实情况是两张卡都钉在约 278 W 的 280 W power cap
+（\codeb{clocks_event_reasons.active=0x4}）——是功耗墙，不是过热墙。
+
+\textbf{把 3 个点叫趋势。}中途看到 Naive 连续三轮下降（8629 $\to$ 7800 $\to$ 7141），
+当时说“这是趋势不是噪声”。否掉它的不是统计，是同期的对照：PyTorch 在同样这几轮里是\cnemph{上升}的
+（8450 $\to$ 9661），全局衰减的解释直接不成立。事后补算概率：3 个可交换的观测排成指定方向的严格单调序列，
+概率是 $1/3! = 1/6 \approx 17\%$（任一方向则是 $1/3$）。六分之一的事情不需要解释。
+
+\begin{checkpoint}{invalid_throttle_check}{什么样的检查是“无效检查”}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 在 GPU 空闲时查询 throttle 状态，为什么这个“没有 throttle”的结果不能用？
+  \item 真实原因是 280 W power cap 而不是温度。这两者在现象上有什么区别？
+\end{enumerate}
+\hint 一个检查只有在“如果假设为真，它会给出不同结果”的条件下才有信息。
+\ifshowanswers
+\tcblower
+\answer (a) 空闲时无论有没有降频问题，查询都会返回“无”。这个检查在两种世界里输出相同，
+所以它的结果不更新任何信念。要在\cnemph{负载中}查才有效。
+(b) power cap 在负载一上来就立刻生效、水平稳定（两卡都钉在 $\sim$278 W），
+温度墙则表现为随时间逐渐下滑。二者的时间形状不同，这也是为什么“三轮递减”看起来像温度墙。
+\whereincode \codeat{interview\_prep/PROGRESS.md}{169}
+\fi
+\end{checkpoint}
+
+\begin{checkpoint}{three_point_trend}{3 个点的单调序列意味着什么}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item 3 个独立同分布的观测，按时间恰好严格单调递减的概率是多少？
+  \item 最终否掉“全局衰减”这个解释的是什么证据？
+\end{enumerate}
+\hint 只需要数 $3!$ 种排列里有几种符合。
+\ifshowanswers
+\tcblower
+\answer (a) 指定方向 $1/6 \approx 17\%$，任一方向 $1/3$。所以三连降完全在随机范围内。
+(b) 同期的对照条件：PyTorch DDP 在同样这几轮里是上升的。
+如果是机器整体在衰减，所有条件应该一起下降。这也是 rep-major 交替顺带买到的好处——
+每一轮都有对照，才能做这种反驳。
+\whereincode \codeat{interview\_prep/PROGRESS.md}{169}
+\fi
+\end{checkpoint}
+
+\subsection{bucket size 扫描：只报被重复验证过的那一条}
+\label{subsec:bucket-sweep}
+
+单次扫描给出 1 MB $\to$ 8242.4、10 MB $\to$ 8032.1、25 MB $\to$ 8080.2、50 MB $\to$ 9589.5、
+100 MB $\to$ 8104.4 tok/s。50 MB 比其余四个的均值高 18.2\%，而其余四个彼此散布在 $\pm$1.3\% 以内。
+一个孤峰配一片平地，更像噪声而不是曲线形状——而且当时那段汇总代码直接打印了 “best: 50MB”，
+正是同一晚刚在别的脚本里修掉的毛病：先写结论再看数据（\secref{sec:b-kv}）。
+所以只对 50 MB 和 25 MB 各补了 3 次重复。
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrrrrr}
+\toprule
+bucket & 第 1 次 & 第 2 次 & 第 3 次 & 均值 & min & max \\
+\midrule
+50 MB & 9589.5 & 9125 & 8553 & 9089 & 8553 & 9590 \\
+25 MB & 8080.2 & 7659 & 7794 & 7844 & 7659 & 8080 \\
+\bottomrule
+\end{tabular}
+\caption{50 MB 与 25 MB 各三次重复，单位 tok/s。$\min(50) = 8553 > \max(25) = 8080$，两个区间完全不重叠。
+第 1 次的两个数来自本地 \codeb{artifacts/bench_bucket_50mb/} 与 \codet{bench\_bucket\_25mb/}；
+第 2、3 次只记录在 \codeb{interview_prep/PROGRESS.md} 里，重复运行覆盖了同名 CSV，本地已无原始文件。}
+\end{table}
+
+能报的只有一句：\cnemph{50 MB 显著快于 25 MB，约 +16\%}，依据是三次重复区间不重叠——
+这是个不依赖任何分布假设的判据。\cnemph{不}报“最优 bucket size 是多少”，也\cnemph{不}报曲线形状：
+1 / 10 / 100 MB 各只有一次样本。同一批数据里，50 MB 三次跨 8553--9590（$\pm$6\%），
+这正说明单点既不足以断言“50 MB 最优”，也不足以断言“那是噪声”——两个方向都得重复才知道。
+
+\begin{checkpoint}{bucket_50mb}{三次重复不重叠，能报什么、不能报什么}
+不看代码回答：
+\begin{enumerate}[label=(\alph*)]
+  \item “$\min(A) > \max(B)$”作为判据，比“均值差 16\%”强在哪？
+  \item 已知 50 MB 快于 25 MB。为什么仍然不能说“最优 bucket size 是 50 MB”？
+\end{enumerate}
+\hint 区间不重叠是一个不需要假设分布的陈述。
+\ifshowanswers
+\tcblower
+\answer (a) 它不依赖正态性、不依赖方差估计，也不受重尾影响；在 $n=3$ 这种样本量下，
+均值差 16\% 的标准误本身就很不可靠，而“三次里最差的仍然优于对方最好的”是可以直接看的。
+(b) 曲线上另外三个点（1 / 10 / 100 MB）都只测了一次，落在 8032--8242，
+既没有重复也没有排除 50 MB 那种量级的单点抖动。我们只验证了一对比较，就只能报这一对。
+\whereincode \codeat{artifacts/bench\_bucket\_25mb/lm\_matrix\_results.csv}{2}、
+\codeat{interview\_prep/PROGRESS.md}{186}
+\fi
+\end{checkpoint}
+
+\subsection{README 里的旧数字：并列，不是覆盖}
+\label{subsec:readme-old}
+
+仓库 README 上写着另一组 DDP 数字：85.9\% scaling efficiency、比 Naive DDP 快 9.4\%
+（25{,}336.7 $\to$ 27{,}719.1 tok/s）、峰值显存 +3.3\%（+498.8 MB）。这次的真实 190M 模型上，
+对应的数是 79.1\% scaling efficiency（$8398.0 / (2\times5309.2)$）、比 Naive 快 2.6\%（已撤回）、
+显存 +3.7\%（+741.1 MB）。
+
+新数不应该覆盖旧数，因为\cnemph{两者不是同一个场景}。README 的命令指向
+\codeb{default_pipeline_config.json}：vocab 10000、12 层、$d_{ff}$ 3072、TinyStories 语料；
+这次是 vocab 50257、16 层、$d_{ff}$ 2048、真实混合语料。模型越小、通信占 step 时间的比例越大，
+重叠能省下的相对收益就越明显——旧配置下 naive 只有 25{,}336.7 tok/s 却仍能被拉高 9.4\%，
+和新配置下 8188.7 tok/s 上只剩 2.6\%，方向是自洽的。正确的写法是并列成
+“在 TinyStories/12 层配置下 …… / 在 190M 真实模型下 ……”两组。
+
+磁盘上其实已经是并列状态：README 引用的图还停在 \code{artifacts/} 根目录（7 月 15 日），
+新一轮写进了 \code{artifacts/bench_matrix/}（7 月 28 日），没有互相覆盖。
+顺带一个核实到的不一致：README 里那条命令的注释写 “bucket size 20 MB”
+（\codeat{README.md}{96}），而它 \code{--config} 指向的文件里 \code{bucket_size_mb} 是 25
+（\codeat{cs336\_systems/experiments/default\_pipeline\_config.json}{61}）。
+两个数字对不上，所以那次实验用的 bucket size 从仓库里已经无法确定——这本身就是“旧数字不能直接和新数字比”的又一个理由。
+
+\begin{examplebox}{retracting_a_result}{撤回一条结论的完整流程}
+\textbf{1. 发现。}做别的实验（bucket 复测）时顺手量到同配置三次是 9590 / 9125 / 8553，
+第一次意识到自己从没测过噪声。回头一看，已经报出去的差异是 2.6\% 和 1.6\%。
+
+\textbf{2. 量化。}把噪声当成一个要测的量而不是一句免责声明：单次 $\pm$6\%，
+隔夜同配置 5.4\%，5-rep 复测的非配对 CV 9.5\%。两个独立单次之商再乘 $\sqrt{2}$。
+
+\textbf{3. 分类。}逐条判断原表里哪些结论受影响：OOM 那一行不受影响（二值），
+跨 kernel 的百分比降级（kernel-major 执行顺序造成时间混淆），DDP 三策略之间的百分比全部撤回。
+
+\textbf{4. 重新设计。}5 reps $\times$ 3 wrapper，rep-major 交替；
+并且在分析脚本里\cnemph{显式测量}“配对到底有没有帮上忙”，而不是假定它帮上了。
+
+\textbf{5. 只保留站得住的。}三种检验全部列出；先说清 $n=5$ 的 $p$ 值天花板；
+只报 Bucketed $>$ Naive 一条，用中位数 +6.5\%；另外两条明确写“分辨不出”和“方法打架，不报”。
+
+\textbf{6. 旧结论保留原样。}\secref{subsec:retraction} 的红框不删。删掉它，
+读者就看不出这条结论曾经存在过，也就学不到它为什么会被写出来。
+\end{examplebox}
+
+这一章没有产出一个更快的 kernel，也没有把 DDP 改快。它产出的是一个门槛：
+\cnemph{在报一个百分比之前，先花一次实验的成本去测自己的噪声。}
+按本章的账算，那次复测花掉的 GPU 时间比原来那张矩阵表还多，换回来的是把三条结论删掉两条、
+第三条从 +2.6\% 改成 +6.5\%。这笔交易在简历上看起来是亏的，在面试里不是。

@@ -1,0 +1,30 @@
+{
+  "checkpoint": "checkpoints_pretrain_v1/checkpoint_epoch_0100.pt",
+  "iter": 100,
+  "streams": {
+    "general": {
+      "path": "data/tokenized/mixed_valid.npy",
+      "loss": 3.5866075706481935,
+      "ppl": 36.11136264951712,
+      "batches": 200
+    },
+    "web": {
+      "path": "data/tokenized/domain_valid_web.npy",
+      "loss": 3.8468757236003874,
+      "ppl": 46.84647302657846,
+      "batches": 200
+    },
+    "wiki": {
+      "path": "data/tokenized/domain_valid_wiki.npy",
+      "loss": 3.5517646741867064,
+      "ppl": 34.87480588786575,
+      "batches": 200
+    },
+    "instruction": {
+      "path": "data/tokenized/domain_valid_instruction.npy",
+      "loss": 2.734537422657013,
+      "ppl": 15.402616886171918,
+      "batches": 200
+    }
+  }
+}
