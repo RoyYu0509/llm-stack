@@ -1,7 +1,7 @@
 [project]
-name = "cs336-systems"
+name = "llm-training"
 version = "1.0.5"
-description = "CS336 Assignment 2 - Systems"
+description = "LLM model/training stack"
 readme = "README.md"
 requires-python = "==3.12.0"
 
@@ -45,11 +45,6 @@ build-backend = "uv_build"
 # main build target for this repo
 module-name = "cs336_systems"
 module-root = ""
-
-[tool.uv.workspace]
-members = [
-    "llm",
-]
 
 [tool.uv]
 package = true

@@ -2,7 +2,7 @@ import pytest
 import torch
 from einops import einsum, rearrange
 
-from .adapters import (
+from tests.adapters import (
     get_flashattention_autograd_function_pytorch,
     get_flashattention_autograd_function_triton,
 )

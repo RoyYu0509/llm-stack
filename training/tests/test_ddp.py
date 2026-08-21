@@ -9,12 +9,12 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
 
-from .adapters import (
+from tests.adapters import (
     ddp_bucketed_on_after_backward,
     ddp_bucketed_on_train_batch_start,
     get_ddp_bucketed,
 )
-from .common import (
+from tests.common import (
     FIXTURES_PATH,
     ToyModel,
     ToyModelWithTiedWeights,

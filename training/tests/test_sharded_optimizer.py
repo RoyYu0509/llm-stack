@@ -6,8 +6,8 @@ import pytest
 import torch
 import torch.multiprocessing as mp
 
-from .adapters import get_sharded_optimizer
-from .common import (
+from tests.adapters import get_sharded_optimizer
+from tests.common import (
     ToyModel,
     ToyModelWithTiedWeights,
     _cleanup_process_group,

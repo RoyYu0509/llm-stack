@@ -9,11 +9,11 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
 
-from .adapters import (
+from tests.adapters import (
     ddp_individual_parameters_on_after_backward,
     get_ddp_individual_parameters,
 )
-from .common import (
+from tests.common import (
     FIXTURES_PATH,
     ToyModel,
     ToyModelWithTiedWeights,

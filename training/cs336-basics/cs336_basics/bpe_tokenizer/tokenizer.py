@@ -1,5 +1,3 @@
-from numpy.conftest import dtype
-
 from cs336_basics.bpe_tokenizer.tokenizerBackEnd import BBPE
 import json
 from typing import Iterable, Iterator

@@ -30,11 +30,6 @@ build-backend = "uv_build"
 module-name = "cs336_basics"
 module-root = ""
 
-[tool.uv.workspace]
-members = [
-    "llm",
-]
-
 [tool.uv]
 package = true
 python-preference = "managed"
