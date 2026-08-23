@@ -13,9 +13,11 @@
 
 Week 1、Week 2 完成并各有 retro。Week 3 **有设计、无代码**：`docs/progress/week3-discussion.md` 锁定了关键决策，但 `git log` 停在 `Week3 start`，engine 至今仍是「取一条请求 → 跑完它的完整 prefill→decode → 再取下一条」。
 
-**读文档前先看这个**：`docs/designs/DESIGN.md` 的 Status 是 Approved，但它写于 Week 3 re-scope 之前，它的**静态预分配 KV cache** 和 **2:1 prefill 优先调度**都已被 `week3-discussion.md` 取代。照 DESIGN.md 建会建错。
+**哪些文档过期了，权威判断见 [`../START_HERE.md`](../START_HERE.md) 第 1 节**——包括 `DESIGN.md`、
+`BACKLOG.md`，以及本文件自己下面的 §3（不在这里重复维护，避免和 START_HERE 各说各话）。
 
-`BACKLOG.md` 也已过期：P0 里的 `[BUG] Inference 中要用 try / finally` **实际上已经实现了**（`inference_engine.py` 的消费循环里有 `finally: task_done()`），应该移到 Done。
+⚠️ **本文件的 §3（Stage-homogeneous batching）已经过期**，2026-08-23 被
+`docs/sprints/week5-discussion.md`（流程仓）D-2 取代——见 §3 顶部的说明再往下读。
 
 ### 建设顺序
 
@@ -39,9 +41,25 @@ Week 1、Week 2 完成并各有 retro。Week 3 **有设计、无代码**：`docs
 
 ⚠️ `future-tasks.md` 是 DESIGN.md 时代的产物，它分了 Scheduler + Batcher 两层，而 `week3-discussion.md` 明确说不做 pluggable scheduler。**动手前先决定哪个是现行意图**，这两份文档目前不一致。
 
-#### 3. Stage-homogeneous batching
+#### 3. ~~Stage-homogeneous batching~~ → 完整 RadixAttention
 
-已 LOCKED，理由是后端约束而非偏好：HF `model()` 的 `attention_mask` 是 `[B, S]` 的 padding mask，不是 per-pair 的 causal mask，所以一次 forward 里混不了 prefill 和 decode。
+> ⚠️ **已被取代（2026-08-23，`docs/sprints/week5-discussion.md` D-2，流程仓）。**
+> 下面这版设计当初"已 LOCKED"的理由——HF `model()` 的 `attention_mask` 只认矩形 padding
+> mask，一次 forward 混不了 prefill/decode——**这个约束本身能绕开**：serving 服务的模型是
+> 自己写的 CS336 GPT2 架构，不是 HF `model()`，attention 计算本来就是自己实现的，可以直接
+> 改掉这个假设。
+>
+> 新设计是完整 RadixAttention，四个组件：① block-based KV cache 分配器（paged，固定大小
+> page + free list）② ragged attention forward（按 block table gather，不再 padding——
+> **这才是"正宗"continuous batching**）③ radix tree 前缀缓存（引用计数/copy-on-write，直接
+> 吃掉原 Phase1⑥"一个 prompt 出 G 条样本"，⑥ 变成它的特例）④ LRU 淘汰（尊重引用计数）。
+> 新增门禁：**radix cache 命中路径必须与 cache-miss 路径逐 token 完全一致**。
+> 四个组件全是 CORE，动手前必须先过两道 gate（讲清设计 + 说出一个具体坏输入/状态）。
+>
+> 下面是**历史记录**，留着因为它解释了"为什么当初觉得必须 padding"——这段因果本身有教学
+> 价值，不删。**不要照它写代码。**
+
+已 LOCKED（**已作废，见上方说明**），理由是后端约束而非偏好：HF `model()` 的 `attention_mask` 是 `[B, S]` 的 padding mask，不是 per-pair 的 causal mask，所以一次 forward 里混不了 prefill 和 decode。
 
 每轮迭代两次 `model()` 调用：先一个 prefill microbatch，再一个 decode microbatch。**这两次是顺序执行，不是 GPU 并行**——写代码时容易顺手把它想成并行。
 
