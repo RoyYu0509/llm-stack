@@ -34,7 +34,8 @@ async def test_concurrent_multiple_user_data_flow(model: GPT2LMHeadModel):
     # Start the Inference Engine to fetching requests and put them in waiting_queue
     task = inference_engine.run() # 在 background register task
     await pending_queue.join()
-    task.cancel() # 取消 background task, 已经全部处理完了
+    await inference_engine.shutdown(draining=True)
+    assert task.done(), "Inference Engine task should have completed after draining shutdown"
 
     # 1. 所有 request 都在 request_store 里
     for i in range(9):
@@ -74,8 +75,9 @@ async def test_inference_running_while_input_new_requests(model: GPT2LMHeadModel
         await asyncio.sleep(0.5) # 等半秒再提交下一个 request, 模拟用户输入的间隔
 
     # 等待所有 request 都 inference engine 拿走, 然后处理完
-    await pending_queue.join() 
-    task.cancel() # 取消 background task, 已经全部处理完了
+    await pending_queue.join()
+    await inference_engine.shutdown(draining=True)
+    assert task.done(), "Inference Engine task should have completed after draining shutdown"
 
     # check 所有 request 都被处理了
     for i in range(3):
