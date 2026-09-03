@@ -34,10 +34,8 @@ class LMEngine:
 
         with torch.no_grad():
             outputs = self.model(input_ids=input_ids, past_key_values=None)
-            new_logits: Float[torch.Tensor, "1, Vocab"] 
-            new_logits = outputs.logits[:, -1, :]  
-            new_kv: List[Tuple[Float[torch.Tensor, "..."], Float[torch.Tensor, "..."]]] 
-            new_kv = outputs.past_key_values
+            new_logits: Float[torch.Tensor, "1, Vocab"]  = outputs.logits[:, -1, :]  
+            new_kv: List[Tuple[Float[torch.Tensor, "..."], Float[torch.Tensor, "..."]]]  = outputs.past_key_values
         
         if not do_sample:
             new_token = torch.argmax(new_logits, dim=-1).unsqueeze(1) # shape (1, 1)
@@ -58,10 +56,8 @@ class LMEngine:
         """
         with torch.no_grad():
             outputs = self.model(input_ids=latest_token, past_key_values=latest_kv, use_cache=True)
-            new_logits: Float[torch.Tensor, "1, Vocab"] 
-            new_logits = outputs.logits[:, -1, :]  
-            new_kv: List[Tuple[Float[torch.Tensor, "..."], Float[torch.Tensor, "..."]]] 
-            new_kv = outputs.past_key_values
+            new_logits: Float[torch.Tensor, "1, Vocab"]  = outputs.logits[:, -1, :]  
+            new_kv: List[Tuple[Float[torch.Tensor, "..."], Float[torch.Tensor, "..."]]]  = outputs.past_key_values
 
         if not do_sample:
             new_token = torch.argmax(new_logits, dim=-1).unsqueeze(1) # shape (1, 1)

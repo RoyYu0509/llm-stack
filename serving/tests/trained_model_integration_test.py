@@ -122,7 +122,8 @@ async def test_full_request_path_through_inference_engine(adapted_model, tokeniz
     )
     task = engine.run()
     await pending_queue.join()
-    task.cancel()
+    await engine.shutdown(draining=True)
+    assert task.done(), "Inference Engine task should have completed after draining shutdown"
 
     done = request_store[request_id]
     assert done.status == RequestStatus.DONE
