@@ -33,7 +33,7 @@ This repo shows both algorithm-level and systems-level engineering: I did not ju
 |---|---|---|
 | Flash Attention speed | At **sequence length 8,192**, Triton FlashAttention is **6.54×** faster than PyTorch vectorized attention (**27.20 ms** vs **177.82 ms**) | Faster attention directly reduces response/training latency |
 | Flash Attention long-context feasibility | At **sequence length 16,384**, **only** Triton FlashAttention completes (**116.60 ms**); other kernels hit OOM | Longer context improves the model’s ability to handle long prompts |
-| Multi-GPU training pipeline | On 2× GPUs, **Bucketed + Overlapped gradient DDP training** , reaching **85.9% scaling efficiency** with only **+3.3%** peak per-GPU memory overhead, and is **+9.4%** faster than ***Naive DDP*** (**25,336.7 → 27,719.1 tok/s**) | More tokens/sec without a big memory penalty → better utilization and scalability |
+| Multi-GPU training pipeline | On 2× GPUs, my **Bucketed + Overlapped gradient DDP** reaches **85.9% scaling efficiency** at **+3.3%** peak per-GPU memory overhead — **+9.4%** faster than ***Naive DDP*** (**25,336.7 → 27,719.1 tok/s**), and **on par with PyTorch's official `DistributedDataParallel`** (27,719.1 vs **27,692.6 tok/s**, a 0.1% gap within run-to-run noise) | Matching the reference implementation is the bar; more tokens/sec without a memory penalty means better utilization and scalability |
 
 #### Environment Specifics
 
@@ -59,7 +59,30 @@ This optimization keeps the system responsive and able to run where baselines fa
 
 ### 2) Multi-GPU Scaling with DDP
 
-DDP trains one model replica per GPU and synchronizes gradients each step. Compared to Naive DDP implementation, **Bucketed + Overlapped DDP** improved throughput from **25,336.7** to **27,719.1 tok/s** (**+9.4%**). It achieves **85.9%** scaling efficiency and only **+498.8 MB** (**+3%**) peak per-GPU memory overhead versus local 1-GPU.
+DDP trains one model replica per GPU and synchronizes gradients each step. My implementation
+groups parameters into size-bounded buckets and overlaps each bucket's all-reduce with the
+backward pass, so communication happens while later layers are still computing gradients
+instead of after all of them finish.
+
+| Strategy | GPUs | tok/s | Scaling efficiency | Peak memory overhead |
+|---|---:|---:|---:|---:|
+| Local, no DDP | 1 | 16,132.4 | — | — |
+| Naive DDP (per-parameter all-reduce) | 2 | 25,336.7 | 78.5% | −3.3 MB |
+| **Bucketed + Overlapped DDP (mine)** | 2 | **27,719.1** | **85.9%** | +498.8 MB (+3.3%) |
+| PyTorch official `DistributedDataParallel` | 2 | 27,692.6 | 85.8% | +489.5 MB (+3.2%) |
+
+Compared to the naive baseline, throughput improved from **25,336.7** to **27,719.1 tok/s**
+(**+9.4%**), reaching **85.9%** scaling efficiency for **+498.8 MB** (**+3.3%**) peak
+per-GPU memory versus local 1-GPU.
+
+The comparison that matters most is the last row: this **matches PyTorch's official DDP**
+(27,719.1 vs 27,692.6 tok/s). The 0.1% difference is within run-to-run noise — the two are
+not meaningfully different, and I make no claim to have beaten the reference implementation.
+Matching it was the goal.
+
+*Data source: [`artifacts/lm_matrix_table_flash_attention_triton.png`](artifacts/lm_matrix_table_flash_attention_triton.png).
+The implementation is `DDPOverlapBucketed` in
+[`cs336_systems/Parallelization/FlashDDP/FlashDDP.py`](cs336_systems/Parallelization/FlashDDP/FlashDDP.py).*
 
 The following plot shows the training throughput (tokens/sec) for the FlashAttention kernel across different DDP strategies. The x-axis is the DDP strategy and the y-axis is the training throughput in tokens/sec. We see that the Bucketed + Overlapped DDP strategy achieves the on par throughput with PyTorch DDP, and is significantly faster than the Naive DDP strategy.
 

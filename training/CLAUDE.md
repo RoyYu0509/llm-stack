@@ -84,8 +84,11 @@ distinction matters:
   - `DDP_runner.py`: training wrapper
 
 - **`Parallelization/FlashDDP/`**: custom bucketed overlapping DDP
-  - `FlashDDP.py`: async DDP base
-  - `BucketedOverlapDDP.py`: groups params into size-bounded buckets, overlaps all-reduce with backward pass (85.9% scaling efficiency, 9.4% throughput gain)
+  - `FlashDDP.py`: async DDP base **and** `DDPOverlapBucketed` -- the class that is actually
+    wired up and produced the benchmarked numbers (85.9% scaling efficiency, +9.4% over naive,
+    on par with PyTorch official DDP). Source: `artifacts/lm_matrix_table_flash_attention_triton.png`
+  - `BucketedOverlapDDP.py`: a separate bucketed/overlapped implementation that is **not** wired
+    into the benchmark path -- do not attribute the numbers above to this file
   - `FlashDDP_runner.py`: training wrapper
 
 - **`data_harvest/`**: corpus construction for the real-data pretraining run
