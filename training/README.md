@@ -136,5 +136,5 @@ This project extends **Stanford CS336** assignment scaffolding with my own syste
 
 <!-- Figure references (keeps the main text clean while preserving exact paths) -->
 [fig-attn-sweep]: artifacts/attention_sweep_forward.png
-[fig-ddp-throughput]: artifacts/flash_attention_triton_lm_matrix_throughput.png
+[fig-ddp-throughput]: artifacts/ddp_scaling.png
 [fig-ddp-table]: artifacts/lm_matrix_table_flash_attention_triton.png
