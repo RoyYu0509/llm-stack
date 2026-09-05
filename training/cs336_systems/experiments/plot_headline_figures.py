@@ -1,4 +1,4 @@
-"""Regenerate the two headline figures the top-level README embeds.
+"""Regenerate the headline figures the top-level README embeds.
 
 Why this script exists separately from `benchmark_lm_matrix.py`
 --------------------------------------------------------------
@@ -25,20 +25,25 @@ from raw data, and re-running the benchmark on different hardware will NOT
 reproduce them. That is why they are hardcoded here with this note instead of
 being read from a CSV that does not exist.
 
-FIGURE 2 (`ddp_bucket_size_sweep.png`) is a *different, smaller* experiment
-family and is read from CSVs that do exist (`artifacts/bench_bucket_*/`). It runs
-at roughly 8K tok/s where figure 1 runs at roughly 28K, because it is a different
-configuration -- 2 epochs, global batch 16. The two figures must not be compared
-against each other, and the sweep is not evidence about the headline run.
+A bucket-size sweep figure was here and was REMOVED on 2026-09-05. The five
+`artifacts/bench_bucket_*/` runs it plotted do not record which bucket size each
+one used -- `benchmark_lm_matrix.py` wrote a fixed column whitelist that omitted
+it, there was no CLI flag, and both configs read `bucket_size_mb: 25`. The only
+thing distinguishing the five runs was the output directory's name, so the
+experiment cannot tell "five bucket sizes" apart from "one bucket size, five
+times", and the observed spread (four runs within 2.6%, one outlier at +18%)
+is what five identical runs would look like. Plotting it implied a causal
+variable that was never shown to vary.
+
+`benchmark_lm_matrix.py` now records `bucket_size_mb` in its CSV and accepts
+`--bucket_size_mb`, so a future sweep is falsifiable. Re-running it needs 2 CUDA
+GPUs, which is why the figure is deleted rather than regenerated.
 
 Usage:
     uv run python cs336_systems/experiments/plot_headline_figures.py
 """
 
-import csv
-import glob
 import os
-import re
 
 import matplotlib
 
@@ -134,87 +139,6 @@ def figure_ddp_scaling(out_path):
     return out_path
 
 
-# --------------------------------------------------------------------- figure 2
-def _read_bucket_sweep():
-    """Read tok/s per bucket size from the bench_bucket_*/ CSVs that survive."""
-    rows = []
-    for d in glob.glob(os.path.join(ARTIFACTS, "bench_bucket_*")):
-        m = re.search(r"bench_bucket_(\d+)mb", os.path.basename(d))
-        if not m:
-            continue
-        csv_path = os.path.join(d, "lm_matrix_results.csv")
-        if not os.path.exists(csv_path):
-            continue
-        for r in csv.DictReader(open(csv_path)):
-            if r.get("error", "").strip():
-                continue
-            rows.append((int(m.group(1)), float(r["tokens_per_sec"]),
-                         float(r["wall_sec"])))
-    return sorted(rows)
-
-
-def figure_bucket_sweep(out_path):
-    rows = _read_bucket_sweep()
-    if not rows:
-        return None
-    sizes = [r[0] for r in rows]
-    toks = [r[1] for r in rows]
-
-    # The story: flat, except one point that is 14% off in wall-clock with n=1.
-    cluster = [t for s, t in zip(sizes, toks) if s != 50]
-    lo, hi = min(cluster), max(cluster)
-
-    fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=120)
-    # No connecting line: one run per point, so a line would draw interpolation
-    # between bucket sizes that was never measured.
-    ax.axhspan(lo, hi, color=MUTED, alpha=0.18, zorder=1)
-    ax.text(1.06, lo - 95,
-            f"the other four sit within {100 * (hi - lo) / lo:.1f}% of each other",
-            fontsize=9.5, color=INK_2, va="top")
-
-    for s, t in zip(sizes, toks):
-        is_out = s == 50
-        ax.plot([s], [t], marker="o", markersize=11 if is_out else 9,
-                color=EMPHASIS if is_out else MUTED,
-                markeredgecolor=SURFACE, markeredgewidth=2, zorder=3)
-
-    out_t = dict(zip(sizes, toks))[50]
-    ax.annotate(
-        f"50 MB: {out_t:,.0f} tok/s -- 14% faster in wall-clock.\n"
-        "One run, no repeat. This is NOT yet a result:\n"
-        "it needs a repeat run before it can be called an optimum.",
-        xy=(50, out_t), xytext=(2.6, 9080),
-        fontsize=10, color=INK, linespacing=1.5,
-        arrowprops=dict(arrowstyle="-", color=INK_2, linewidth=1.0,
-                        shrinkA=6, shrinkB=8),
-    )
-
-    _style(ax)
-    ax.set_ylim(min(toks) - 220, max(toks) + 260)
-    ax.set_xscale("log")
-    ax.set_xticks(sizes)
-    ax.set_xticklabels([f"{s} MB" for s in sizes], fontsize=10.5, color=INK)
-    ax.minorticks_off()
-    ax.set_xlabel("All-reduce bucket size", fontsize=10.5, color=INK_2)
-    ax.set_ylabel("Training throughput (tokens / sec)", fontsize=10.5, color=INK_2)
-    ax.set_title(
-        "Bucket size is not a sensitive knob at this model size",
-        fontsize=13.5, color=INK, fontweight="bold", loc="left", pad=16,
-    )
-    fig.text(0.008, 0.052,
-             "2x RTX 3090 - 2 epochs, global batch 16 - one run per point - "
-             "source: artifacts/bench_bucket_*/lm_matrix_results.csv",
-             fontsize=8.5, color=INK_2)
-    fig.text(0.008, 0.014,
-             "Different configuration from the headline DDP figure (~8K vs ~28K tok/s) "
-             "- the two are not comparable.",
-             fontsize=8.5, color=INK_2)
-    fig.tight_layout(rect=(0, 0.085, 1, 1))
-    fig.savefig(out_path, facecolor=SURFACE)
-    plt.close(fig)
-    return out_path
-
-
 # --------------------------------------------------------------------- figure 3
 # Two series -> a legend is required; <=4 series -> also direct-labelled.
 # #2a78d6 / #eb6834 pass all six checks on the light surface (CVD dE 24.7,
@@ -293,7 +217,5 @@ def figure_kv_cache_decode(out_path):
 if __name__ == "__main__":
     a = figure_ddp_scaling(os.path.join(ARTIFACTS, "ddp_scaling.png"))
     print("wrote", os.path.normpath(a))
-    b = figure_bucket_sweep(os.path.join(ARTIFACTS, "ddp_bucket_size_sweep.png"))
-    print("wrote", os.path.normpath(b) if b else "bucket sweep: no data found")
     c = figure_kv_cache_decode(os.path.join(ARTIFACTS, "kv_cache_decode.png"))
     print("wrote", os.path.normpath(c) if c else "kv cache: run bench_serving.py first")

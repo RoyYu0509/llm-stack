@@ -297,6 +297,11 @@ def _ddp_worker(
         result_dict["sec_per_epoch"] = round(wall_sec / max(epochs, 1), 3)
         result_dict["tokens_per_sec"] = round(token_tensor.item() / max(wall_sec, 1e-6), 1)
         result_dict["peak_gpu_mb"] = round(peak_tensor.item(), 1)
+        # Record the independent variable alongside the measurement. Without this
+        # a bucket-size sweep is unfalsifiable: the runs are distinguishable only
+        # by the output directory's name. Blank for wrappers that ignore it.
+        if wrapper_name in ("Bucketed Overlapping DDP", "Pytorch DDP"):
+            result_dict["bucket_size_mb"] = bucket_size_mb
 
     dist.barrier()
     dist.destroy_process_group()
@@ -662,6 +667,10 @@ def main() -> None:
     parser.add_argument("--val_path", type=str, required=True)
     parser.add_argument("--timed_epochs", type=int, required=True, help="Number of timed epochs (default: 3)")
     parser.add_argument("--out_dir", type=str, default="artifacts")
+    parser.add_argument("--bucket_size_mb", type=int, default=None,
+                        help="All-reduce bucket size in MB; overrides the config's "
+                             "bucket_size_mb. Sweeping this without editing the config "
+                             "is what makes a bucket-size experiment repeatable.")
     parser.add_argument("--kernels", nargs="*", default=None,
                         help="Subset of kernels to benchmark (default: all)")
     parser.add_argument("--wrappers", nargs="*", default=None,
@@ -679,7 +688,8 @@ def main() -> None:
     epochs          = args.timed_epochs
     tr_batch_size   = train_sec["tr_batch_size"]
     context_length  = model_sec["context_length"]
-    bucket_size_mb  = cfg.get("bucket_size_mb", 25)
+    bucket_size_mb  = args.bucket_size_mb if args.bucket_size_mb is not None \
+                      else cfg.get("bucket_size_mb", 25)
 
     dtype_map = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
     dtype = dtype_map[train_sec.get("dtype", "float32")]
@@ -760,7 +770,7 @@ def main() -> None:
         preferred_keys = [
             "kernel", "ddp", "gpus", "epochs",
             "steps_per_epoch", "global_batch_size", "local_batch_size",
-            "samples_per_epoch",
+            "samples_per_epoch", "bucket_size_mb",
             "wall_sec", "sec_per_epoch", "tokens_per_sec",
             "peak_gpu_mb", "error",
         ]
