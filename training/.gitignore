@@ -213,3 +213,7 @@ docs/handout/sections/*.aux
 docs/handout/*-quiz.pdf
 
 *.DS_Store
+
+# Benchmark results that back a published README claim are tracked on purpose,
+# despite the blanket *.json rule above.
+!artifacts/serving_benchmark.json
