@@ -123,6 +123,7 @@ class MultiHeadsAttention(torch.nn.Module):
         multi_head = rearrange(multi_head_packed, "(b h) seq d_v -> b h seq d_v", h=self.heads_num)
         
         return multi_head
+
     
     def forward_with_cache(self, x, token_positions, past_kv=None):
         """Incremental attention for autoregressive decoding. Inference only.
@@ -140,39 +141,49 @@ class MultiHeadsAttention(torch.nn.Module):
         Returns:
             `(out, (K, V))` where K/V include both the past and the new tokens.
         """
-        W_Q = rearrange(self.W_Q, "(h d_k) d_model -> h d_k d_model", h=self.heads_num, d_k=self.d_k)
-        W_K = rearrange(self.W_K, "(h d_k) d_model -> h d_k d_model", h=self.heads_num, d_k=self.d_k)
-        W_V = rearrange(self.W_V, "(h d_v) d_model -> h d_v d_model", h=self.heads_num, d_v=self.d_v)
+        # 0. Starting Shape
+        x: Float[Tensor, "... seq_new d_model"] # 新的 input x, 可能是一个token: shape=[..., 1, d_model] (decode 阶段), 也可能是多个token: shape=[..., n, d_model] (prefill 阶段)
+        W_Q: Float[Tensor, "(h d_k) d_model"]
+        W_K: Float[Tensor, "(h d_k) d_model"]
+        W_V: Float[Tensor, "(h d_v) d_model"]
+
+        # 1. Transform Projection Matrices to multi-head shape
+        W_Q = rearrange(self.W_Q, "(h d_k) d_model -> h d_k d_model", h = self.heads_num, d_k = self.d_k)
+        W_K = rearrange(self.W_K, "(h d_k) d_model -> h d_k d_model", h = self.heads_num, d_k = self.d_k)
+        W_V = rearrange(self.W_V, "(h d_v) d_model -> h d_v d_model", h = self.heads_num, d_v = self.d_v)
+
+        # 2. Compute 新的 input x 的 Q, K, V representation
         Q = einsum(W_Q, x, "h d_k d_model, ... seq d_model -> ... h seq d_k")
         K = einsum(W_K, x, "h d_k d_model, ... seq d_model -> ... h seq d_k")
         V = einsum(W_V, x, "h d_v d_model, ... seq d_model -> ... h seq d_v")
 
+        # 3. 给 Q,K 做 position encoding
         if self.pos_encod is not None and token_positions is not None:
             Q = self.pos_encod(Q, token_positions)
             K = self.pos_encod(K, token_positions)
 
-        # Append to the cache AFTER rotating: RoPE is applied once, at each token's own
-        # absolute position, so cached keys must already carry their rotation.
-        if past_kv is not None:
-            past_k, past_v = past_kv
-            K = torch.cat([past_k, K], dim=-2)
-            V = torch.cat([past_v, V], dim=-2)
+        # 4. 把新的 K, V 拼接到 past_kv 上, 形成新的 K, V (prefill 阶段 past_kv=None, decode 阶段 past_kv != None)
+        if past_kv is not None: # 说明在 decode 阶段
+            K = torch.cat([past_kv[0], K], dim=-2)
+            V = torch.cat([past_kv[1], V], dim=-2)
 
+        # 5. 重新 reshape Q, K, V to packed shape for attention kernel
         Q_packed = rearrange(Q, "... h seq d_k -> (... h) seq d_k")
         K_packed = rearrange(K, "... h seq d_k -> (... h) seq d_k")
         V_packed = rearrange(V, "... h seq d_v -> (... h) seq d_v")
 
-        # Causal masking only applies when queries and keys are the same block (prefill).
-        # During decode the queries are the newest tokens and every cached key strictly
-        # precedes them, so the triangular mask is not just unnecessary but wrong: it is
-        # built as tril(seq_q, seq_k), which for a single query would expose only key 0.
-        is_causal = Q_packed.shape[-2] == K_packed.shape[-2]
-        out_packed = scaled_dot_product_attention(Q_packed, K_packed, V_packed, is_causal=is_causal)
+        # 6. 检查 Q 和 K 的 seq_len 是否相等, 如果相等说明是 prefill 阶段, 需要 causal mask
+        #   Prefill: Q_seq_len = K_seq_len = prompt_len 
+        #   Decode: Q_seq_len = 1 != K_seq_len = prompt_len + past_decode_kv_len + 1 
+        is_causal = Q_packed.shape[-2] == K_packed.shape[-2] 
 
+        # 7. Compute the attention
+        out_packed = scaled_dot_product_attention(Q_packed, K_packed, V_packed, is_causal=is_causal)
         out = rearrange(out_packed, "(b h) seq d_v -> b h seq d_v", h=self.heads_num)
         out = rearrange(out, "... h seq d_v -> ... seq (h d_v)")
         out = einsum(self.W_O, out, "d_model (h_d_v), ... seq (h_d_v) -> ... seq d_model")
         return out, (K, V)
+
 
     @nvtx.range("MultiHeadsAttention_forward")
     def forward(self, x, token_positions=None):

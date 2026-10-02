@@ -40,6 +40,7 @@ def scaled_dot_product_attention(query, key, value, is_causal: bool = False):
     """
     # Compute Normalized QtK & Apply causal mask
     with nvtx.range("Compute QK^t"):
+        # Note: 如果是 decode 阶段, seq_q=1, seq_k = cached_len + 1; norm_qk: shape = (..., 1, cached_len + 1)
         norm_qk: Float[torch.Tensor, "... seq_q, seq_k"]
         norm_qk = einsum(key, query, "... seq_k d_k, ... seq_q d_k -> ... seq_q seq_k") / torch.sqrt(torch.tensor(key.shape[-1], device=query.device))
         # Triangular Causal Mask

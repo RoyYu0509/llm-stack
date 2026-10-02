@@ -198,6 +198,7 @@ class TransformerLM(nn.Module):
         whole sequence each time -- see cs336_systems/experiments/bench_serving.py, which
         measures the difference rather than asserting it.
         """
+        # 0. Inference 之前先检查 这一步 forward 的 token_positions 是否超过了 model 的 context window
         past_len = 0 if past_kv is None else past_kv[0][0].shape[-2]
         seq_new = x.shape[1]
         if past_len + seq_new > self.token_positions.shape[0]:
@@ -206,20 +207,28 @@ class TransformerLM(nn.Module):
                 f"model's context length {self.token_positions.shape[0]}"
             )
 
-        x = self.in_embedding(x)
-        # Absolute positions continuing past the cache, so RoPE stays consistent with what
-        # the cached keys were rotated by.
-        positions = self.token_positions[past_len:past_len + seq_new]
-        positions = positions.unsqueeze(0).expand(x.shape[0], -1).to(x.device)
+        # 1. Input Embedding
+        with nvtx.range("LM Input Embedding"):
+            x = self.in_embedding(x)  
 
-        new_past = []
+        # 2. 通过截 self.token_positions 来获取当前 step 的 token_positions, 因为这个已经是一个 buffer, 所以不需要再去注册了, 直接用就行
+        positions = self.token_positions[past_len:past_len + seq_new]
+        positions = positions.unsqueeze(0).expand(x.shape[0], -1).to(x.device) # (1, seq_new) -> (batch_size, seq_new) 把 position 信息 expand 到 batch_size 维度上, 方便后续的 attention 计算
+
+        # 3. 过所有的 Transformer Blocks
+        # 用来存 每一层的新的 KV Cache
+        new_kv = [] 
+
+        # 过每一层的 Transformer Block, 并且把每一层的新的 KV Cache 存起来
         for i, tf_block in enumerate(self.tf_layers):
-            layer_past = None if past_kv is None else past_kv[i]
-            x, kv = tf_block.forward_with_cache(x, token_positions=positions, past_kv=layer_past)
-            new_past.append(kv)
+            x, kv = tf_block.forward_with_cache(
+                x, token_positions=positions, past_kv=None if past_kv is None else past_kv[i]
+            )
+            new_kv.append(kv)
 
         x = self.norm(x)
-        return self.head(x), new_past
+        x = self.head(x)
+        return x, new_kv
 
     def forward(self, x):
         """
@@ -239,7 +248,7 @@ class TransformerLM(nn.Module):
         positions = self.token_positions[:seq_len].unsqueeze(0).expand(batch_size, -1)
         positions = positions.to(x.device)
 
-        with nvtx.range("LM Tranformer Blocks Forward Pass"):
+        with nvtx.range("LM Transformer Blocks Forward Pass"):
             for tf_block in self.tf_layers:
                 x = tf_block(x, token_positions=positions)
 

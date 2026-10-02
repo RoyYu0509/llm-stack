@@ -102,7 +102,3 @@ class PreNormTransformer(nn.Module):
         )
         x = x + self.FNN(self.RMSN2(x))
         return x
-
-        
-
-        
