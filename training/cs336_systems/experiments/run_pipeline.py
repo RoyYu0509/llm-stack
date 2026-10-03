@@ -282,8 +282,13 @@ def stage_train_ddp(cfg: dict, wrapper: str) -> None:
         eps=t.get("adam_eps", 1e-8),
     )
 
-    tr_dataset = TokenStreamDataset(str(_resolve(cfg["tokenized_train"])), m["context_length"])
-    val_dataset = TokenStreamDataset(str(_resolve(cfg["tokenized_valid"])), m["context_length"])
+    # data_stride: 1 = overlapping sliding windows (old default); context_length = non-overlapping
+    # chunks, so one epoch = one pass over the corpus (see TokenStreamDataset).
+    data_stride = t.get("data_stride", 1)
+    tr_dataset = TokenStreamDataset(str(_resolve(cfg["tokenized_train"])), m["context_length"], data_stride)
+    val_dataset = TokenStreamDataset(str(_resolve(cfg["tokenized_valid"])), m["context_length"], data_stride)
+    print(f"[stage:train] data_stride={data_stride}  train samples={len(tr_dataset):,}  "
+          f"train tokens={tr_dataset.N:,}  val samples={len(val_dataset):,}")
 
     epochs = t.get("epochs", 10)
     eval_interval = cfg["checkpointing"].get("eval_interval", 5)
