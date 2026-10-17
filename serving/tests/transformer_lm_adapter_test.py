@@ -121,3 +121,26 @@ def test_adapter_prefill_then_decode_grows_the_prefix(hf_model):
     step = adapted(input_ids=torch.zeros((1, 1), dtype=torch.long),
                    past_key_values=prefill.past_key_values)
     assert step.past_key_values.shape[1] == 6
+
+
+class _MetaLM(nn.Module):
+    """Parameters on the 'meta' device: stands in for a CUDA model on a machine without a GPU, so a CPU test can see the
+    device mix-up that only happens when the model's device differs from the CPU tensors the engine builds."""
+
+    def __init__(self, vocab: int = 7) -> None:
+        super().__init__()
+        self.w = nn.Parameter(torch.empty(1, device="meta"))
+        self.vocab = vocab
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        return torch.zeros(input_ids.shape[0], input_ids.shape[1], self.vocab, device="meta")
+
+
+def test_no_cache_decode_moves_the_new_token_to_the_device_of_the_prefix():
+    """Found by the stage-D smoke on the GPU box: the engine hands the adapter the new token as a CPU tensor, the carried
+    prefix lives on the model's device, and torch.cat raised 'Expected all tensors to be on the same device'."""
+    adapter = TransformerLMAdapter(_MetaLM(), context_length=16, eos_token_id=0, vocab_size=7, use_kv_cache=False)
+    first = adapter.forward(torch.tensor([[1, 2, 3]]))
+    assert first.past_key_values.device.type == "meta"
+    second = adapter.forward(torch.tensor([[4]]), past_key_values=first.past_key_values)
+    assert tuple(second.past_key_values.shape) == (1, 4) and second.past_key_values.device.type == "meta"
