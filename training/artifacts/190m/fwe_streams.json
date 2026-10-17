@@ -1,0 +1,24 @@
+{
+  "checkpoint": "checkpoints_190m_fwe/checkpoint_epoch_0001.pt",
+  "iter": 1,
+  "streams": {
+    "fwe": {
+      "path": "data/pretrain190m/fwe_valid.npy",
+      "loss": 3.3125436067581178,
+      "ppl": 27.454871127281486,
+      "batches": 200
+    },
+    "c4": {
+      "path": "data/pretrain190m/c4_valid.npy",
+      "loss": 3.7916157722473143,
+      "ppl": 44.32796634097625,
+      "batches": 200
+    },
+    "wiki": {
+      "path": "data/pretrain190m/wiki_valid.npy",
+      "loss": 3.7402058935165403,
+      "ppl": 42.10665876060445,
+      "batches": 200
+    }
+  }
+}
