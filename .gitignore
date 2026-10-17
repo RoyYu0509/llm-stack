@@ -1,0 +1,33 @@
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Things that must never be committed: model checkpoints, profiler traces, raw dumps.
+# (training/.gitignore already ignores *.pt / *.json / *.txt *inside training/*; this covers the repo root.)
+training/ckpt_*/
+wandb/
+wandb_local/
+*.tgz
+*.qdstrm
+*.nsys-rep
+*.sqlite
+
+# benchmarks/compare: what is tracked is the harness, the workload inputs it needs and results/final/*.csv|md|txt.
+#  - results/archive/        superseded by the 2026-10-16 redo (docs: benchmarks/compare/README.md); never cite
+#  - results/final/serving_raw/, profile_prefill/nsys/   raw per-run dumps (~100 MB); every number in the CSVs is
+#                            re-derivable from the scripts, and the .tgz bundles are kept off-repo
+#  - the two derived workloads are rebuilt by serving/make_mixed_workload.py from workload_wiki128.json
+benchmarks/compare/results/archive/
+benchmarks/compare/results/final/serving_raw/
+benchmarks/compare/results/final/profile_prefill/nsys/
+benchmarks/compare/workloads/workload_mixed4096.json
+benchmarks/compare/workloads/workload_wiki512.json
