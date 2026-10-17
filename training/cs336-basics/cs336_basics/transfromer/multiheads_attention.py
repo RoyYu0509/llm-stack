@@ -125,11 +125,13 @@ class MultiHeadsAttention(torch.nn.Module):
         return multi_head
 
     
-    def forward_with_cache(self, x, token_positions, past_kv=None):
+    def forward_with_cache(self, x, token_positions, past_kv=None, attn_mask=None):
         """Incremental attention for autoregressive decoding. Inference only.
 
         Deliberately a separate method rather than a branch inside `forward`: the training
         path is the hot path and stays byte-identical.
+
+        现在 forward 方法也接 token position 来同时处理多条 decode request, 但是每条 request 的 token position 都不一样, 所以需要在 forward_with_cache 里传入 token_positions 来让每条 request 都能拿到各自的 position, 以便 RoPE 能正确旋转
 
         Args:
             x: `(batch, seq_new, d_model)` -- only the NEW tokens, not the whole prefix.
@@ -172,17 +174,58 @@ class MultiHeadsAttention(torch.nn.Module):
         K_packed = rearrange(K, "... h seq d_k -> (... h) seq d_k")
         V_packed = rearrange(V, "... h seq d_v -> (... h) seq d_v")
 
-        # 6. 检查 Q 和 K 的 seq_len 是否相等, 如果相等说明是 prefill 阶段, 需要 causal mask
-        #   Prefill: Q_seq_len = K_seq_len = prompt_len 
-        #   Decode: Q_seq_len = 1 != K_seq_len = prompt_len + past_decode_kv_len + 1 
-        is_causal = Q_packed.shape[-2] == K_packed.shape[-2] 
-
-        # 7. Compute the attention
-        out_packed = scaled_dot_product_attention(Q_packed, K_packed, V_packed, is_causal=is_causal)
+        # 6. Compute the attention
+        # 6.1 没有提供 mask, 那就说明是正常的 prefill 或 decode, 需要根据 Q 和 K 的 seq_len 是否相等来判断是否是 prefill 阶段, 需不需要 causal mask
+        if attn_mask is None:
+            #   检查 Q 和 K 的 seq_len 是否相等, 如果相等说明是 prefill 阶段, 需要 causal mask
+            #   Prefill: Q_seq_len = K_seq_len = prompt_len 
+            #   Decode: Q_seq_len = 1 != K_seq_len = prompt_len + past_decode_kv_len + 1 
+            is_causal = Q_packed.shape[-2] == K_packed.shape[-2]
+            out_packed = self.attention_fn(Q_packed, K_packed, V_packed, is_causal=is_causal)
+        # 6.2 如果提供了 mask, 那就说明是 ragged batch decode, 需要用提供的 mask 来做 attention, 而不是用 causal mask
+        else:
+            # 用 repeat_interleave 来 match 上 对上打包后的 (B*H, seq_q, seq_k),每个 request 的 mask 要连续重复 H 次
+            # 调用方给的 mask 是每个 request 一份,形状 (B, seq_q, seq_k), 这个 mask 对所有的 head 都是一样的, 所以要 repeat_interleave H 次, 变成 (B*H, seq_q, seq_k)
+            # 然后就可以对的上 scaled_dot_product_attention 中的 attention matrix 的 shape P = QK = (B*H, seq_q, seq_k) 了, 然后再对齐 B*H 来一个 batch (一个一个 Head 的) 进行操作
+            mask = attn_mask.to(Q_packed.device).repeat_interleave(self.heads_num, dim=0)
+            out_packed = self.attention_fn(
+                Q_packed, K_packed, V_packed, is_causal=False, attn_mask=mask
+            )
+        
+        # 7. Reshape back to (B, H, Seq, d_v)
         out = rearrange(out_packed, "(b h) seq d_v -> b h seq d_v", h=self.heads_num)
         out = rearrange(out, "... h seq d_v -> ... seq (h d_v)")
         out = einsum(self.W_O, out, "d_model (h_d_v), ... seq (h_d_v) -> ... seq d_model")
         return out, (K, V)
+
+
+    def forward_decode_kvcache(self, x, token_positions, k_cache, v_cache, cache_seqlens, cache_batch_idx=None,
+                               impl: str = "auto"):
+        """One decode token per row against a PRE-ALLOCATED cache (see kv_cache_attention.py). Inference only.
+
+        x: `(B, 1, d_model)`; token_positions: `(B, 1)` absolute positions (= current lengths, for RoPE);
+        k_cache / v_cache: `(n_slots, max_len, H, d)` -- this layer's slice of the batch's cache, written IN PLACE;
+        cache_seqlens / cache_batch_idx: `(B,)` int32 (lengths before this token, slot of each row).
+        Returns `(B, 1, d_model)`. Nothing is concatenated and no CPU scalar is created: the only per-layer
+        work is the projections, RoPE, one cache-append + attention kernel, and the output projection.
+        """
+        from cs336_basics.transfromer.kv_cache_attention import kvcache_attention
+
+        W_Q = rearrange(self.W_Q, "(h d_k) d_model -> h d_k d_model", h=self.heads_num, d_k=self.d_k)
+        W_K = rearrange(self.W_K, "(h d_k) d_model -> h d_k d_model", h=self.heads_num, d_k=self.d_k)
+        W_V = rearrange(self.W_V, "(h d_v) d_model -> h d_v d_model", h=self.heads_num, d_v=self.d_v)
+        Q = einsum(W_Q, x, "h d_k d_model, ... seq d_model -> ... h seq d_k")
+        K = einsum(W_K, x, "h d_k d_model, ... seq d_model -> ... h seq d_k")
+        V = einsum(W_V, x, "h d_v d_model, ... seq d_model -> ... h seq d_v")
+        if self.pos_encod is not None and token_positions is not None:
+            Q = self.pos_encod(Q, token_positions)
+            K = self.pos_encod(K, token_positions)
+        q = Q.transpose(1, 2).contiguous()        # (B, 1, H, d)
+        k_new = K.transpose(1, 2).contiguous()
+        v_new = V.transpose(1, 2).contiguous()
+        out = kvcache_attention(q, k_cache, v_cache, k_new, v_new, cache_seqlens, cache_batch_idx, impl=impl)
+        out = rearrange(out, "... seq h d_v -> ... seq (h d_v)")
+        return einsum(self.W_O, out, "d_model h_d_v, ... seq h_d_v -> ... seq d_model")
 
 
     @nvtx.range("MultiHeadsAttention_forward")

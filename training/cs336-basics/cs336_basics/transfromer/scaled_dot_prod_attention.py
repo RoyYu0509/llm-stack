@@ -1,3 +1,4 @@
+import math
 import torch
 from jaxtyping import Float
 from torch import Tensor
@@ -13,11 +14,11 @@ def softmax(input: torch.Tensor, axis: int = -1):
         input: Tensor of any shape
         axis: Dimension along which to apply softmax
     """
-    # Subtract max for numerical stability
+    # 对每行减去最大值, 避免 exp 过大溢出
     max_val, _ = torch.max(input, dim=axis, keepdim=True) # Keep dim for Broadcasting
     input_stable = input - max_val
 
-    # Compute exp and normalize
+    # 在 safe matrix 下, 用 exp 和 sum 计算 softmax
     exp_x = torch.exp(input_stable)
     sum_exp = torch.sum(exp_x, dim=axis, keepdim=True)
     softmax_output = exp_x / sum_exp
@@ -25,7 +26,7 @@ def softmax(input: torch.Tensor, axis: int = -1):
     return softmax_output
 
 @nvtx.range("scaled dot product attention")
-def scaled_dot_product_attention(query, key, value, is_causal: bool = False):
+def scaled_dot_product_attention(query, key, value, is_causal: bool = False, attn_mask=None):
     """
     Return an output with the shape (batch_size, seq_len, d_model)
 
@@ -39,17 +40,21 @@ def scaled_dot_product_attention(query, key, value, is_causal: bool = False):
         - attention: Float[Tensor, "batch seq_q d_model"]
     """
     # Compute Normalized QtK & Apply causal mask
-    with nvtx.range("Compute QK^t"):
-        # Note: 如果是 decode 阶段, seq_q=1, seq_k = cached_len + 1; norm_qk: shape = (..., 1, cached_len + 1)
-        norm_qk: Float[torch.Tensor, "... seq_q, seq_k"]
-        norm_qk = einsum(key, query, "... seq_k d_k, ... seq_q d_k -> ... seq_q seq_k") / torch.sqrt(torch.tensor(key.shape[-1], device=query.device))
-        # Triangular Causal Mask
-        if is_causal:
-            seq_q = query.shape[-2]
-            seq_k = key.shape[-2]
-            causal_mask = torch.tril(torch.ones(seq_q, seq_k, device=query.device, dtype=torch.bool))
-            norm_qk = norm_qk.masked_fill(~causal_mask, torch.finfo(norm_qk.dtype).min)
-    
+    # Note: 如果是 decode 阶段, seq_q=1, seq_k = cached_len + 1; norm_qk: shape = (..., 1, cached_len + 1)
+    norm_qk: Float[torch.Tensor, "... seq_q, seq_k"]
+    norm_qk = einsum(key, query, "... seq_k d_k, ... seq_q d_k -> ... seq_q seq_k") / math.sqrt(key.shape[-1])  # python float: no per-call host->device scalar copy / sync
+    # query 能不能看到比它更靠后的 key: 用来区分 prefill 和 decode 阶段; prefill 有 causal_mask, decode 没有 causal_mask
+    if is_causal:
+        # 拿 sequence 长度 
+        seq_q = query.shape[-2]
+        seq_k = key.shape[-2]
+        causal_mask = torch.tril(torch.ones(seq_q, seq_k, device=query.device, dtype=torch.bool))
+        norm_qk = norm_qk.masked_fill(~causal_mask, torch.finfo(norm_qk.dtype).min)
+
+    # 这个 key 槽位是不是真的 token
+    if attn_mask is not None:
+        norm_qk = norm_qk.masked_fill(~attn_mask, torch.finfo(norm_qk.dtype).min)
+
     # Softmax
     with nvtx.range("Computing softmax"):
         softmax_qk: Float[torch.Tensor, "... seq_q seq_k"]

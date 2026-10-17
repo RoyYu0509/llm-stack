@@ -19,7 +19,6 @@ class TransformerLM(nn.Module):
         - For each position i:
             - Gives all token until i.
             - Predict the distribution of vocabulary logits of the next i+1 token.
-            - 
 
     Inputs:
         - sentence: Tensor[Int] with shape (B, T) 
@@ -45,7 +44,6 @@ class TransformerLM(nn.Module):
     Component:
         1. Token Embedding
         2. RoPE Pos Encoding
-        
         3. Transformer Blocks:
             a. RMSNorms
             b. Multi-Head Attention Projection
@@ -179,8 +177,10 @@ class TransformerLM(nn.Module):
         # Output Linear Block
         self.head = Linear(d_model, vocab_size, device=device, dtype=dtype)
 
-    
-    def forward_with_cache(self, x, past_kv=None):
+
+    supports_ragged_decode = True
+    def forward_with_cache(self, x, past_kv=None, positions=None, attn_mask=None, last_only: bool = False,
+                           last_index=None):
         """Incremental forward for autoregressive decoding. Inference only.
 
         `forward` is left untouched -- it is the training path, and this is additive.
@@ -198,37 +198,81 @@ class TransformerLM(nn.Module):
         whole sequence each time -- see cs336_systems/experiments/bench_serving.py, which
         measures the difference rather than asserting it.
         """
-        # 0. Inference 之前先检查 这一步 forward 的 token_positions 是否超过了 model 的 context window
-        past_len = 0 if past_kv is None else past_kv[0][0].shape[-2]
+        # 新的 input 的 shape
         seq_new = x.shape[1]
-        if past_len + seq_new > self.token_positions.shape[0]:
-            raise RuntimeError(
-                f"cached decode would reach position {past_len + seq_new}, beyond the "
-                f"model's context length {self.token_positions.shape[0]}"
-            )
+        # 0. 算当前 step 的 position, 如果没有提供 positions, 就通过 past_len 自己算 position 
+        # 0.1 如果没有给 positions, 那就一定是单条 inference, 大概率是 prefill 任务. 通过 past_kv 来算出 past_len, 然后算出来 positions
+        if positions is None:
+            past_len = 0 if past_kv is None else past_kv[0][0].shape[-2]
+            if past_len + seq_new > self.token_positions.shape[0]: # 检查长度有没有超过限制
+                raise RuntimeError(
+                    f"cached decode would reach position {past_len + seq_new}, beyond the "
+                    f"model's context length {self.token_positions.shape[0]}"
+                )
+
+            # Absolute positions continuing past the cache, so RoPE stays consistent with what
+            # the cached keys were rotated by.
+            positions = self.token_positions[past_len:past_len + seq_new]
+            positions = positions.unsqueeze(0).expand(x.shape[0], -1)
+        # 0.2 如果有提供 positions, 就直接用给的 position, 大概率 batch decode, 不用自己去 compute position 了, 直接用外部传入的
+        else:
+            # Ragged batch: every row carries its own absolute positions, because rows
+            # have different true lengths (the cache width includes padding, so it is NOT a position).
+            if int(positions.max()) >= self.token_positions.shape[0]:
+                raise RuntimeError(
+                    f"cached decode would reach position {int(positions.max()) + 1}, beyond the "
+                    f"model's context length {self.token_positions.shape[0]}"
+                )
 
         # 1. Input Embedding
-        with nvtx.range("LM Input Embedding"):
-            x = self.in_embedding(x)  
+        x = self.in_embedding(x)  
 
-        # 2. 通过截 self.token_positions 来获取当前 step 的 token_positions, 因为这个已经是一个 buffer, 所以不需要再去注册了, 直接用就行
-        positions = self.token_positions[past_len:past_len + seq_new]
-        positions = positions.unsqueeze(0).expand(x.shape[0], -1).to(x.device) # (1, seq_new) -> (batch_size, seq_new) 把 position 信息 expand 到 batch_size 维度上, 方便后续的 attention 计算
-
-        # 3. 过所有的 Transformer Blocks
-        # 用来存 每一层的新的 KV Cache
-        new_kv = [] 
+        # 2. 让 input x 通过所有的 Transformer Blocks, return 最终的 logits 和新的 KV Cache
+        new_kv = []  # 用来存 每一层的新的 KV Cache
 
         # 过每一层的 Transformer Block, 并且把每一层的新的 KV Cache 存起来
+        positions = positions.to(x.device) # 把 position 放到相同的 device 上
+        tf_block: PreNormTransformer
         for i, tf_block in enumerate(self.tf_layers):
+            layer_past = None if past_kv is None else past_kv[i]
+            # 把 positions 传给每一层的 Transformer Block, 让不同的 request 都能拿到各自的 position, 以便 RoPE 能正确旋转
             x, kv = tf_block.forward_with_cache(
-                x, token_positions=positions, past_kv=None if past_kv is None else past_kv[i]
+                x, token_positions=positions, past_kv=layer_past, attn_mask=attn_mask
             )
             new_kv.append(kv)
 
+        if last_index is not None:
+            # batched prefill of right-padded prompts: row i's last REAL token is at last_index[i], not at -1
+            rows = torch.arange(x.shape[0], device=x.device)
+            x = x[rows, last_index.to(x.device)].unsqueeze(1)
+        elif last_only:
+            # prefill only needs the last position's logits: skip the LM head (d_model x vocab) for the other S-1
+            # positions and the (1, S, vocab) logits tensor
+            x = x[:, -1:, :]
         x = self.norm(x)
         x = self.head(x)
         return x, new_kv
+
+
+    supports_prealloc_decode = True
+
+    def forward_decode_kvcache(self, tokens, positions, k_caches, v_caches, cache_seqlens, cache_batch_idx=None,
+                               impl: str = "auto"):
+        """One decode step for B rows against a PRE-ALLOCATED per-layer cache. Inference only.
+
+        tokens: `(B, 1)` ids; positions: `(B, 1)` absolute positions (= each row's current length);
+        k_caches / v_caches: per-layer `(n_slots, max_len, H, d)`, appended IN PLACE;
+        cache_seqlens / cache_batch_idx: `(B,)` int32 -- lengths before this token and the slot of each row.
+        Returns logits `(B, 1, vocab)`. The caller increments the lengths once per step (not once per layer).
+        """
+        x = self.in_embedding(tokens)
+        for i, tf_block in enumerate(self.tf_layers):
+            x = tf_block.forward_decode_kvcache(
+                x, positions, k_caches[i], v_caches[i], cache_seqlens, cache_batch_idx, impl=impl
+            )
+        x = self.norm(x)
+        return self.head(x)
+
 
     def forward(self, x):
         """
@@ -242,7 +286,6 @@ class TransformerLM(nn.Module):
         # MatMul: (batch_size, sequence_length) . (vocab_size, embedding_dim) 
         with nvtx.range("LM Input Embedding"):
             x = self.in_embedding(x)
-        
         
         batch_size, seq_len = x.shape[0], x.shape[1]
         positions = self.token_positions[:seq_len].unsqueeze(0).expand(batch_size, -1)
