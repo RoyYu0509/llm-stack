@@ -1,0 +1,174 @@
+[config] Loaded from configs_190m/fwe.json
+  model:  {'vocab_size': 50257, 'context_length': 2560, 'num_layers': 16, 'd_model': 768, 'heads_num': 12, 'd_ff': 2048, 'theta': 10000.0}
+  epochs=12  batch=1  ctx=2560  dtype=float32  bucket_mb=25
+  samples_per_epoch=32: local 32 steps, 2-GPU 16 steps
+
+============================================================
+  Benchmarking: scaled_dot_prod_attention / Local No DDP
+============================================================
+Epochs:   0%|          | 0/15 [00:00<?, ?it/s]Epochs:   7%|▋         | 1/15 [00:20<04:40, 20.04s/it]Epochs:  13%|█▎        | 2/15 [00:39<04:18, 19.90s/it]Epochs:  20%|██        | 3/15 [00:59<03:58, 19.86s/it]Epochs:  27%|██▋       | 4/15 [01:19<03:38, 19.90s/it]Epochs:  33%|███▎      | 5/15 [01:39<03:19, 19.92s/it]Epochs:  40%|████      | 6/15 [01:59<02:59, 19.94s/it]Epochs:  47%|████▋     | 7/15 [02:19<02:39, 19.94s/it]Epochs:  53%|█████▎    | 8/15 [02:39<02:19, 19.93s/it]Epochs:  60%|██████    | 9/15 [02:59<01:59, 19.95s/it]Epochs:  67%|██████▋   | 10/15 [03:19<01:39, 19.93s/it]Epochs:  73%|███████▎  | 11/15 [03:39<01:19, 19.93s/it]Epochs:  80%|████████  | 12/15 [03:59<00:59, 19.92s/it]Epochs:  87%|████████▋ | 13/15 [04:19<00:39, 19.93s/it]Epochs:  93%|█████████▎| 14/15 [04:38<00:19, 19.92s/it]Epochs: 100%|██████████| 15/15 [04:58<00:00, 19.93s/it]Epochs: 100%|██████████| 15/15 [04:58<00:00, 19.93s/it]
+  ✓ scaled_dot_prod_attention / Local No DDP: 19.936 s/epoch, 17377 MB/GPU, samples/epoch=32, 4109 tok/s
+
+============================================================
+  Benchmarking: scaled_dot_prod_attention / Naive DDP
+============================================================
+Rank 0 Epochs:   0%|          | 0/15 [00:00<?, ?it/s]
+
+
+Rank 0 Epochs:   7%|▋         | 1/15 [00:19<04:26, 19.01s/it]
+
+Rank 0 Epochs:  13%|█▎        | 2/15 [00:32<03:27, 15.93s/it]
+
+Rank 0 Epochs:  20%|██        | 3/15 [00:46<02:59, 14.97s/it]
+
+Rank 0 Epochs:  27%|██▋       | 4/15 [01:00<02:39, 14.51s/it]
+
+Rank 0 Epochs:  33%|███▎      | 5/15 [01:14<02:22, 14.26s/it]
+
+Rank 0 Epochs:  40%|████      | 6/15 [01:28<02:06, 14.11s/it]
+
+Rank 0 Epochs:  47%|████▋     | 7/15 [01:41<01:52, 14.02s/it]
+
+Rank 0 Epochs:  53%|█████▎    | 8/15 [01:55<01:37, 13.98s/it]
+
+Rank 0 Epochs:  60%|██████    | 9/15 [02:09<01:23, 13.95s/it]
+
+Rank 0 Epochs:  67%|██████▋   | 10/15 [02:23<01:09, 13.91s/it]
+
+Rank 0 Epochs:  73%|███████▎  | 11/15 [02:37<00:55, 13.90s/it]
+
+Rank 0 Epochs:  80%|████████  | 12/15 [02:51<00:41, 13.90s/it]
+
+Rank 0 Epochs:  87%|████████▋ | 13/15 [03:05<00:27, 13.88s/it]
+
+Rank 0 Epochs:  93%|█████████▎| 14/15 [03:18<00:13, 13.88s/it]
+Rank 0 Epochs: 100%|██████████| 15/15 [03:32<00:00, 13.89s/it]Rank 0 Epochs: 100%|██████████| 15/15 [03:32<00:00, 14.19s/it]
+  ✓ scaled_dot_prod_attention / Naive DDP: 13.854 s/epoch, 17374 MB/GPU, samples/epoch=32, 5913 tok/s
+
+============================================================
+  Benchmarking: scaled_dot_prod_attention / Bucketed Overlapping DDP
+============================================================
+
+Rank 0 Epochs:   0%|          | 0/15 [00:00<?, ?it/s]
+
+Rank 0 Epochs:   7%|▋         | 1/15 [00:17<04:11, 17.96s/it]
+
+Rank 0 Epochs:  13%|█▎        | 2/15 [00:30<03:14, 14.98s/it]
+
+Rank 0 Epochs:  20%|██        | 3/15 [00:43<02:48, 14.02s/it]
+
+Rank 0 Epochs:  27%|██▋       | 4/15 [00:56<02:29, 13.59s/it]
+
+Rank 0 Epochs:  33%|███▎      | 5/15 [01:09<02:13, 13.34s/it]
+
+Rank 0 Epochs:  40%|████      | 6/15 [01:22<01:58, 13.20s/it]
+
+Rank 0 Epochs:  47%|████▋     | 7/15 [01:35<01:45, 13.13s/it]
+
+Rank 0 Epochs:  53%|█████▎    | 8/15 [01:48<01:31, 13.06s/it]
+
+Rank 0 Epochs:  60%|██████    | 9/15 [02:01<01:18, 13.01s/it]
+
+Rank 0 Epochs:  67%|██████▋   | 10/15 [02:14<01:04, 12.98s/it]
+
+Rank 0 Epochs:  73%|███████▎  | 11/15 [02:27<00:51, 12.95s/it]
+
+Rank 0 Epochs:  80%|████████  | 12/15 [02:39<00:38, 12.93s/it]
+
+Rank 0 Epochs:  87%|████████▋ | 13/15 [02:52<00:25, 12.91s/it]
+
+Rank 0 Epochs:  93%|█████████▎| 14/15 [03:05<00:12, 12.91s/it]
+Rank 0 Epochs: 100%|██████████| 15/15 [03:18<00:00, 12.90s/it]Rank 0 Epochs: 100%|██████████| 15/15 [03:18<00:00, 13.24s/it]
+  ✓ scaled_dot_prod_attention / Bucketed Overlapping DDP: 12.908 s/epoch, 18094 MB/GPU, samples/epoch=32, 6347 tok/s
+
+============================================================
+  Benchmarking: flash_attention_triton / Local No DDP
+============================================================
+Epochs:   0%|          | 0/15 [00:00<?, ?it/s]Triton autotuning for function flash_fwd_kernel finished after 4.04s; best config selected: Q_TILE_SIZE: 64, K_TILE_SIZE: 32, num_warps: 4, num_ctas: 1, num_stages: 1, num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
+Epochs:   7%|▋         | 1/15 [00:18<04:24, 18.91s/it]Epochs:  13%|█▎        | 2/15 [00:31<03:15, 15.03s/it]Epochs:  20%|██        | 3/15 [00:43<02:45, 13.79s/it]Epochs:  27%|██▋       | 4/15 [00:55<02:25, 13.22s/it]Epochs:  33%|███▎      | 5/15 [01:08<02:08, 12.87s/it]Epochs:  40%|████      | 6/15 [01:20<01:54, 12.67s/it]Epochs:  47%|████▋     | 7/15 [01:32<01:40, 12.57s/it]Epochs:  53%|█████▎    | 8/15 [01:45<01:27, 12.49s/it]Epochs:  60%|██████    | 9/15 [01:57<01:14, 12.42s/it]Epochs:  67%|██████▋   | 10/15 [02:09<01:01, 12.39s/it]Epochs:  73%|███████▎  | 11/15 [02:21<00:49, 12.36s/it]Epochs:  80%|████████  | 12/15 [02:34<00:37, 12.34s/it]Epochs:  87%|████████▋ | 13/15 [02:46<00:24, 12.32s/it]Epochs:  93%|█████████▎| 14/15 [02:58<00:12, 12.31s/it]Epochs: 100%|██████████| 15/15 [03:11<00:00, 12.30s/it]Epochs: 100%|██████████| 15/15 [03:11<00:00, 12.74s/it]
+  ✓ flash_attention_triton / Local No DDP: 12.296 s/epoch, 7810 MB/GPU, samples/epoch=32, 6662 tok/s
+
+============================================================
+  Benchmarking: flash_attention_triton / Naive DDP
+============================================================
+Rank 0 Epochs:   0%|          | 0/15 [00:00<?, ?it/s]
+
+Triton autotuning for function flash_fwd_kernel finished after 3.96s; best config selected: Q_TILE_SIZE: 64, K_TILE_SIZE: 32, num_warps: 4, num_ctas: 1, num_stages: 1, num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
+Triton autotuning for function flash_fwd_kernel finished after 4.00s; best config selected: Q_TILE_SIZE: 64, K_TILE_SIZE: 32, num_warps: 4, num_ctas: 1, num_stages: 1, num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
+
+Rank 0 Epochs:   7%|▋         | 1/15 [00:21<04:59, 21.38s/it]
+
+Rank 0 Epochs:  13%|█▎        | 2/15 [00:31<03:10, 14.68s/it]
+
+Rank 0 Epochs:  20%|██        | 3/15 [00:41<02:30, 12.55s/it]
+
+Rank 0 Epochs:  27%|██▋       | 4/15 [00:51<02:07, 11.55s/it]
+
+Rank 0 Epochs:  33%|███▎      | 5/15 [01:01<01:50, 11.01s/it]
+
+Rank 0 Epochs:  40%|████      | 6/15 [01:11<01:36, 10.71s/it]
+
+Rank 0 Epochs:  47%|████▋     | 7/15 [01:21<01:23, 10.49s/it]
+
+Rank 0 Epochs:  53%|█████▎    | 8/15 [01:31<01:12, 10.34s/it]
+
+Rank 0 Epochs:  60%|██████    | 9/15 [01:41<01:01, 10.25s/it]
+
+Rank 0 Epochs:  67%|██████▋   | 10/15 [01:51<00:50, 10.18s/it]
+
+Rank 0 Epochs:  73%|███████▎  | 11/15 [02:01<00:40, 10.12s/it]
+
+Rank 0 Epochs:  80%|████████  | 12/15 [02:11<00:30, 10.08s/it]
+
+Rank 0 Epochs:  87%|████████▋ | 13/15 [02:21<00:20, 10.06s/it]
+
+Rank 0 Epochs:  93%|█████████▎| 14/15 [02:31<00:10, 10.05s/it]
+Rank 0 Epochs: 100%|██████████| 15/15 [02:41<00:00, 10.04s/it]Rank 0 Epochs: 100%|██████████| 15/15 [02:41<00:00, 10.78s/it]
+  ✓ flash_attention_triton / Naive DDP: 10.028 s/epoch, 7804 MB/GPU, samples/epoch=32, 8169 tok/s
+
+============================================================
+  Benchmarking: flash_attention_triton / Bucketed Overlapping DDP
+============================================================
+Rank 0 Epochs:   0%|          | 0/15 [00:00<?, ?it/s]
+
+Triton autotuning for function flash_fwd_kernel finished after 3.98s; best config selected: Q_TILE_SIZE: 64, K_TILE_SIZE: 32, num_warps: 4, num_ctas: 1, num_stages: 1, num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
+Triton autotuning for function flash_fwd_kernel finished after 3.99s; best config selected: Q_TILE_SIZE: 64, K_TILE_SIZE: 32, num_warps: 4, num_ctas: 1, num_stages: 1, num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
+
+Rank 0 Epochs:   7%|▋         | 1/15 [00:19<04:32, 19.46s/it]
+
+Rank 0 Epochs:  13%|█▎        | 2/15 [00:28<02:54, 13.42s/it]
+
+Rank 0 Epochs:  20%|██        | 3/15 [00:37<02:18, 11.51s/it]
+
+Rank 0 Epochs:  27%|██▋       | 4/15 [00:47<01:56, 10.61s/it]
+
+Rank 0 Epochs:  33%|███▎      | 5/15 [00:56<01:40, 10.10s/it]
+
+Rank 0 Epochs:  40%|████      | 6/15 [01:05<01:28,  9.79s/it]
+
+Rank 0 Epochs:  47%|████▋     | 7/15 [01:14<01:16,  9.60s/it]
+
+Rank 0 Epochs:  53%|█████▎    | 8/15 [01:23<01:06,  9.48s/it]
+
+Rank 0 Epochs:  60%|██████    | 9/15 [01:33<00:56,  9.41s/it]
+
+Rank 0 Epochs:  67%|██████▋   | 10/15 [01:42<00:46,  9.36s/it]
+
+Rank 0 Epochs:  73%|███████▎  | 11/15 [01:51<00:37,  9.31s/it]
+
+Rank 0 Epochs:  80%|████████  | 12/15 [02:00<00:27,  9.29s/it]
+
+Rank 0 Epochs:  87%|████████▋ | 13/15 [02:10<00:18,  9.28s/it]
+
+Rank 0 Epochs:  93%|█████████▎| 14/15 [02:19<00:09,  9.24s/it]
+Rank 0 Epochs: 100%|██████████| 15/15 [02:28<00:00,  9.23s/it]Rank 0 Epochs: 100%|██████████| 15/15 [02:28<00:00,  9.90s/it]
+  ✓ flash_attention_triton / Bucketed Overlapping DDP: 9.216 s/epoch, 8524 MB/GPU, samples/epoch=32, 8888 tok/s
+
+[csv] Saved artifacts/video1/full_ctx2560_b1/lm_matrix_results.csv
+[csv] Saved artifacts/video1/full_ctx2560_b1/lm_matrix_loss_curves.csv
+[plot] Saved PNGs to artifacts/video1/full_ctx2560_b1
+[report] Saved artifacts/video1/full_ctx2560_b1/lm_matrix_report.md
+[image-table] Saved artifacts/video1/full_ctx2560_b1/lm_matrix_table_flash_attention_triton.png
+[image-table] Saved artifacts/video1/full_ctx2560_b1/lm_matrix_table_scaled_dot_prod_attention.png
+
+[benchmark_lm_matrix] Done.

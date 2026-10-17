@@ -1,0 +1,95 @@
+[config] Loaded from configs_190m/fwe.json
+  model:  {'vocab_size': 50257, 'context_length': 1024, 'num_layers': 16, 'd_model': 768, 'heads_num': 12, 'd_ff': 2048, 'theta': 10000.0}
+  epochs=12  batch=8  ctx=1024  dtype=float32  bucket_mb=25
+  samples_per_epoch=256: local 32 steps, 2-GPU 16 steps
+
+============================================================
+  Benchmarking: flash_attention_triton / Local No DDP
+============================================================
+Epochs:   0%|          | 0/15 [00:00<?, ?it/s]Triton autotuning for function flash_fwd_kernel finished after 40.65s; best config selected: Q_TILE_SIZE: 64, K_TILE_SIZE: 32, num_warps: 4, num_ctas: 1, num_stages: 1, num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
+Epochs:   7%|▋         | 1/15 [01:10<16:29, 70.67s/it]Epochs:  13%|█▎        | 2/15 [01:38<09:49, 45.31s/it]Epochs:  20%|██        | 3/15 [02:05<07:25, 37.15s/it]Epochs:  27%|██▋       | 4/15 [02:33<06:06, 33.34s/it]Epochs:  33%|███▎      | 5/15 [03:00<05:12, 31.26s/it]Epochs:  40%|████      | 6/15 [03:28<04:29, 29.98s/it]Epochs:  47%|████▋     | 7/15 [03:55<03:53, 29.19s/it]Epochs:  53%|█████▎    | 8/15 [04:23<03:20, 28.68s/it]Epochs:  60%|██████    | 9/15 [04:51<02:50, 28.37s/it]Epochs:  67%|██████▋   | 10/15 [05:18<02:20, 28.12s/it]Epochs:  73%|███████▎  | 11/15 [05:46<01:51, 27.96s/it]Epochs:  80%|████████  | 12/15 [06:13<01:23, 27.83s/it]Epochs:  87%|████████▋ | 13/15 [06:41<00:55, 27.75s/it]Epochs:  93%|█████████▎| 14/15 [07:08<00:27, 27.72s/it]Epochs: 100%|██████████| 15/15 [07:36<00:00, 27.65s/it]Epochs: 100%|██████████| 15/15 [07:36<00:00, 30.43s/it]
+  ✓ flash_attention_triton / Local No DDP: 27.567 s/epoch, 20005 MB/GPU, samples/epoch=256, 9509 tok/s
+
+============================================================
+  Benchmarking: flash_attention_triton / Naive DDP
+============================================================
+Rank 0 Epochs:   0%|          | 0/15 [00:00<?, ?it/s]
+
+Triton autotuning for function flash_fwd_kernel finished after 40.07s; best config selected: Q_TILE_SIZE: 64, K_TILE_SIZE: 32, num_warps: 4, num_ctas: 1, num_stages: 2, num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
+Triton autotuning for function flash_fwd_kernel finished after 40.09s; best config selected: Q_TILE_SIZE: 64, K_TILE_SIZE: 32, num_warps: 4, num_ctas: 1, num_stages: 1, num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
+
+Rank 0 Epochs:   7%|▋         | 1/15 [01:04<15:08, 64.90s/it]
+
+Rank 0 Epochs:  13%|█▎        | 2/15 [01:22<08:02, 37.14s/it]
+
+Rank 0 Epochs:  20%|██        | 3/15 [01:40<05:39, 28.29s/it]
+
+Rank 0 Epochs:  27%|██▋       | 4/15 [01:58<04:25, 24.15s/it]
+
+Rank 0 Epochs:  33%|███▎      | 5/15 [02:15<03:38, 21.86s/it]
+
+Rank 0 Epochs:  40%|████      | 6/15 [02:33<03:04, 20.49s/it]
+
+Rank 0 Epochs:  47%|████▋     | 7/15 [02:51<02:37, 19.64s/it]
+
+Rank 0 Epochs:  53%|█████▎    | 8/15 [03:09<02:13, 19.09s/it]
+
+Rank 0 Epochs:  60%|██████    | 9/15 [03:27<01:52, 18.73s/it]
+
+Rank 0 Epochs:  67%|██████▋   | 10/15 [03:45<01:32, 18.45s/it]
+
+Rank 0 Epochs:  73%|███████▎  | 11/15 [04:03<01:13, 18.26s/it]
+
+Rank 0 Epochs:  80%|████████  | 12/15 [04:21<00:54, 18.15s/it]
+
+Rank 0 Epochs:  87%|████████▋ | 13/15 [04:39<00:36, 18.08s/it]
+
+Rank 0 Epochs:  93%|█████████▎| 14/15 [04:56<00:18, 18.02s/it]
+Rank 0 Epochs: 100%|██████████| 15/15 [05:14<00:00, 17.98s/it]Rank 0 Epochs: 100%|██████████| 15/15 [05:14<00:00, 20.99s/it]
+  ✓ flash_attention_triton / Naive DDP: 17.869 s/epoch, 20005 MB/GPU, samples/epoch=256, 14670 tok/s
+
+============================================================
+  Benchmarking: flash_attention_triton / Bucketed Overlapping DDP
+============================================================
+
+Rank 0 Epochs:   0%|          | 0/15 [00:00<?, ?it/s]
+Triton autotuning for function flash_fwd_kernel finished after 3.78s; best config selected: Q_TILE_SIZE: 64, K_TILE_SIZE: 32, num_warps: 4, num_ctas: 1, num_stages: 1, num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
+Triton autotuning for function flash_fwd_kernel finished after 3.78s; best config selected: Q_TILE_SIZE: 64, K_TILE_SIZE: 32, num_warps: 4, num_ctas: 1, num_stages: 1, num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
+
+Rank 0 Epochs:   7%|▋         | 1/15 [00:26<06:10, 26.44s/it]
+
+Rank 0 Epochs:  13%|█▎        | 2/15 [00:43<04:29, 20.74s/it]
+
+Rank 0 Epochs:  20%|██        | 3/15 [00:59<03:46, 18.91s/it]
+
+Rank 0 Epochs:  27%|██▋       | 4/15 [01:16<03:18, 18.04s/it]
+
+Rank 0 Epochs:  33%|███▎      | 5/15 [01:33<02:56, 17.61s/it]
+
+Rank 0 Epochs:  40%|████      | 6/15 [01:50<02:35, 17.30s/it]
+
+Rank 0 Epochs:  47%|████▋     | 7/15 [02:06<02:16, 17.11s/it]
+
+Rank 0 Epochs:  53%|█████▎    | 8/15 [02:23<01:58, 17.00s/it]
+
+Rank 0 Epochs:  60%|██████    | 9/15 [02:40<01:41, 16.92s/it]
+
+Rank 0 Epochs:  67%|██████▋   | 10/15 [02:57<01:24, 16.87s/it]
+
+Rank 0 Epochs:  73%|███████▎  | 11/15 [03:13<01:07, 16.83s/it]
+
+Rank 0 Epochs:  80%|████████  | 12/15 [03:30<00:50, 16.83s/it]
+
+Rank 0 Epochs:  87%|████████▋ | 13/15 [03:47<00:33, 16.81s/it]
+
+Rank 0 Epochs:  93%|█████████▎| 14/15 [04:04<00:16, 16.78s/it]
+Rank 0 Epochs: 100%|██████████| 15/15 [04:20<00:00, 16.77s/it]Rank 0 Epochs: 100%|██████████| 15/15 [04:20<00:00, 17.40s/it]
+  ✓ flash_attention_triton / Bucketed Overlapping DDP: 16.750 s/epoch, 20745 MB/GPU, samples/epoch=256, 15650 tok/s
+
+[csv] Saved artifacts/video1/ddp_flash_ctx1024_b8/lm_matrix_results.csv
+[csv] Saved artifacts/video1/ddp_flash_ctx1024_b8/lm_matrix_loss_curves.csv
+[plot] Saved PNGs to artifacts/video1/ddp_flash_ctx1024_b8
+[report] Saved artifacts/video1/ddp_flash_ctx1024_b8/lm_matrix_report.md
+[image-table] Saved artifacts/video1/ddp_flash_ctx1024_b8/lm_matrix_table_flash_attention_triton.png
+
+[benchmark_lm_matrix] Done.
