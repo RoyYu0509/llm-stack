@@ -4,6 +4,7 @@ from inferenceLM.data.tokenized_data import TokenizedData
 from inferenceLM.data.request import RequestData
 from inferenceLM.request_receiver.tokenizer import Tokenizer
 from inferenceLM.data.request_status import RequestStatus
+from inferenceLM.engine.inference_engine import InferenceEngine
 from typing import Dict
 
 class RequestReceiver:
@@ -20,25 +21,42 @@ class RequestReceiver:
     request_store: Dict[str, RequestData]
     tokenizer: Tokenizer
     index = 0 # 给每个 Request class 一个 unique request_id
+    engine: InferenceEngine|None
 
-    def __init__(self, tokenizer_name: str, pending_queue: asyncio.Queue, request_store: Dict[str, RequestData]):
+    def __init__(
+            self, tokenizer_name: str, 
+            pending_queue: asyncio.Queue, 
+            request_store: Dict[str, RequestData],
+            engine: InferenceEngine|None = None
+        ):
         self.pending_queue = pending_queue
         self.request_store = request_store
         self.tokenizer = Tokenizer(tokenizer_name)
+        self.engine = engine
 
-    async def submit_request(self, prompt_text: str, user_id: str, max_length: int = 20, do_sample: bool = False) -> str:
+    async def submit_request(
+            self, prompt_text: str, 
+            user_id: str, 
+            request_id: str|None = None,
+            max_length: int = 20, 
+            do_sample: bool = False
+        ) -> str:
         """
         Create a new RequestData & Submit a new request to the pending queue. (可以 wait for queue has space)
 
         Args:
             prompt_text (str): The raw text prompt from the user.
             user_id (str): The ID of the user who sent the request.
+            request_id (str|None): The ID of the request. If None, a new ID will be generated.
             max_length (int): The maximum length of the generated text.
             do_sample (bool): Whether to use sampling for generation.
 
         Returns:
             str: The unique request ID assigned to the submitted request.
         """
+        if self.engine is not None and not self.engine.is_accepting():
+            raise RuntimeError(f"engine is {self.engine.status.name}: not accepting new requests")
+        
         # 在接收到 user 的 input text 之后, 在function内部重新包装成一个 RequestData class
         request_data = RequestData(
             prompt_text=prompt_text, 

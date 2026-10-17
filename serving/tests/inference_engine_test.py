@@ -10,6 +10,7 @@ import pytest
 
 from unittest.mock import patch
 from unittest.mock import AsyncMock
+from unittest.mock import Mock
 
 
 @pytest.fixture(scope="module")
@@ -119,9 +120,11 @@ async def test_inference_engine_handle_lm_engine_exception(model: GPT2LMHeadMode
     )
     await pending_queue.put(TokenizedData(request_id=request_id, tokens=input_ids[0].tolist()))
 
-    runtime_error_inference = AsyncMock(side_effect=RuntimeError("Inference failed due to some error"))
+    # the engine no longer calls LMEngine.inference(); fail the first step instead
+    runtime_error_inference = Mock(side_effect=RuntimeError("Inference failed due to some error"))
+
     # `patch` 需要完整的 import path
-    with patch(target = "inferenceLM.engine.inference_engine.LMEngine.inference", new=runtime_error_inference):
+    with patch(target = "inferenceLM.engine.inference_engine.LMEngine.prefill", new=runtime_error_inference):
         task = inference_engine.run()
         await pending_queue.join()  # Wait until the request in pending_queue is processed
         await inference_engine.shutdown(draining=True)
@@ -174,12 +177,13 @@ async def test_inference_engine_immediate_draining_shutdown(model: GPT2LMHeadMod
         await asyncio.sleep(5)
         return [0]  # Return a dummy token
 
-    with patch(target = "inferenceLM.engine.inference_engine.LMEngine.inference", new=AsyncMock(side_effect= _slow_inference)):  # Simulate a long-running inference
-        task = inference_engine.run() # create 一个 background task 然后直接 return 回来
-        # Immediately trigger draining-shutdown before the inference can complete
-        await inference_engine.shutdown(draining=True)  
+    # PROCESSING is never written any more; the real 200-token decode is the "slow" part
+    task = inference_engine.run() # create 一个 background task 然后直接 return 回来
+    while inference_engine.request_store[request_id].status == RequestStatus.PENDING:
+        await asyncio.sleep(0.1)  # Wait until the request is being processed
 
-    assert task.done(), "Inference Engine task should be completed after draining shutdown"
+    await inference_engine.shutdown(draining=True)  # Trigger draining shutdown while processing
+    assert task.done(), "Task should be completed after draining shutdown"
     assert inference_engine.status == InferenceEngineStatus.STOPPED, "Inference Engine should be in STOPPED state after draining shutdown"
     assert inference_engine.request_store[request_id].status == RequestStatus.DONE, f"Request ID {request_id} should be marked as DONE due to draining shutdown"
 
@@ -209,12 +213,13 @@ async def test_inference_engine_immediate_nondraining_shutdown(model: GPT2LMHead
         await asyncio.sleep(5)
         return [0]  # Return a dummy token
 
-    with patch(target = "inferenceLM.engine.inference_engine.LMEngine.inference", new=AsyncMock(side_effect= _slow_inference)):  # Simulate a long-running inference
-        task = inference_engine.run() # create 一个 background task 然后直接 return 回来
-        # Immediately trigger draining-shutdown before the inference can complete
-        await inference_engine.shutdown(draining=False)  
+    # PROCESSING is never written any more; the real 200-token decode is the "slow" part
+    task = inference_engine.run() # create 一个 background task 然后直接 return 回来
+    while inference_engine.request_store[request_id].status == RequestStatus.PENDING:
+        await asyncio.sleep(0.1)  # Wait until the request is being processed
 
-    assert task.done(), "Task should be cancelled after immediate shutdown"
+    await inference_engine.shutdown(draining=False)  # Trigger non-draining shutdown while processing
+    assert task.done(), "Task should be cancelled after non-draining shutdown"
     assert inference_engine.status == InferenceEngineStatus.STOPPED, "Inference Engine should be in STOPPED state after draining shutdown"
     assert inference_engine.request_store[request_id].status == RequestStatus.FAILED, f"Request ID {request_id} should be marked as FAILED due to draining shutdown"
 
@@ -239,16 +244,11 @@ async def test_inference_engine_draining_shutdown_while_processing(model: GPT2LM
     )
     await pending_queue.put(TokenizedData(request_id=request_id, tokens=input_ids[0].tolist()))
 
-    # Start the inference engine 然后把 LMEngine.inference 这个异步方法临时替换（Mock)
-    async def _slow_inference(*args, **kwargs):
-        await asyncio.sleep(5)
-        return [0]  # Return a dummy token
-
-    with patch(target = "inferenceLM.engine.inference_engine.LMEngine.inference", new=AsyncMock(side_effect= _slow_inference)):  # Simulate a long-running inference
-        task = inference_engine.run() # create 一个 background task 然后直接 return 回来
-        while inference_engine.request_store[request_id].status != RequestStatus.PROCESSING:
-            await asyncio.sleep(0.1)  # Wait until the request is being processed
-        await inference_engine.shutdown(draining=True)  # Trigger draining shutdown while processing
+    # PROCESSING is never written any more; the real 200-token decode is the "slow" part
+    task = inference_engine.run() # create 一个 background task 然后直接 return 回来
+    while inference_engine.request_store[request_id].status == RequestStatus.PENDING:
+        await asyncio.sleep(0.1)  # Wait until the request is being processed
+    await inference_engine.shutdown(draining=True)  # Trigger draining shutdown while processing
 
     assert task.done(), "Task should be completed after draining shutdown"
     assert inference_engine.status == InferenceEngineStatus.STOPPED, "Inference Engine should be in STOPPED state after draining shutdown"
@@ -275,16 +275,11 @@ async def test_inference_engine_nondraining_shutdown_while_processing(model: GPT
     )
     await pending_queue.put(TokenizedData(request_id=request_id, tokens=input_ids[0].tolist()))
 
-    # Start the inference engine 然后把 LMEngine.inference 这个异步方法临时替换（Mock)
-    async def _slow_inference(*args, **kwargs):
-        await asyncio.sleep(5)
-        return [0]  # Return a dummy token
-
-    with patch(target = "inferenceLM.engine.inference_engine.LMEngine.inference", new=AsyncMock(side_effect= _slow_inference)):  # Simulate a long-running inference
-        task = inference_engine.run() # create 一个 background task 然后直接 return 回来
-        while inference_engine.request_store[request_id].status != RequestStatus.PROCESSING:
-            await asyncio.sleep(0.1)  # Wait until the request is being processed
-        await inference_engine.shutdown(draining=False)  # Trigger non-draining shutdown while processing
+    # PROCESSING is never written any more; the real 200-token decode is the "slow" part
+    task = inference_engine.run() # create 一个 background task 然后直接 return 回来
+    while inference_engine.request_store[request_id].status == RequestStatus.PENDING:
+        await asyncio.sleep(0.1)  # Wait until the request is being processed
+    await inference_engine.shutdown(draining=False)  # Trigger non-draining shutdown while processing
 
     assert task.done(), "Task should be cancelled after non-draining shutdown"
     assert inference_engine.status == InferenceEngineStatus.STOPPED, "Inference Engine should be in STOPPED state after non-draining shutdown"

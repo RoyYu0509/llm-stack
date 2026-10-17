@@ -39,7 +39,7 @@ change either -- point it at "gpt2".
 """
 
 from dataclasses import dataclass
-from typing import NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional
 
 import torch
 import torch.nn as nn
@@ -55,7 +55,7 @@ class AdapterConfig:
     eos_token_id: int
     vocab_size: Optional[int] = None
 
-
+# 一个 NamedTuple, 方便 LMEngine 直接解包成 logits, past_key_values
 class CausalLMOutput(NamedTuple):
     """Stands in for HF's `CausalLMOutputWithPast`, with only the fields LMEngine uses.
 
@@ -68,7 +68,8 @@ class CausalLMOutput(NamedTuple):
 
 
 class TransformerLMAdapter(nn.Module):
-    """Wrap a from-scratch causal LM so `LMEngine` can drive it unchanged.
+    """
+    Wrap a from-scratch causal LM so `LMEngine` can drive it unchanged.
 
     Args:
         model: any module mapping `(batch, seq)` token ids to `(batch, seq, vocab)`
@@ -90,10 +91,21 @@ class TransformerLMAdapter(nn.Module):
         eos_token_id: int = GPT2_EOS_TOKEN_ID,
         vocab_size: Optional[int] = None,
         use_kv_cache: bool = False,
+        decode_backend: str = "ragged",
+        decode_slots: Optional[int] = None,
+        decode_max_len: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.model = model
         self.use_kv_cache = use_kv_cache
+        # "ragged": RaggedDecodeBatch (left-padded rectangle, re-cat'ed every step) -- the original path.
+        # "prealloc": PreallocDecodeBatch (slots allocated once, K/V appended in place, FA-2 kv-cache kernel).
+        self.last_token_logits_only = False       # True: prefill returns (1, 1, vocab) logits instead of (1, S, vocab)
+        self.decode_backend = decode_backend
+        self.decode_slots = decode_slots          # prealloc: max requests decoding at once
+        self.decode_max_len = decode_max_len      # prealloc: prompt + generated tokens a slot can hold
+        self.compile_decode = False               # prealloc: run the decode forward as one torch.compile'd graph
+        self.compile_backend = "inductor"         # "aot_eager" = trace only (CPU tests); anything torch.compile accepts
         if use_kv_cache and not hasattr(model, "forward_with_cache"):
             raise ValueError(
                 "use_kv_cache=True requires the wrapped model to expose forward_with_cache("
@@ -110,13 +122,40 @@ class TransformerLMAdapter(nn.Module):
     def device(self) -> torch.device:
         return next(self.model.parameters()).device
 
+    @property
+    def supports_batched_decode(self) -> bool:
+        return self.use_kv_cache and getattr(self.model, "supports_ragged_decode", False)
+
+    def new_decode_batch(self):
+        if not self.supports_batched_decode:
+            raise RuntimeError("batched decode needs use_kv_cache=True and a ragged-capable model")
+
+        if self.decode_backend == "prealloc":
+            from inferenceLM.engine.prealloc_batch import PreallocDecodeBatch
+
+            return PreallocDecodeBatch(
+                self.model,
+                n_slots=self.decode_slots or 64,
+                max_len=self.decode_max_len or self.config.n_positions,
+                dtype=next(self.model.parameters()).dtype,
+                device=self.device,
+                compile_decode=self.compile_decode,
+                compile_backend=self.compile_backend,
+            )
+
+        from inferenceLM.engine.ragged_batch import RaggedDecodeBatch
+
+        return RaggedDecodeBatch(self.model)
+
     def forward(
         self,
         input_ids: torch.Tensor,
         past_key_values: Optional[torch.Tensor] = None,
         use_cache: bool = True,
+        last_index: Optional[torch.Tensor] = None,
     ) -> CausalLMOutput:
-        """One forward pass in HF's calling convention.
+        """
+        One forward pass in HF's calling convention.
 
         On prefill `past_key_values` is None and `input_ids` is the whole prompt. On
         decode `input_ids` is the single newest token and `past_key_values` is the
@@ -125,27 +164,65 @@ class TransformerLMAdapter(nn.Module):
 
         Returns logits for the full prefix (LMEngine slices `[:, -1, :]` itself) and the
         new prefix to hand back on the next step.
+        
+        Example.
+            # Prefill(第一次调用,past_key_values=None)
+            ------------------------------------------
+            input_ids:        (1, 5)          # 整个 prompt
+            prefix = input_ids                # (1, 5),没有 past 可以 cat
+            logits = self.model(prefix)       # (1, 5, vocab_size)
+            返回 past_key_values = prefix     # (1, 5)
+
+            - LMEngine 自己做 logits[:, -1, :] 取最后一个位置采样下一个 token。
+
+            # Decode step 1
+            ------------------------------------------
+            input_ids:         (1, 1)                        # 上一步采样出的新 token
+            past_key_values:   (1, 5)                        # 上一步返回的 prefix
+            prefix = cat([past_key_values, input_ids], dim=1) # (1, 6)
+            6 <= n_positions(8),不截断
+            logits = self.model(prefix)                       # (1, 6, vocab_size)
+            返回 past_key_values = prefix                      # (1, 6)
+
+            # 继续到 decode step 4,prefix 长度超过 n_positions
+            ------------------------------------------
+            past_key_values:  (1, 8)     # 上一步
+            input_ids:        (1, 1)
+            prefix = cat(...)            # (1, 9)
+            9 > n_positions(8) → 截断
+            prefix = prefix[:, -8:]      # (1, 8),丢掉最左边(最老)的 1 个 token
+            logits = self.model(prefix)  # (1, 8, vocab_size)
+            返回 past_key_values = prefix # (1, 8)
         """
+        # If: 开启 KV Cache, 走正常 model 内置的 KV Cache 逻辑
         if self.use_kv_cache:
             # LMEngine treats past_key_values as opaque, so in this mode it carries the
             # model's real per-layer (K, V) state instead of a token prefix. Each step is
             # then O(prefix) rather than O(prefix^2) cumulative.
+            kw = {"last_only": True} if (self.last_token_logits_only and past_key_values is None) else {}
+            if last_index is not None:   # batched prefill of right-padded prompts (see LMEngine.prefill_batch)
+                kw = {"last_index": last_index}
             logits, new_past = self.model.forward_with_cache(
-                input_ids.to(self.device), past_kv=past_key_values
+                input_ids.to(self.device), past_kv=past_key_values, **kw
             )
             return CausalLMOutput(logits=logits, past_key_values=new_past)
-
-        if past_key_values is None:
-            prefix = input_ids
+        # Else: 没 KV Cache, 每一步都要完整的传入目前为止生成的 token id 序列本身
         else:
-            prefix = torch.cat([past_key_values, input_ids], dim=1)
+            if last_index is not None:
+                raise NotImplementedError("batched prefill needs use_kv_cache=True")
+            if past_key_values is None:
+                prefix = input_ids
+            else:
+                prefix = torch.cat([past_key_values, input_ids.to(past_key_values.device)], dim=1)
 
-        # Keep the window inside the model's positional range. LMEngine already refuses
-        # a max_length above n_positions, so this only bites if a caller drives the
-        # adapter directly -- truncating from the left is the least surprising behaviour.
-        if prefix.shape[1] > self.config.n_positions:
-            prefix = prefix[:, -self.config.n_positions:]
+            # Keep the window inside the model's positional range. LMEngine already refuses
+            # a max_length above n_positions, so this only bites if a caller drives the
+            # adapter directly -- truncating from the left is the least surprising behaviour.
+            if prefix.shape[1] > self.config.n_positions:
+                prefix = prefix[:, -self.config.n_positions:]
 
-        prefix = prefix.to(self.device)
-        logits = self.model(prefix)
-        return CausalLMOutput(logits=logits, past_key_values=prefix)
+            # 最终的结果
+            prefix = prefix.to(self.device)
+            logits = self.model(prefix)
+            return CausalLMOutput(logits=logits, past_key_values=prefix)
+

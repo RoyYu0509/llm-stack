@@ -5,11 +5,13 @@ from typing import Tuple, List, Dict
 from inferenceLM.data.request import RequestData
 from inferenceLM.data.request_status import RequestStatus
 from inferenceLM.data.tokenized_data import TokenizedData
+from inferenceLM.engine.ragged_batch import RaggedDecodeBatch
 
 class LMEngine:
-    def __init__(self, model: PreTrainedModel):
-        self.model = model
+    def __init__(self, model: PreTrainedModel|torch.nn.Module):
+        self.model: PreTrainedModel|torch.nn.Module = model
         self.model.eval()  # 直接开启 eval mode
+        self.batched_sampling = False  # True: one batched argmax + one tolist() per ragged decode step
 
     def prefill(
             self, 
@@ -45,9 +47,32 @@ class LMEngine:
         return new_token, new_kv
 
 
+    def prefill_batch(self, prompts: List[List[int]]) -> Tuple[List[int], List[List[Tuple[torch.Tensor, torch.Tensor]]]]:
+        """ONE forward over several prompts. Returns each prompt's first generated token and its own KV
+        (per layer `(1, H, len_i, d)`; the padded tail is sliced off), i.e. what `prefill` would have returned
+        for that prompt alone.
+
+        Prompts are RIGHT-padded to the longest and run with the ordinary causal mask: a causal row never looks at
+        a later position, so a pad token can only influence positions that are themselves padding. That is why no
+        padding mask is needed (and why the pad positions' K/V must never be kept: they are sliced off here).
+        The LM head runs only on each row's last real position, and the greedy tokens come back in one sync."""
+        lens = [len(p) for p in prompts]
+        ids = torch.zeros(len(prompts), max(lens), dtype=torch.long)
+        for i, p in enumerate(prompts):
+            ids[i, :len(p)] = torch.tensor(p, dtype=torch.long)
+        last_index = torch.tensor([n - 1 for n in lens], dtype=torch.long)
+
+        with torch.no_grad():
+            outputs = self.model(input_ids=ids, past_key_values=None, last_index=last_index)
+            tokens = torch.argmax(outputs.logits[:, 0, :], dim=-1).tolist()
+        pasts = [[(k[i:i + 1, :, :n], v[i:i + 1, :, :n]) for k, v in outputs.past_key_values]
+                 for i, n in enumerate(lens)]
+        return tokens, pasts
+
+
     def decode(
-            self, 
-            latest_token: torch.Tensor, 
+            self,
+            latest_token: torch.Tensor,
             latest_kv: List[Tuple[torch.Tensor, torch.Tensor]], 
             do_sample: bool = False, 
         ) -> Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor]]]:
@@ -104,8 +129,37 @@ class LMEngine:
             generated_tokens.append(latest_token.item())
 
         return generated_tokens
-    
 
+    
+    def supports_batched_decode(self) -> bool:
+        """ 检查我们的 model 是否支持 batched decode """
+        return bool(getattr(self.model, "supports_batched_decode", False))
+
+
+    def new_decode_batch(self):
+        """ 创建一个新的 RaggedBatch, 用来处理 batched decode """
+        return self.model.new_decode_batch()
+
+
+    def decode_batch(self, batch: RaggedDecodeBatch, latest_tokens: Dict, do_sample: bool = False) -> Dict:
+        """One forward for every row in `batch`; returns {key: next greedy token id}."""
+        if do_sample:
+            raise NotImplementedError(f"Sampling strategy {do_sample} not implemented.")
+
+        with torch.no_grad():
+            # Prealloc batch samples for the whole batch itself: one argmax, one device->host copy.
+            step_tokens = getattr(batch, "step_tokens", None)
+            if step_tokens is not None:
+                return step_tokens(latest_tokens)
+            logits = batch.step(latest_tokens)
+            if self.batched_sampling:  # same greedy result, but ONE sync instead of one .item() per row
+                keys = list(logits)
+                toks = torch.stack([logits[k] for k in keys]).argmax(dim=-1).tolist()
+                return dict(zip(keys, toks))
+
+        return {k: int(torch.argmax(v, dim=-1).item()) for k, v in logits.items()}
+
+    
     def stopping_criteria(self, prompt_len: int, generated_tokens: List[int], max_length: int) -> bool:
         """
         Return True (means stop) if:
