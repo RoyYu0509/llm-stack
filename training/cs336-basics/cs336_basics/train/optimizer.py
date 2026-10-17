@@ -116,6 +116,5 @@ def grad_clip(paras:List[nn.Parameter], max_norm: float, eps=1e-6):
                 continue
             p.grad *= (max_norm/(grad_l2+eps))
     
-    
     return max(grad_l2, max_norm)
             

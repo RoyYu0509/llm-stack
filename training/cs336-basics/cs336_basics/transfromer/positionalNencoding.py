@@ -7,31 +7,28 @@ from cs336_basics import nvtx_compat as nvtx
 
 class RoPE:
     """
-    A R^{2x2} Rotation Matrix
+    A R^{2x2} Rotation Matrix class
     """
-    def __init__(self, 
-                 theta: float, 
-                 d_k: int,
-                 device=None
-        ):
-        """
-        Create the rotation matrix
-        """
-        self.d_k = d_k
-        self.device = device
-        self.theta = torch.tensor(theta, device=device, dtype = torch.float32)
-    
-    def getRotMat(self, i:int, k:int):
-        theta_ik = i / (self.theta.clone()**((2*k)/self.d_k))
-        theta_ik = theta_ik.to(self.device)
+    @staticmethod
+    def get_rot_mat(pos: int, k: int, theta: torch.Tensor | float, d_k: int, device=None) -> Float[Tensor, "2 2"]:
+        """返回一个 2x2 的旋转矩阵，表示在二维平面上旋转的角度。旋转角度由位置 pos 和维度索引 k 决定。"""
+        if not isinstance(theta, torch.Tensor):
+            theta = torch.tensor(theta, device=device, dtype=torch.float32)
+        # 计算旋转角度
+        theta_ik = pos / (theta ** ((2 * k) / d_k))
+        theta_ik = theta_ik.to(device)
         _cos = torch.cos(theta_ik)
         _sin = torch.sin(theta_ik)
-        
-        rotMat_ik: Float[Tensor, "out_vec in_vec"]
-        rotMat_ik = torch.stack([
+
+        # 创建一个 2x2 的旋转矩阵
+        rot_mat_ik = torch.stack([
             torch.stack([_cos, -_sin]),
-            torch.stack([_sin,  _cos]),], dim=0)
-        return rotMat_ik
+            torch.stack([_sin,  _cos]),
+        ], dim=0)
+        return rot_mat_ik
+
+# 在 PosEncod 初始化中直接调用静态方法，无需创建 RoPE 实例：
+# RoPE.get_rot_mat(pos, k, theta, self.rot_dim, device=device)
 
 
 class PosEncod(nn.Module):
@@ -54,7 +51,7 @@ class PosEncod(nn.Module):
             [
                 torch.stack(
                     [
-                        RoPE(theta, self.rot_dim, device=device).getRotMat(pos, k) for k in range(0, self.rot_dim // 2)
+                        RoPE.get_rot_mat(pos, k, theta, self.rot_dim, device=device) for k in range(0, self.rot_dim // 2)
                     ],
                     dim=0,
                 )

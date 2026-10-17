@@ -265,9 +265,9 @@ def local_train(
     last_val_perplexity = None
     
     for iteration in tqdm(range(EPOCHES), desc="Training", unit="iter"):
-        # 5) Sample a random train batch.
+        # 5) load 进来一个满 context window 的 batch, 这个 batch 是从 token stream 中随机采样的
         inputs, targets = data_loading(train_data, TR_BAT_SIZE, CONTEXT_LENGTH, DEVICE, offsets)
-        opt.zero_grad()
+        opt.zero_grad() # 先清空上一轮的 grad
 
         # 6) Forward + loss + backward + clipping + optimizer step.
         _mark_cudagraph_step_begin()

@@ -97,9 +97,9 @@ autotune_configs = [
 @triton.autotune(configs=autotune_configs, key=['N_QUERIES', 'N_KEYS', 'D'])
 @triton.jit
 def flash_fwd_kernel(
-    Q_ptr, K_ptr, V_ptr,
-    O_ptr, L_ptr,
-    stride_qb, stride_qq, stride_qd,
+    Q_ptr, K_ptr, V_ptr, # Pointers to Q, K, V matrices
+    O_ptr, L_ptr, # Pointers to Output and LogSumExp matrices
+    stride_qb, stride_qq, stride_qd, # 
     stride_kb, stride_kk, stride_kd,
     stride_vb, stride_vk, stride_vd,
     stride_ob, stride_oq, stride_od,
@@ -121,8 +121,8 @@ def flash_fwd_kernel(
     unless the operations is explicitly requires compute with another higher percision tensor (ie. P@V where P is accum in FP32).
     """
     # ------------------------------------------------------------
-    # Program IDs (Lunch grid: each Program owns a Q_TILE & O_TILE shape = [Q_TILE_SIZE, D]
-    # number of tiles = (Q_N/Q_TILE_SIZE) * (batch_num)
+    # Program IDs (Batch 维度和 Q Tile 维度 直接作为 Launch Grid 的第一维和第二维，映射成了 GPU 上的 Program 数量)
+    # 接下来的 Triton kernel 里只 Loop KV Tile 的维度
     # ------------------------------------------------------------
     Q_i_TILE_idx = tl.program_id(0)
     batch_index = tl.program_id(1)
@@ -133,13 +133,13 @@ def flash_fwd_kernel(
     # ------------------------------------------------------------
     Q_block_ptr = tl.make_block_ptr(
         # Matrix info
-        base=Q_ptr + batch_index * stride_qb, # Each Q across batch
-        shape=(N_QUERIES, D),   
-        strides=(stride_qq, stride_qd),  
+        base=Q_ptr + batch_index * stride_qb, # 当前 Batch 数据的起始首地址指针。它直接定位到了具体某一个 Batch 的开头。
+        shape=(N_QUERIES, D), # 当前矩阵在全局内存中的完整二维形状 $(Rows, Cols)$。用于给 Triton 做边界越界检查（Boundary Check）。
+        strides=(stride_qq, stride_qd),  # 矩阵各维度的实际内存 stride
         # The Tiles
-        offsets=(Q_i_TILE_idx * Q_TILE_SIZE, 0), # Get the Q_i TILE starting offset
-        block_shape=(Q_TILE_SIZE, D),
-        order=(1, 0),
+        offsets=(Q_i_TILE_idx * Q_TILE_SIZE, 0), # 初始切片 Block 在完整矩阵中的起始偏移坐标
+        block_shape=(Q_TILE_SIZE, D), # 每次加载到 SRAM（Shared Memory）中的 Tile（块）形状
+        order=(1, 0), # dim 1 (column) 在物理内存地址上是连续存取的, 也就是 [row, col] 和 [row, col + 1] 在内存中紧挨着, 这样来告诉 Triton 怎么拿 data 是最快的 (利用 Memory Coalescing), 大幅减少显存请求次数：把几千次零散的显存读写，合并成少数几次高效的物理 Burst 传输。
     )
     
     # Load in the Q_i TILE 
@@ -206,33 +206,38 @@ def flash_fwd_kernel(
 
     # Compute online softmax, shifting tile block towards right side
     for start_k_B_idx in range(0, N_KEYS, K_TILE_SIZE):
-        # 1. Compute pre-softmax
+        # 1. 加载 K_j 块 [K_TILE_SIZE, D] 
         K_j = tl.load(K_block_ptr, boundary_check=(0,1), padding_option="zero")  # "K_TILE_SIZE, D"
+        # 计算 S_ij = Q_i @ K_j.T
         S_ij = tl.dot(Q_i, tl.trans(K_j), out_dtype=hp_dtype) * scale  # "Q_TILE_SIZE, K_TILE_SIZE"
-        # 2.  Masking
-        # 2.1 Mask the out of bound entries to be -inf, so that row_max & Softmax is correct
-        KT_col_mask = start_k_B_idx + tl.arange(0, K_TILE_SIZE)             # ", K_TILE_SIZE" - Along the KT cols
-        Q_row_mask = Q_i_TILE_idx * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE)     # "Q_TILE_SIZE, " - Along the Q rows
+
+        # 2.  应用 boundary & causal mask
+        # 2.1 Mask the out-of-bound entries to be -inf, so that row_max & Softmax is correct
+        KT_col_mask = start_k_B_idx + tl.arange(0, K_TILE_SIZE)             # 形状为 (K_TILE_SIZE,) - Along the KT cols
+        Q_row_mask = Q_i_TILE_idx * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE)     # 形状为 (Q_TILE_SIZE,) - Along the Q rows
         boundary_mask = (KT_col_mask[None, :] < N_KEYS) & (Q_row_mask[:, None] < N_QUERIES)  # "Q_TILE_SIZE, K_TILE_SIZE"
         # 2.2 Causal Mask (Avoiding If Else logics branch)
         not_causal = tl.full(boundary_mask.shape, not IS_CAUSAL, dtype=tl.int1) # Initialize, set the dtype as bool int
-        causal_mask = (Q_row_mask[:, None] >= KT_col_mask[None, :]) | not_causal  # True when IS_CAUSAL=False, else row>=col
+        # Q_row_mask[:, None]：将一维向量扩展为列矩阵，形状从 (Q_TILE_SIZE,) 变为 (Q_TILE_SIZE, 1)。
+        # KT_col_mask[None, :]：将一维向量扩展为行矩阵，形状从 (K_TILE_SIZE,) 变为 (1, K_TILE_SIZE)。
+        causal_mask = (Q_row_mask[:, None] >= KT_col_mask[None, :]) | not_causal  # 利用 boardcast 创建 形状为 (Q_TILE_SIZE, K_TILE_SIZE) True when IS_CAUSAL=False, else row>=col
         mask = boundary_mask & causal_mask
         S_ij = tl.where(mask, S_ij, -1e20)  # Use large negative value for masking
-        # 2. Update max (No need Boundary Mask)
+        
+        # 3. Update max (No need Boundary Mask)
         curr_max = tl.max(S_ij, axis = 1)               # "Q_TILE_SIZE, "
         prev_max = m_i  # "Q_TILE_SIZE"
         m_i = tl.where(curr_max > m_i, curr_max, m_i)   # "Q_TILE_SIZE, "
         max_correct_scale = tl.exp(prev_max-m_i)        # "Q_TILE_SIZE, "
 
-        # 3. Compute the safe softmax (With Boundary Mask)
+        # 4. Compute the safe softmax (With Boundary Mask)
         P_ij = S_ij - m_i[:, None]  # "Q_TILE_SIZE, K_TILE_SIZE"
         P_ij = tl.exp(P_ij)
 
-        # 4. Update sum (accumulation in hp_dtype)
+        # 5. Update sum (accumulation in hp_dtype)
         l_i = l_i * max_correct_scale + tl.sum(P_ij, axis=1)  # "Q_TILE_SIZE, "
 
-        # 5. Update OUT with ValueMatrix
+        # 6. Update OUT with ValueMatrix
         V_j = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")  # "K_TILE_SIZE, D"
         V_j = V_j.to(hp_dtype) # Upcast since it is forced
         o_i = o_i * max_correct_scale[:,None] + tl.dot(P_ij, V_j, out_dtype=hp_dtype)  # "Q_TILE_SIZE, D"
