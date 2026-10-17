@@ -72,6 +72,31 @@ def _get_kernel_fn(name: str):
     return ATTENTION_KERNEL_REGISTRY[name]
 
 
+def _run_meta() -> dict:
+    """Provenance stamped into every per-config JSON, so a number on screen can be traced to a run."""
+    import subprocess
+    meta = {
+        "gpu_name": torch.cuda.get_device_name(0),
+        "gpu_count": torch.cuda.device_count(),
+        "torch": torch.__version__,
+        "cuda": torch.version.cuda,
+        "tf32_matmul_precision": torch.get_float32_matmul_precision(),
+    }
+    for key, cmd in (("git_sha", ["git", "rev-parse", "--short", "HEAD"]),
+                     ("nvidia_driver", ["nvidia-smi", "--query-gpu=driver_version",
+                                        "--format=csv,noheader", "-i", "0"])):
+        try:
+            meta[key] = subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout.strip()
+        except Exception:
+            meta[key] = ""
+    return meta
+
+
+def _classify_failure(exc: BaseException) -> str:
+    """'oom' when the traceback (including mp.spawn's re-raised child traceback) says CUDA OOM."""
+    return "oom" if "out of memory" in str(exc).lower() else "error"
+
+
 # ---------------------------------------------------------------------------
 # Single-GPU benchmark helper
 # ---------------------------------------------------------------------------
@@ -84,8 +109,15 @@ def _bench_single_gpu(
     context_length: int,
     model_cfg: dict,
     dtype: torch.dtype,
+    steps_per_epoch: int = BENCH_STEPS_PER_EPOCH,
+    warmup_epochs: int = WARMUP_EPOCHS,
 ) -> dict:
-    """Run a short training loop on GPU-0, return timing & memory stats + loss curve."""
+    """Run a short training loop on GPU-0, return timing & memory stats + loss curve.
+
+    `epoch_times_s` holds one wall-clock number per timed epoch (CUDA-synchronised at both
+    ends), so a mean and a variance can be computed from it. An "epoch" here is
+    `steps_per_epoch` optimizer steps, not a pass over the dataset.
+    """
     from cs336_basics.lm import TransformerLM
     from cs336_basics.train.loss import cross_entropy
     from cs336_basics.train.optimizer import AdamW
@@ -101,24 +133,31 @@ def _bench_single_gpu(
     optimizer = AdamW(model.parameters(), lr=3e-4, weight_decay=0.01, betas=(0.9, 0.999))
 
     dataset = TokenStreamDataset(train_path, context_length)
-    loader = DataLoader(dataset, batch_size=tr_batch_size, shuffle=True, drop_last=True, num_workers=2)
+    # persistent_workers: otherwise every epoch re-forks the loader workers and that start-up
+    # cost leaks into the per-epoch time (and into its variance).
+    loader = DataLoader(dataset, batch_size=tr_batch_size, shuffle=True, drop_last=True,
+                        num_workers=2, persistent_workers=True)
 
-    total_epochs = WARMUP_EPOCHS + epochs
+    total_epochs = warmup_epochs + epochs
     total_tokens = 0
     loss_curve = []  # list of (wall_sec, global_step, loss_val)
+    epoch_times: list[float] = []
     global_step = 0
     t0 = None  # set after warmup epochs
 
     for epoch in tqdm(range(total_epochs), desc="Epochs"):
         # After warmup epochs finish, reset timer and memory stats
-        if epoch == WARMUP_EPOCHS:
+        if epoch == warmup_epochs:
             torch.cuda.synchronize()
             torch.cuda.reset_peak_memory_stats(0)
             total_tokens = 0
             global_step = 0
             t0 = time.perf_counter()
 
-        is_timed = epoch >= WARMUP_EPOCHS
+        is_timed = epoch >= warmup_epochs
+        if is_timed:
+            torch.cuda.synchronize()
+            epoch_t0 = time.perf_counter()
 
         for i, (x, y) in enumerate(loader):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
@@ -131,14 +170,18 @@ def _bench_single_gpu(
                 total_tokens += x.numel()
                 global_step += 1
                 # Record loss every few steps
-                if global_step % 5 == 1 or (i + 1) >= BENCH_STEPS_PER_EPOCH:
+                if global_step % 5 == 1 or (i + 1) >= steps_per_epoch:
                     loss_curve.append((
                         round(time.perf_counter() - t0, 4),
                         global_step,
                         round(loss.item(), 4),
                     ))
-            if (i + 1) >= BENCH_STEPS_PER_EPOCH:
+            if (i + 1) >= steps_per_epoch:
                 break  # cap iterations per epoch for benchmark
+
+        if is_timed:
+            torch.cuda.synchronize()
+            epoch_times.append(time.perf_counter() - epoch_t0)
 
     torch.cuda.synchronize()
     elapsed = time.perf_counter() - t0
@@ -153,10 +196,13 @@ def _bench_single_gpu(
         "ddp": "Local No DDP",
         "gpus": 1,
         "epochs": epochs,
-        "steps_per_epoch": BENCH_STEPS_PER_EPOCH,
+        "warmup_epochs": warmup_epochs,
+        "context_length": context_length,
+        "steps_per_epoch": steps_per_epoch,
         "global_batch_size": tr_batch_size,
         "local_batch_size": tr_batch_size,
-        "samples_per_epoch": BENCH_STEPS_PER_EPOCH * tr_batch_size,
+        "samples_per_epoch": steps_per_epoch * tr_batch_size,
+        "epoch_times_s": [round(t, 4) for t in epoch_times],
         "wall_sec": round(elapsed, 3),
         "sec_per_epoch": round(elapsed / max(epochs, 1), 3),
         "tokens_per_sec": round(total_tokens / max(elapsed, 1e-6), 1),
@@ -183,6 +229,7 @@ def _ddp_worker(
     result_dict,
     loss_list,
     bucket_size_mb: int = 20,
+    warmup_epochs: int = WARMUP_EPOCHS,
 ):
     os.environ.setdefault("MASTER_ADDR", "localhost")
     os.environ.setdefault("MASTER_PORT", "29500")
@@ -217,11 +264,13 @@ def _ddp_worker(
     optimizer = AdamW(model.parameters(), lr=3e-4, weight_decay=0.01, betas=(0.9, 0.999))
     dataset = TokenStreamDataset(train_path, context_length)
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True, drop_last=True)
-    loader = DataLoader(dataset, batch_size=local_batch_size, sampler=sampler, num_workers=2)
+    loader = DataLoader(dataset, batch_size=local_batch_size, sampler=sampler,
+                        num_workers=2, persistent_workers=True)
 
-    total_epochs = WARMUP_EPOCHS + epochs
+    total_epochs = warmup_epochs + epochs
     total_tokens = 0
     global_step = 0
+    epoch_times: list[float] = []
     t0 = None  # set after warmup epochs
 
     for epoch in tqdm(range(total_epochs), desc=f"Rank {rank} Epochs", disable=(rank != 0)):
@@ -229,7 +278,7 @@ def _ddp_worker(
         sampler.set_epoch(epoch)
 
         # After warmup epochs finish, reset timer and memory stats
-        if epoch == WARMUP_EPOCHS:
+        if epoch == warmup_epochs:
             torch.cuda.synchronize(device)
             dist.barrier()
             torch.cuda.reset_peak_memory_stats(rank)
@@ -237,7 +286,12 @@ def _ddp_worker(
             global_step = 0
             t0 = time.perf_counter()
 
-        is_timed = epoch >= WARMUP_EPOCHS
+        is_timed = epoch >= warmup_epochs
+        if is_timed:
+            # barrier so every rank starts the epoch together; rank 0's clock is then the epoch time
+            torch.cuda.synchronize(device)
+            dist.barrier()
+            epoch_t0 = time.perf_counter()
 
         for i, (x, y) in enumerate(loader):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
@@ -275,6 +329,10 @@ def _ddp_worker(
             if (i + 1) >= steps_per_epoch:
                 break
 
+        if is_timed:
+            torch.cuda.synchronize(device)
+            epoch_times.append(time.perf_counter() - epoch_t0)
+
     torch.cuda.synchronize(device)
     dist.barrier()
     elapsed = time.perf_counter() - t0
@@ -292,7 +350,10 @@ def _ddp_worker(
         wall_sec = elapsed_tensor.item()
         global_batch = local_batch_size * world_size
         result_dict["steps_per_epoch"] = steps_per_epoch
+        result_dict["warmup_epochs"] = warmup_epochs
+        result_dict["context_length"] = context_length
         result_dict["samples_per_epoch"] = global_batch * steps_per_epoch
+        result_dict["epoch_times_s"] = [round(t, 4) for t in epoch_times]
         result_dict["wall_sec"] = round(wall_sec, 3)
         result_dict["sec_per_epoch"] = round(wall_sec / max(epochs, 1), 3)
         result_dict["tokens_per_sec"] = round(token_tensor.item() / max(wall_sec, 1e-6), 1)
@@ -327,6 +388,8 @@ def _bench_ddp(
     model_cfg: dict,
     dtype: torch.dtype,
     bucket_size_mb: int = 20,
+    steps_per_epoch: int = BENCH_STEPS_PER_EPOCH,
+    warmup_epochs: int = WARMUP_EPOCHS,
 ) -> dict | None:
     world_size = torch.cuda.device_count()
     if world_size < 2:
@@ -339,7 +402,6 @@ def _bench_ddp(
     # Result: DDP processes world_size× more samples per epoch in ~same time.
     local_batch_size = tr_batch_size
     global_batch = local_batch_size * world_size
-    steps_per_epoch = BENCH_STEPS_PER_EPOCH
 
     # choose a free port for this run, avoids EADDRINUSE from previous runs
     port = _find_free_port()
@@ -359,7 +421,7 @@ def _bench_ddp(
         _ddp_worker,
         args=(world_size, wrapper_name, kernel_name, train_path, context_length,
               local_batch_size, steps_per_epoch,
-              epochs, model_cfg, dtype, result_dict, loss_list, bucket_size_mb),
+              epochs, model_cfg, dtype, result_dict, loss_list, bucket_size_mb, warmup_epochs),
         nprocs=world_size,
         join=True,
     )
@@ -646,6 +708,19 @@ def _write_kernel_table_pdfs(results: list[dict], out_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Per-config JSON (one file per kernel x wrapper, written as soon as the config finishes
+# so a later crash or OOM cannot lose it). Failures are written too, with status "oom" /
+# "error" and an empty epoch_times_s -- never as a row of zeros that looks like a result.
+# ---------------------------------------------------------------------------
+def _dump_epoch_json(out_dir: Path, row: dict, meta: dict) -> None:
+    slug = f"{row['kernel']}__{row['ddp']}".replace(" ", "_")
+    payload = {k: v for k, v in row.items() if k != "loss_curve"}
+    payload["meta"] = meta
+    with open(out_dir / f"epoch_times__{slug}.json", "w") as f:
+        json.dump(payload, f, indent=2)
+
+
+# ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
 def _load_config(path: str) -> dict:
@@ -675,6 +750,21 @@ def main() -> None:
                         help="Subset of kernels to benchmark (default: all)")
     parser.add_argument("--wrappers", nargs="*", default=None,
                         help="Subset of DDP wrappers (default: Local No DDP + all DDP if multi-GPU)")
+    parser.add_argument("--ctx", type=int, default=None,
+                        help="Override the config's context_length (benchmark-only; the model has no "
+                             "learned position table, so a longer ctx is just a longer RoPE range)")
+    parser.add_argument("--batch", type=int, default=None,
+                        help="Override the config's per-GPU batch size")
+    parser.add_argument("--steps_per_epoch", type=int, default=BENCH_STEPS_PER_EPOCH,
+                        help="Optimizer steps per 'epoch' for every wrapper (old semantics: DDP then "
+                             "processes world_size x more samples per epoch). Ignored if "
+                             "--samples_per_epoch is given.")
+    parser.add_argument("--samples_per_epoch", type=int, default=None,
+                        help="Fix the DATA per epoch instead of the steps: the single GPU runs "
+                             "S/batch steps, a W-GPU wrapper runs S/(batch*W) steps. Then every "
+                             "config's epoch time is directly comparable (same samples).")
+    parser.add_argument("--warmup_epochs", type=int, default=WARMUP_EPOCHS,
+                        help="Untimed warmup epochs (also absorbs Triton autotune / torch.compile)")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -686,8 +776,8 @@ def main() -> None:
     train_sec = cfg["training"]
 
     epochs          = args.timed_epochs
-    tr_batch_size   = train_sec["tr_batch_size"]
-    context_length  = model_sec["context_length"]
+    tr_batch_size   = args.batch if args.batch is not None else train_sec["tr_batch_size"]
+    context_length  = args.ctx if args.ctx is not None else model_sec["context_length"]
     bucket_size_mb  = args.bucket_size_mb if args.bucket_size_mb is not None \
                       else cfg.get("bucket_size_mb", 25)
 
@@ -708,6 +798,15 @@ def main() -> None:
     print(f"  model:  {model_cfg}")
     print(f"  epochs={epochs}  batch={tr_batch_size}  ctx={context_length}  "
           f"dtype={train_sec.get('dtype','float32')}  bucket_mb={bucket_size_mb}")
+    n_gpus = torch.cuda.device_count()
+    if args.samples_per_epoch is not None:
+        denom = tr_batch_size * n_gpus
+        if args.samples_per_epoch % denom:
+            raise SystemExit(f"--samples_per_epoch {args.samples_per_epoch} must be a multiple of "
+                             f"batch*gpus = {denom}, otherwise the wrappers see different data per epoch")
+        print(f"  samples_per_epoch={args.samples_per_epoch}: local {args.samples_per_epoch // tr_batch_size} "
+              f"steps, {n_gpus}-GPU {args.samples_per_epoch // denom} steps")
+    meta = _run_meta()
 
     kernels = args.kernels or KERNELS
     wrappers = args.wrappers or (["Local No DDP"] + (["Naive DDP", "Bucketed Overlapping DDP", "Pytorch DDP"] if torch.cuda.device_count() >= 2 else []))
@@ -721,17 +820,26 @@ def main() -> None:
         for wrapper in wrappers:
             tag = f"{kernel} / {wrapper}"
             print(f"\n{'='*60}\n  Benchmarking: {tag}\n{'='*60}")
+            is_local = wrapper == "Local No DDP"
+            if args.samples_per_epoch is not None:
+                steps = args.samples_per_epoch // (tr_batch_size * (1 if is_local else n_gpus))
+            else:
+                steps = args.steps_per_epoch
             try:
-                if wrapper == "Local No DDP":
+                if is_local:
                     row = _bench_single_gpu(kernel, args.train_path, args.val_path,
                                             epochs, tr_batch_size,
-                                            context_length, model_cfg, dtype)
+                                            context_length, model_cfg, dtype,
+                                            steps_per_epoch=steps, warmup_epochs=args.warmup_epochs)
                 else:
                     row = _bench_ddp(wrapper, kernel, args.train_path,
                                      context_length, tr_batch_size,
                                      epochs, model_cfg, dtype,
-                                     bucket_size_mb=bucket_size_mb)
+                                     bucket_size_mb=bucket_size_mb,
+                                     steps_per_epoch=steps, warmup_epochs=args.warmup_epochs)
                 if row:
+                    row["status"] = "ok"
+                    _dump_epoch_json(out_dir, row, meta)
                     results.append(row)
                     # Collect loss curve for CSV
                     for pt in row.get("loss_curve", []):
@@ -751,15 +859,20 @@ def main() -> None:
                 import traceback
                 traceback.print_exc()
                 print(f"  ✗ {tag}: {e}")
-                results.append({
+                fail = {
                     "kernel": kernel, "ddp": wrapper, "gpus": 0,
-                    "epochs": epochs, "steps_per_epoch": BENCH_STEPS_PER_EPOCH,
+                    "epochs": epochs, "steps_per_epoch": steps,
+                    "context_length": context_length,
                     "global_batch_size": tr_batch_size, "local_batch_size": 0,
                     "samples_per_epoch": 0,
                     "wall_sec": 0, "sec_per_epoch": 0,
                     "tokens_per_sec": 0, "peak_gpu_mb": 0,
+                    "status": _classify_failure(e),
+                    "epoch_times_s": [],
                     "error": str(e),
-                })
+                }
+                results.append(fail)
+                _dump_epoch_json(out_dir, fail, meta)
             # Cleanup between runs
             torch.cuda.empty_cache()
             gc.collect()
