@@ -74,7 +74,14 @@ def _prune_old_checkpoints(checkpoint_dir: str, tag: str, keep_last: int) -> Non
     checkpoints periodically will fill the disk and die unless old ones are pruned.
     Pruning is per-tag so that "step" rotation never eats the final "epoch" file.
     """
-    existing = sorted(glob.glob(os.path.join(checkpoint_dir, f"checkpoint_{tag}_*.pt")))
+    # Sort by the NUMBER in the filename, not the string: names are {:04d}-padded, so once
+    # steps pass 9999 "checkpoint_step_7500.pt" sorts after "checkpoint_step_10000.pt" and a
+    # plain sorted() would keep the stale file and delete the newest ones.
+    def _num(path: str) -> int:
+        stem = os.path.splitext(os.path.basename(path))[0]
+        return int(stem.rsplit("_", 1)[1])
+
+    existing = sorted(glob.glob(os.path.join(checkpoint_dir, f"checkpoint_{tag}_*.pt")), key=_num)
     for stale in existing[:-keep_last]:
         try:
             os.remove(stale)
@@ -321,11 +328,17 @@ def parallel_train(
     )
 
     # Validation Data Loader & DDP Sampler
+    # shuffle=True with a fixed seed: within one epoch every eval scores the SAME random
+    # val_bat_num batches drawn from the whole val stream (paired across evals; set_epoch
+    # below reshuffles only when the epoch changes). shuffle=False + islice(val_bat_num)
+    # scored only the first val_bat_num*batch*world_size windows -- with stride-1 windows
+    # that is window starts 0..799, i.e. the first ~1.8K tokens of the val file.
     val_sampler = DistributedSampler(
         dataset=valDataset,
         num_replicas=world_size,
         rank=rank,
-        shuffle=False,
+        shuffle=True,
+        seed=1234,
         drop_last=True,
     )
     val_loader = DataLoader(

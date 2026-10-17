@@ -1,0 +1,20 @@
+{
+  "checkpoint": "checkpoints_190m_fwe/checkpoint_epoch_0001.pt",
+  "global_step": 45000,
+  "tasks": {
+    "hellaswag": {
+      "n": 10042,
+      "acc": 0.27544313881696875,
+      "acc_norm": 0.2837084246166102,
+      "stderr": 0.00449853319184476,
+      "seconds": 468.7
+    },
+    "arc_easy": {
+      "n": 2376,
+      "acc": 0.4823232323232323,
+      "acc_norm": 0.43392255892255893,
+      "stderr": 0.010167655436697353,
+      "seconds": 106.7
+    }
+  }
+}

@@ -1,0 +1,32 @@
+[sample] loaded checkpoints_190m_fwe/checkpoint_epoch_0001.pt (iter=1) onto cuda
+
+======================================================================
+PROMPT: 'The history of the internet began in the'
+======================================================================
+--- sample 0 ---
+The history of the internet began in the early 1800s when researchers discovered a new and previously untapped, connected device, could share the same contents with the real world – basically, it’s a network of computers on the internet. And it had a similar purpose – making it a computer.
+The internet was only beginning to be used to connect individuals and networks. Today’s traditional computers and networks are still very little,
+--- sample 1 ---
+The history of the internet began in the 1970s. The internet has been the subject of much discussion, as does the Internet.
+Information technology is changing fast
+The internet has become increasingly more accessible as people are able to communicate, be connected, and share their knowledge. It is no longer the focus of contemporary society, but rather the constant process of constant interaction.
+The internet has evolved into a social networking environment. Today, the
+
+======================================================================
+PROMPT: 'Photosynthesis is the process by which'
+======================================================================
+--- sample 0 ---
+Photosynthesis is the process by which plants take energy from the sun’s rays.
+The best way to know how to eat your food is by watching what you eat. First, it’s important to realize that nutrients in food are easily accessible and essential for the body, therefore, they need to be readily available. If you have a new food source, you should be able to choose the right food and find the
+--- sample 1 ---
+Photosynthesis is the process by which the food becomes useful and used for energy. An example is the shape of a wheel used to turn a car, which produces steam. A flywheel pulls a piece of wood that cuts off the wood, and then turns it into a circular shape. Sometimes it's just a way to cut a house. Other times it's a process in which you cut a tree or a tree, and then a
+
+======================================================================
+PROMPT: 'In recent years, researchers have found that'
+======================================================================
+--- sample 0 ---
+In recent years, researchers have found that some of the most common symptoms of sleep deprivation have been associated with a reduced ability to concentrate.
+Sleep deprivation in children is associated with poor learning, and it is not uncommon for children to have trouble focusing. This is because the brain is unable to process the information received during sleep. This can result in problems with impulse control, a sense of control over what is being presented in the present moment,
+--- sample 1 ---
+In recent years, researchers have found that several types of protein and fats have significant health benefits. However, no study has tested these claims definitively.
+Researchers at the University of Florida, University of Florida, and the University of California, San Francisco, used a combination of animal and human dietary supplements to examine whether higher intakes of omega-3 fatty acids may reduce risk of cardiovascular disease. The human body cells were not only able to produce more
