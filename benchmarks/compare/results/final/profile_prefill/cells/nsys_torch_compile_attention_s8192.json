@@ -1,0 +1,39 @@
+{
+ "system": "torch_compile_attention",
+ "seq": 8192,
+ "tool": "nsys",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 4,
+ "gpu_kernel_ms_per_call": 42.08593955,
+ "launches_per_call": 3.0,
+ "top_kernels": [
+  {
+   "name": "ampere_bf16_s16816gemm_bf16_256x128_ldg8_f2f_stages_32x3_tn",
+   "share": 0.3932845571936388,
+   "ms_per_call": 16.5517501,
+   "per_call": 1.0
+  },
+  {
+   "name": "triton_red_fused_bitwise_not_div_exp_ge_logsumexp_masked_fill_sub_0",
+   "share": 0.36164665711971733,
+   "ms_per_call": 15.22023935,
+   "per_call": 1.0
+  },
+  {
+   "name": "ampere_bf16_s16816gemm_bf16_64x64_ldg8_f2f_nn",
+   "share": 0.2450687856866439,
+   "ms_per_call": 10.3139501,
+   "per_call": 1.0
+  }
+ ],
+ "category_share": {
+  "gemm": 0.6383533428802827,
+  "softmax_reduce": 0.36164665711971733
+ },
+ "n_kernels": 60,
+ "busy_ns": 841718791.0,
+ "span_ns": 841764007.0,
+ "busy_frac": 0.9999462842321316,
+ "nsys_rep": "/workspace/llm-stack/benchmarks/compare/results/final/profile_prefill/nsys/torch_compile_attention_s8192.nsys-rep"
+}

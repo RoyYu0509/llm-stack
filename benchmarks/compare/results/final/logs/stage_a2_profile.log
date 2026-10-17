@@ -1,0 +1,95 @@
+torch S=   128 attention                  {'status': 'ok', 'baseline_ms': 2.838, 'gpu_kernel_ms_per_call': 3.009, 'launches_per_call': 20.0, 'gpu_busy_frac': 0.928}
+nsys  S=   128 attention                  {'status': 'ok', 'gpu_kernel_ms_per_call': 2.536, 'launches_per_call': 19.0, 'busy_frac': 0.914}
+torch S=   128 torch_compile_attention    {'status': 'ok', 'baseline_ms': 0.833, 'gpu_kernel_ms_per_call': 0.936, 'launches_per_call': 3.0, 'gpu_busy_frac': 0.991}
+nsys  S=   128 torch_compile_attention    {'status': 'ok', 'gpu_kernel_ms_per_call': 0.829, 'launches_per_call': 3.0, 'busy_frac': 0.997}
+torch S=   128 sdpa_flash                 {'status': 'ok', 'baseline_ms': 0.284, 'gpu_kernel_ms_per_call': 0.281, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.977}
+nsys  S=   128 sdpa_flash                 {'status': 'ok', 'gpu_kernel_ms_per_call': 0.281, 'launches_per_call': 1.0, 'busy_frac': 0.998}
+torch S=   128 flash_attn_pkg             {'status': 'ok', 'baseline_ms': 0.366, 'gpu_kernel_ms_per_call': 0.363, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.98}
+nsys  S=   128 flash_attn_pkg             {'status': 'ok', 'gpu_kernel_ms_per_call': 0.349, 'launches_per_call': 1.0, 'busy_frac': 0.998}
+torch S=   128 triton_fa_mine             {'status': 'ok', 'baseline_ms': 0.476, 'gpu_kernel_ms_per_call': 0.47, 'launches_per_call': 3.0, 'gpu_busy_frac': 0.983}
+nsys  S=   128 triton_fa_mine             {'status': 'ok', 'gpu_kernel_ms_per_call': 0.38, 'launches_per_call': 3.0, 'busy_frac': 0.987}
+torch S=   256 attention                  {'status': 'ok', 'baseline_ms': 5.1, 'gpu_kernel_ms_per_call': 5.791, 'launches_per_call': 20.0, 'gpu_busy_frac': 0.996}
+nsys  S=   256 attention                  {'status': 'ok', 'gpu_kernel_ms_per_call': 4.447, 'launches_per_call': 19.0, 'busy_frac': 0.906}
+torch S=   256 torch_compile_attention    {'status': 'ok', 'baseline_ms': 1.488, 'gpu_kernel_ms_per_call': 1.601, 'launches_per_call': 3.0, 'gpu_busy_frac': 0.994}
+nsys  S=   256 torch_compile_attention    {'status': 'ok', 'gpu_kernel_ms_per_call': 1.449, 'launches_per_call': 3.0, 'busy_frac': 0.999}
+torch S=   256 sdpa_flash                 {'status': 'ok', 'baseline_ms': 0.343, 'gpu_kernel_ms_per_call': 0.341, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.981}
+nsys  S=   256 sdpa_flash                 {'status': 'ok', 'gpu_kernel_ms_per_call': 0.34, 'launches_per_call': 1.0, 'busy_frac': 0.998}
+torch S=   256 flash_attn_pkg             {'status': 'ok', 'baseline_ms': 0.452, 'gpu_kernel_ms_per_call': 0.448, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.984}
+nsys  S=   256 flash_attn_pkg             {'status': 'ok', 'gpu_kernel_ms_per_call': 0.432, 'launches_per_call': 1.0, 'busy_frac': 0.998}
+torch S=   256 triton_fa_mine             {'status': 'ok', 'baseline_ms': 0.641, 'gpu_kernel_ms_per_call': 0.64, 'launches_per_call': 3.0, 'gpu_busy_frac': 0.988}
+nsys  S=   256 triton_fa_mine             {'status': 'ok', 'gpu_kernel_ms_per_call': 0.626, 'launches_per_call': 3.0, 'busy_frac': 0.99}
+torch S=   512 attention                  {'status': 'ok', 'baseline_ms': 9.947, 'gpu_kernel_ms_per_call': 10.938, 'launches_per_call': 20.0, 'gpu_busy_frac': 0.998}
+nsys  S=   512 attention                  {'status': 'ok', 'gpu_kernel_ms_per_call': 8.137, 'launches_per_call': 19.0, 'busy_frac': 0.9}
+torch S=   512 torch_compile_attention    {'status': 'ok', 'baseline_ms': 2.148, 'gpu_kernel_ms_per_call': 2.344, 'launches_per_call': 3.0, 'gpu_busy_frac': 0.996}
+nsys  S=   512 torch_compile_attention    {'status': 'ok', 'gpu_kernel_ms_per_call': 2.103, 'launches_per_call': 3.0, 'busy_frac': 0.999}
+torch S=   512 sdpa_flash                 {'status': 'ok', 'baseline_ms': 0.498, 'gpu_kernel_ms_per_call': 0.497, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.987}
+nsys  S=   512 sdpa_flash                 {'status': 'ok', 'gpu_kernel_ms_per_call': 0.498, 'launches_per_call': 1.0, 'busy_frac': 0.999}
+torch S=   512 flash_attn_pkg             {'status': 'ok', 'baseline_ms': 0.59, 'gpu_kernel_ms_per_call': 0.586, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.987}
+nsys  S=   512 flash_attn_pkg             {'status': 'ok', 'gpu_kernel_ms_per_call': 0.564, 'launches_per_call': 1.0, 'busy_frac': 0.999}
+torch S=   512 triton_fa_mine             {'status': 'ok', 'baseline_ms': 1.196, 'gpu_kernel_ms_per_call': 1.258, 'launches_per_call': 3.0, 'gpu_busy_frac': 0.993}
+nsys  S=   512 triton_fa_mine             {'status': 'ok', 'gpu_kernel_ms_per_call': 1.142, 'launches_per_call': 3.0, 'busy_frac': 0.994}
+torch S=  1024 attention                  {'status': 'ok', 'baseline_ms': 20.239, 'gpu_kernel_ms_per_call': 23.072, 'launches_per_call': 20.0, 'gpu_busy_frac': 0.999}
+nsys  S=  1024 attention                  {'status': 'ok', 'gpu_kernel_ms_per_call': 16.22, 'launches_per_call': 19.0, 'busy_frac': 0.901}
+torch S=  1024 torch_compile_attention    {'status': 'ok', 'baseline_ms': 5.073, 'gpu_kernel_ms_per_call': 5.309, 'launches_per_call': 3.0, 'gpu_busy_frac': 0.998}
+nsys  S=  1024 torch_compile_attention    {'status': 'ok', 'gpu_kernel_ms_per_call': 4.519, 'launches_per_call': 3.0, 'busy_frac': 1.0}
+torch S=  1024 sdpa_flash                 {'status': 'ok', 'baseline_ms': 0.843, 'gpu_kernel_ms_per_call': 0.882, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.993}
+nsys  S=  1024 sdpa_flash                 {'status': 'ok', 'gpu_kernel_ms_per_call': 0.846, 'launches_per_call': 1.0, 'busy_frac': 0.999}
+torch S=  1024 flash_attn_pkg             {'status': 'ok', 'baseline_ms': 0.891, 'gpu_kernel_ms_per_call': 0.988, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.992}
+nsys  S=  1024 flash_attn_pkg             {'status': 'ok', 'gpu_kernel_ms_per_call': 0.889, 'launches_per_call': 1.0, 'busy_frac': 0.999}
+torch S=  1024 triton_fa_mine             {'status': 'ok', 'baseline_ms': 2.532, 'gpu_kernel_ms_per_call': 2.623, 'launches_per_call': 3.0, 'gpu_busy_frac': 0.997}
+nsys  S=  1024 triton_fa_mine             {'status': 'ok', 'gpu_kernel_ms_per_call': 2.231, 'launches_per_call': 3.0, 'busy_frac': 0.997}
+torch S=  2048 attention                  {'status': 'ok', 'baseline_ms': 47.984, 'gpu_kernel_ms_per_call': 44.23, 'launches_per_call': 20.0, 'gpu_busy_frac': 0.999}
+nsys  S=  2048 attention                  {'status': 'ok', 'gpu_kernel_ms_per_call': 35.348, 'launches_per_call': 19.0, 'busy_frac': 0.908}
+torch S=  2048 torch_compile_attention    {'status': 'ok', 'baseline_ms': 10.979, 'gpu_kernel_ms_per_call': 10.74, 'launches_per_call': 3.0, 'gpu_busy_frac': 0.999}
+nsys  S=  2048 torch_compile_attention    {'status': 'ok', 'gpu_kernel_ms_per_call': 10.415, 'launches_per_call': 3.0, 'busy_frac': 1.0}
+torch S=  2048 sdpa_flash                 {'status': 'ok', 'baseline_ms': 1.568, 'gpu_kernel_ms_per_call': 1.562, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.996}
+nsys  S=  2048 sdpa_flash                 {'status': 'ok', 'gpu_kernel_ms_per_call': 1.543, 'launches_per_call': 1.0, 'busy_frac': 1.0}
+torch S=  2048 flash_attn_pkg             {'status': 'ok', 'baseline_ms': 1.642, 'gpu_kernel_ms_per_call': 1.695, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.996}
+nsys  S=  2048 flash_attn_pkg             {'status': 'ok', 'gpu_kernel_ms_per_call': 1.595, 'launches_per_call': 1.0, 'busy_frac': 1.0}
+torch S=  2048 triton_fa_mine             {'status': 'ok', 'baseline_ms': 5.123, 'gpu_kernel_ms_per_call': 4.814, 'launches_per_call': 3.0, 'gpu_busy_frac': 0.998}
+nsys  S=  2048 triton_fa_mine             {'status': 'ok', 'gpu_kernel_ms_per_call': 4.648, 'launches_per_call': 3.0, 'busy_frac': 0.999}
+torch S=  4096 attention                  {'status': 'ok', 'baseline_ms': 91.73, 'gpu_kernel_ms_per_call': 87.007, 'launches_per_call': 28.0, 'gpu_busy_frac': 1.0}
+nsys  S=  4096 attention                  {'status': 'ok', 'gpu_kernel_ms_per_call': 79.669, 'launches_per_call': 27.0, 'busy_frac': 0.918}
+torch S=  4096 torch_compile_attention    {'status': 'ok', 'baseline_ms': 27.933, 'gpu_kernel_ms_per_call': 30.276, 'launches_per_call': 3.0, 'gpu_busy_frac': 1.0}
+nsys  S=  4096 torch_compile_attention    {'status': 'ok', 'gpu_kernel_ms_per_call': 27.88, 'launches_per_call': 3.0, 'busy_frac': 1.0}
+torch S=  4096 sdpa_flash                 {'status': 'ok', 'baseline_ms': 3.158, 'gpu_kernel_ms_per_call': 3.049, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.998}
+nsys  S=  4096 sdpa_flash                 {'status': 'ok', 'gpu_kernel_ms_per_call': 2.993, 'launches_per_call': 1.0, 'busy_frac': 1.0}
+torch S=  4096 flash_attn_pkg             {'status': 'ok', 'baseline_ms': 3.349, 'gpu_kernel_ms_per_call': 3.459, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.998}
+nsys  S=  4096 flash_attn_pkg             {'status': 'ok', 'gpu_kernel_ms_per_call': 3.192, 'launches_per_call': 1.0, 'busy_frac': 1.0}
+torch S=  4096 triton_fa_mine             {'status': 'ok', 'baseline_ms': 9.589, 'gpu_kernel_ms_per_call': 9.628, 'launches_per_call': 3.0, 'gpu_busy_frac': 0.999}
+nsys  S=  4096 triton_fa_mine             {'status': 'ok', 'gpu_kernel_ms_per_call': 9.327, 'launches_per_call': 3.0, 'busy_frac': 0.999}
+torch S=  8192 attention                  {'status': 'oom'}
+nsys  S=  8192 attention                  {'status': 'oom'}
+torch S=  8192 torch_compile_attention    {'status': 'ok', 'baseline_ms': 44.367, 'gpu_kernel_ms_per_call': 41.634, 'launches_per_call': 3.0, 'gpu_busy_frac': 1.0}
+nsys  S=  8192 torch_compile_attention    {'status': 'ok', 'gpu_kernel_ms_per_call': 42.086, 'launches_per_call': 3.0, 'busy_frac': 1.0}
+torch S=  8192 sdpa_flash                 {'status': 'ok', 'baseline_ms': 6.184, 'gpu_kernel_ms_per_call': 6.11, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.999}
+nsys  S=  8192 sdpa_flash                 {'status': 'ok', 'gpu_kernel_ms_per_call': 6.017, 'launches_per_call': 1.0, 'busy_frac': 1.0}
+torch S=  8192 flash_attn_pkg             {'status': 'ok', 'baseline_ms': 6.831, 'gpu_kernel_ms_per_call': 6.844, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.999}
+nsys  S=  8192 flash_attn_pkg             {'status': 'ok', 'gpu_kernel_ms_per_call': 6.569, 'launches_per_call': 1.0, 'busy_frac': 1.0}
+torch S=  8192 triton_fa_mine             {'status': 'ok', 'baseline_ms': 19.704, 'gpu_kernel_ms_per_call': 18.795, 'launches_per_call': 3.0, 'gpu_busy_frac': 1.0}
+nsys  S=  8192 triton_fa_mine             {'status': 'ok', 'gpu_kernel_ms_per_call': 18.717, 'launches_per_call': 3.0, 'busy_frac': 1.0}
+torch S= 16384 attention                  {'status': 'oom'}
+nsys  S= 16384 attention                  {'status': 'oom'}
+torch S= 16384 torch_compile_attention    {'status': 'ok', 'baseline_ms': 90.26, 'gpu_kernel_ms_per_call': 89.625, 'launches_per_call': 3.0, 'gpu_busy_frac': 1.0}
+nsys  S= 16384 torch_compile_attention    {'status': 'ok', 'gpu_kernel_ms_per_call': 90.339, 'launches_per_call': 3.0, 'busy_frac': 1.0}
+torch S= 16384 sdpa_flash                 {'status': 'ok', 'baseline_ms': 12.543, 'gpu_kernel_ms_per_call': 12.546, 'launches_per_call': 1.0, 'gpu_busy_frac': 1.0}
+nsys  S= 16384 sdpa_flash                 {'status': 'ok', 'gpu_kernel_ms_per_call': 12.227, 'launches_per_call': 1.0, 'busy_frac': 1.0}
+torch S= 16384 flash_attn_pkg             {'status': 'ok', 'baseline_ms': 13.857, 'gpu_kernel_ms_per_call': 13.884, 'launches_per_call': 1.0, 'gpu_busy_frac': 0.999}
+nsys  S= 16384 flash_attn_pkg             {'status': 'ok', 'gpu_kernel_ms_per_call': 13.477, 'launches_per_call': 1.0, 'busy_frac': 1.0}
+torch S= 16384 triton_fa_mine             {'status': 'ok', 'baseline_ms': 39.018, 'gpu_kernel_ms_per_call': 38.572, 'launches_per_call': 3.0, 'gpu_busy_frac': 1.0}
+nsys  S= 16384 triton_fa_mine             {'status': 'ok', 'gpu_kernel_ms_per_call': 37.355, 'launches_per_call': 3.0, 'busy_frac': 1.0}
+
+# Attention prefill profile -- grouped by attention kernel type
+bf16, causal, 12 heads x hd64, B*S = 32768, forward only; torch.profiler over 20 calls after warm-up.
+
+| attention kernel type | lengths ok | mean baseline ms | mean GPU kernel ms/call | mean launches/call | mean GPU-busy frac | geo-mean latency vs sdpa_flash |
+|---|---|---|---|---|---|---|
+| attention | 6/8 | 29.640 | 29.008 | 21.3 | 0.99 | 19.97x |
+| torch_compile_attention | 8/8 | 22.885 | 22.808 | 3.0 | 1.00 | 5.66x |
+| sdpa_flash | 8/8 | 3.178 | 3.158 | 1.0 | 0.99 | 1.00x |
+| flash_attn_pkg | 8/8 | 3.497 | 3.533 | 1.0 | 0.99 | 1.14x |
+| triton_fa_mine | 8/8 | 9.785 | 9.600 | 3.0 | 0.99 | 2.62x |
+
+Nsight Systems cells captured: 38
+
+Means over lengths mix very different sizes; use them to compare kernel *types*, and read the per-length CSV (`attention_profile.csv`) for any single claim.

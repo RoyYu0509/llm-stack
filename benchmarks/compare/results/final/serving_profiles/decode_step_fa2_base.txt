@@ -1,0 +1,32 @@
+
+== decode step, B=32, KV width=912, attn=fa2, dtype=bfloat16
+wall per step           :    18.50 ms
+GPU kernel busy / step  :     4.11 ms   (GPU idle share 78%)
+GPU kernel runs / step  :      726   (cudaLaunchKernel calls 560; compiled Triton kernels use cuLaunchKernel)
+blocking CUDA calls/step: StreamSynchronize 34.0, DeviceSynchronize 0.2, Memcpy 0.0, EventSynchronize 0.0   (cudaMemcpyAsync 52.0)
+flags                   : compile_decode=False
+KV bytes moved / step   :   0.0016 GB read + same written (appended in place (new token only))
+
+top CUDA kernels by self time (per step):
+    1.818 ms  x   16  void flash::flash_fwd_splitkv_kernel<Flash_fwd_kernel_traits<64, 64, 256, 4, false, false, cutlass::
+    0.459 ms  x   64  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(cutlass_
+    0.319 ms  x   32  ampere_bf16_s16816gemm_bf16_64x64_sliced1x2_ldg8_f2f_stages_64x5_tn
+    0.175 ms  x   80  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::direct_co
+    0.142 ms  x   33  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl<at::native::BinaryFunctor<fl
+    0.128 ms  x   33  void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at::native::MeanOps<float, float,
+    0.127 ms  x   16  void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64x64_32x6_nn_align8>(cutlass_80
+    0.123 ms  x   32  void at::native::index_elementwise_kernel<128, 4, at::native::gpu_index_kernel<at::native::index_ker
+    0.102 ms  x   32  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::CUDAFunct
+    0.102 ms  x   32  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_32x1_nn_align2>(cutlass_8
+    0.093 ms  x   33  void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorB
+    0.091 ms  x    1  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x1_tn_align8>(cutlass_
+
+top CPU ops by self CPU time (per step):
+    3.420 ms  x  560  cudaLaunchKernel
+    2.788 ms  x  145  aten::bmm
+    1.893 ms  x  145  aten::einsum
+    1.315 ms  x  235  aten::copy_
+    0.956 ms  x  725  aten::permute
+    0.759 ms  x  170  aten::empty_strided
+    0.715 ms  x  113  cuLaunchKernel
+    0.690 ms  x  580  aten::view

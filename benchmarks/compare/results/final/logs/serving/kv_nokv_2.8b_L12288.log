@@ -1,0 +1,2 @@
+[nokv_2.8b_L12288] rep 1: 16 tokens in 29.74s = 0.5 tok/s, TTFT p50 1.663s, forwards 16, peak 6.4 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine_kv/nokv_2.8b_L12288_r1.json
+[nokv_2.8b_L12288] rep 2: 16 tokens in 29.88s = 0.5 tok/s, TTFT p50 1.673s, forwards 16, peak 6.4 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine_kv/nokv_2.8b_L12288_r2.json

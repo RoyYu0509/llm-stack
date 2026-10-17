@@ -1,0 +1,53 @@
+local git sha: a3cac72686
+dirty entries:       51
+ M serving/inferenceLM/engine/inference_engine.py
+ M serving/inferenceLM/engine/lm_engine.py
+ M serving/inferenceLM/engine/transformer_lm_adapter.py
+ M serving/inferenceLM/request_receiver/request_receiver.py
+ M serving/tests/inference_engine_test.py
+ M training/cs336-basics/all_torch_basics.ipynb
+ M training/cs336-basics/cs336_basics/lm.py
+ M training/cs336-basics/cs336_basics/lm_trainer.py
+ M training/cs336-basics/cs336_basics/train/loss.py
+ M training/cs336-basics/cs336_basics/train/optimizer.py
+ M training/cs336-basics/cs336_basics/transfromer/multiheads_attention.py
+ M training/cs336-basics/cs336_basics/transfromer/positionalNencoding.py
+ M training/cs336-basics/cs336_basics/transfromer/scaled_dot_prod_attention.py
+ M training/cs336-basics/cs336_basics/transfromer/transformer.py
+ M training/cs336_systems/FlashAttention/flash_attention_triton.py
+ M training/cs336_systems/Parallelization/DDP/stream_dataset.py
+ M training/cs336_systems/Parallelization/FlashDDP/FlashDDP.py
+ M training/cs336_systems/Parallelization/FlashDDP/FlashDDP_runner.py
+ M training/cs336_systems/experiments/benchmark_lm_matrix.py
+ M training/cs336_systems/experiments/run_pipeline.py
+?? benchmarks/
+?? serving/benchmarks/README.md
+?? serving/benchmarks/cb_benchmark.py
+?? serving/benchmarks/check_fa2_decode.py
+?? serving/benchmarks/profile_decode_step.py
+?? serving/benchmarks/record_demo.py
+?? serving/benchmarks/run_cb_sweep.sh
+?? serving/benchmarks/run_demo_recording.sh
+?? serving/benchmarks/serving_bench.py
+?? serving/benchmarks/serving_metrics.py
+?? "serving/inferenceLM/engine/inference_engine copy.py"
+?? serving/inferenceLM/engine/prealloc_batch.py
+?? serving/inferenceLM/engine/ragged_batch.py
+?? serving/tests/batched_decode_test.py
+?? serving/tests/iteration_lifecycle_test.py
+?? serving/tests/m2_adapters.py
+?? serving/tests/prealloc_batch_test.py
+?? serving/tests/prefill_budget_test.py
+?? serving/tests/serving_bench_test.py
+?? serving/tests/serving_metrics_test.py
+?? training/artifacts/190m/
+?? training/artifacts/video1/
+?? training/ckpt_190m_fwe/
+?? training/cs336-basics/cs336_basics/transfromer/kv_cache_attention.py
+?? training/cs336_systems/data_harvest/build_pretrain_corpus.py
+?? training/cs336_systems/experiments/eval_downstream.py
+?? training/cs336_systems/experiments/summarize_epoch_times.py
+?? training/scripts_190m/
+?? training/tests/test_190m_rerun_prep.py
+?? training/tests/test_flash_attn_mask.py
+?? training/tests/test_summarize_epoch_times.py

@@ -1,0 +1,3 @@
+smoke_fa2_compiled_r1.json: 475.7 tok/s  TTFT p50 0.03s
+smoke_fa2_compiled_r2.json: 475.4 tok/s  TTFT p50 0.03s
+smoke_fa2_compiled: mean 475.6 tok/s over 2 reps

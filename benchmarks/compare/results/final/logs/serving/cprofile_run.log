@@ -1,0 +1,1 @@
+[cprofile_naive_c32] rep 1: 16368 tokens in 21.78s = 751.6 tok/s, TTFT p50 0.267s, forwards 815, peak 3.6 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_profiles/cprofile_naive_c32.json

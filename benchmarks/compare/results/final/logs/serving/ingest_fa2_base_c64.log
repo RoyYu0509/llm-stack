@@ -1,0 +1,4 @@
+fa2_base_c64_r1.json: 1431.7 tok/s  TTFT p50 0.42s
+fa2_base_c64_r2.json: 1429.2 tok/s  TTFT p50 0.42s
+fa2_base_c64_r3.json: 1421.9 tok/s  TTFT p50 0.42s
+engine_cb_fa2_base_bfloat16: mean 1427.6 tok/s over 3 reps

@@ -1,0 +1,32 @@
+
+== decode step, B=8, KV width=788, attn=fa2, dtype=bfloat16
+wall per step           :     7.12 ms
+GPU kernel busy / step  :     2.04 ms   (GPU idle share 71%)
+kernel launches / step  :       55
+blocking CUDA calls/step: StreamSynchronize 1.0, DeviceSynchronize 0.7, Memcpy 0.0, EventSynchronize 0.0   (cudaMemcpyAsync 3.0)
+flags                   : compile_decode=True
+KV bytes moved / step   :   0.0004 GB read + same written (appended in place (new token only))
+
+top CUDA kernels by self time (per step):
+    0.679 ms  x   96  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(cutlass_
+    0.629 ms  x   16  void flash::flash_fwd_splitkv_kernel<Flash_fwd_kernel_traits<64, 64, 256, 4, false, false, cutlass::
+    0.096 ms  x   16  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_64x1_tn_align8>(cutlass_8
+    0.088 ms  x    1  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x1_tn_align8>(cutlass_
+    0.078 ms  x   16  void flash::flash_fwd_splitkv_combine_kernel<Flash_fwd_kernel_traits<64, 64, 256, 4, false, false, c
+    0.074 ms  x   32  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_32x1_nn_align2>(cutlass_8
+    0.044 ms  x   32  triton_poi_fused_clone_2
+    0.044 ms  x   32  triton_poi_fused_clone_3
+    0.039 ms  x   32  triton_per_fused__to_copy_add_index_mean_pow_6
+    0.032 ms  x   16  void cublasLt::splitKreduce_kernel<32, 16, int, __nv_bfloat16, __nv_bfloat16, float, false, __nv_bfl
+    0.024 ms  x   16  triton_poi_fused_mul_sigmoid_8
+    0.023 ms  x   16  triton_poi_fused_clone_4
+
+top CPU ops by self CPU time (per step):
+    3.484 ms  x    1  Torch-Compiled Region: 0/1
+    1.979 ms  x  145  aten::bmm
+    1.658 ms  x  354  cuLaunchKernel
+    1.261 ms  x   16  llmstack::kvcache_attention
+    0.345 ms  x    0  Unrecognized
+    0.275 ms  x   55  cudaLaunchKernel
+    0.237 ms  x   32  triton_poi_fused_clone_2
+    0.223 ms  x   32  triton_poi_fused_clone_3

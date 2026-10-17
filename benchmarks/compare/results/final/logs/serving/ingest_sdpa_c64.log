@@ -1,0 +1,4 @@
+sdpa_c64_r1.json: 854.5 tok/s  TTFT p50 0.54s
+sdpa_c64_r2.json: 852.2 tok/s  TTFT p50 0.54s
+sdpa_c64_r3.json: 860.4 tok/s  TTFT p50 0.54s
+engine_cb_sdpa_bfloat16: mean 855.7 tok/s over 3 reps

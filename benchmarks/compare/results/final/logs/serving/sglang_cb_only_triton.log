@@ -1,0 +1,13 @@
+waiting for server (log: /workspace/llm-stack/benchmarks/compare/serving/../results/final/logs/serving/sglang_cb_only_bfloat16.log)
+sglang_cb_only_bfloat16 C=  1 rep0:    186.7 tok/s  TTFT p50 0.01s  TPOT p50 5.3ms  failed=0
+sglang_cb_only_bfloat16 C=  1 rep1:    186.3 tok/s  TTFT p50 0.01s  TPOT p50 5.3ms  failed=0
+sglang_cb_only_bfloat16 C=  1 rep2:    184.7 tok/s  TTFT p50 0.01s  TPOT p50 5.3ms  failed=0
+sglang_cb_only_bfloat16 C=  8 rep0:   1187.8 tok/s  TTFT p50 0.02s  TPOT p50 6.2ms  failed=0
+sglang_cb_only_bfloat16 C=  8 rep1:   1201.0 tok/s  TTFT p50 0.02s  TPOT p50 6.1ms  failed=0
+sglang_cb_only_bfloat16 C=  8 rep2:   1177.5 tok/s  TTFT p50 0.02s  TPOT p50 6.3ms  failed=0
+sglang_cb_only_bfloat16 C= 32 rep0:   3767.7 tok/s  TTFT p50 0.03s  TPOT p50 7.6ms  failed=0
+sglang_cb_only_bfloat16 C= 32 rep1:   3633.9 tok/s  TTFT p50 0.02s  TPOT p50 8.0ms  failed=0
+sglang_cb_only_bfloat16 C= 32 rep2:   3736.8 tok/s  TTFT p50 0.03s  TPOT p50 7.7ms  failed=0
+sglang_cb_only_bfloat16 C= 64 rep0:   6187.5 tok/s  TTFT p50 0.04s  TPOT p50 9.4ms  failed=0
+sglang_cb_only_bfloat16 C= 64 rep1:   5917.4 tok/s  TTFT p50 0.03s  TPOT p50 10.0ms  failed=0
+sglang_cb_only_bfloat16 C= 64 rep2:   6135.9 tok/s  TTFT p50 0.04s  TPOT p50 9.5ms  failed=0

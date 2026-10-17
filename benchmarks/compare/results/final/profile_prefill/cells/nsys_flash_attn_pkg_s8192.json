@@ -1,0 +1,26 @@
+{
+ "system": "flash_attn_pkg",
+ "seq": 8192,
+ "tool": "nsys",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 4,
+ "gpu_kernel_ms_per_call": 6.5686706,
+ "launches_per_call": 1.0,
+ "top_kernels": [
+  {
+   "name": "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<(int)64, (int)128, (int)128, (int)4, ",
+   "share": 1.0,
+   "ms_per_call": 6.5686706,
+   "per_call": 1.0
+  }
+ ],
+ "category_share": {
+  "fused_attention": 1.0
+ },
+ "n_kernels": 20,
+ "busy_ns": 131373412.0,
+ "span_ns": 131386821.0,
+ "busy_frac": 0.9998979425797965,
+ "nsys_rep": "/workspace/llm-stack/benchmarks/compare/results/final/profile_prefill/nsys/flash_attn_pkg_s8192.nsys-rep"
+}

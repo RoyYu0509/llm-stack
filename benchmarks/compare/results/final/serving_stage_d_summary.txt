@@ -1,0 +1,55 @@
+stage D: /workspace/llm-stack/benchmarks/compare/results/final/serving_stage_d.csv
+
+[ladder]
+  OK       engine_seq_nokv_bfloat16                         C=1                         39 tok/s  TTFT p50    24.3 ms  TPOT p50   24.4 ms
+  OK       engine_seq_kv_bfloat16                           C=1                         47 tok/s  TTFT p50    24.2 ms  TPOT p50   21.2 ms
+  OK       engine_seq_kv_bfloat16                           C=32                        47 tok/s  TTFT p50 40626.2 ms  TPOT p50   21.0 ms
+  OK       engine_cb_naive_bfloat16                         C=1                         47 tok/s  TTFT p50    24.1 ms  TPOT p50   21.0 ms
+  OK       engine_cb_naive_bfloat16                         C=8                        295 tok/s  TTFT p50    50.0 ms  TPOT p50   26.2 ms
+  OK       engine_cb_naive_bfloat16                         C=32                       699 tok/s  TTFT p50    67.4 ms  TPOT p50   43.3 ms
+  OK       engine_cb_naive_bfloat16                         C=64                       770 tok/s  TTFT p50   115.4 ms  TPOT p50   81.1 ms
+  OK       engine_cb_fa2_bfloat16                           C=1                         57 tok/s  TTFT p50    22.9 ms  TPOT p50   17.3 ms
+  OK       engine_cb_fa2_bfloat16                           C=8                        362 tok/s  TTFT p50    42.0 ms  TPOT p50   21.2 ms
+  OK       engine_cb_fa2_bfloat16                           C=32                       976 tok/s  TTFT p50    44.0 ms  TPOT p50   30.5 ms
+  OK       engine_cb_fa2_bfloat16                           C=64                      1410 tok/s  TTFT p50    66.3 ms  TPOT p50   43.0 ms
+  OK       engine_cb_fa2_prefill_bfloat16                   C=1                         58 tok/s  TTFT p50    22.0 ms  TPOT p50   17.1 ms
+  OK       engine_cb_fa2_prefill_bfloat16                   C=8                        365 tok/s  TTFT p50    41.5 ms  TPOT p50   21.4 ms
+  OK       engine_cb_fa2_prefill_bfloat16                   C=32                      1083 tok/s  TTFT p50    42.6 ms  TPOT p50   28.1 ms
+  OK       engine_cb_fa2_prefill_bfloat16                   C=64                      1814 tok/s  TTFT p50    44.2 ms  TPOT p50   34.0 ms
+  OK       engine_cb_fa2_prefill_compile_bfloat16           C=1                        161 tok/s  TTFT p50    22.1 ms  TPOT p50    5.9 ms
+  OK       engine_cb_fa2_prefill_compile_bfloat16           C=8                        832 tok/s  TTFT p50    28.7 ms  TPOT p50    9.3 ms
+  OK       engine_cb_fa2_prefill_compile_bfloat16           C=32                      1948 tok/s  TTFT p50    30.0 ms  TPOT p50   16.0 ms
+  OK       engine_cb_fa2_prefill_compile_bfloat16           C=64                      2830 tok/s  TTFT p50    32.8 ms  TPOT p50   22.3 ms
+
+[sglang]
+  OK       sglang_cb_only_flashinfer_bfloat16               C=1                        153 tok/s  TTFT p50    10.5 ms  TPOT p50    6.5 ms
+  OK       sglang_cb_only_flashinfer_bfloat16               C=8                        969 tok/s  TTFT p50    15.4 ms  TPOT p50    8.0 ms
+  OK       sglang_cb_only_flashinfer_bfloat16               C=32                      2778 tok/s  TTFT p50    16.0 ms  TPOT p50   11.0 ms
+  OK       sglang_cb_only_flashinfer_bfloat16               C=64                      4429 tok/s  TTFT p50    17.2 ms  TPOT p50   13.9 ms
+  OK       sglang_default_noradix_flashinfer_bfloat16_gb64  C=1                       1068 tok/s  TTFT p50     9.3 ms  TPOT p50    0.8 ms
+  OK       sglang_default_noradix_flashinfer_bfloat16_gb64  C=8                       4124 tok/s  TTFT p50    11.9 ms  TPOT p50    1.7 ms
+  OK       sglang_default_noradix_flashinfer_bfloat16_gb64  C=32                      6598 tok/s  TTFT p50    15.9 ms  TPOT p50    4.5 ms
+  OK       sglang_default_noradix_flashinfer_bfloat16_gb64  C=64                      8061 tok/s  TTFT p50    22.3 ms  TPOT p50    7.6 ms
+
+[vllm]
+  OK       vllm_nograph_noprefix_bfloat16                   C=1                        162 tok/s  TTFT p50    15.5 ms  TPOT p50    6.0 ms
+  OK       vllm_nograph_noprefix_bfloat16                   C=8                       1141 tok/s  TTFT p50    20.7 ms  TPOT p50    6.5 ms
+  OK       vllm_nograph_noprefix_bfloat16                   C=32                      3778 tok/s  TTFT p50    24.4 ms  TPOT p50    7.5 ms
+  OK       vllm_nograph_noprefix_bfloat16                   C=64                      6525 tok/s  TTFT p50    29.8 ms  TPOT p50    8.5 ms
+  OK       vllm_default_noprefix_bfloat16                   C=1                        800 tok/s  TTFT p50    10.6 ms  TPOT p50    1.1 ms
+  OK       vllm_default_noprefix_bfloat16                   C=8                       3892 tok/s  TTFT p50    13.6 ms  TPOT p50    1.8 ms
+  OK       vllm_default_noprefix_bfloat16                   C=32                      7037 tok/s  TTFT p50    32.5 ms  TPOT p50    4.0 ms
+  OK       vllm_default_noprefix_bfloat16                   C=64                      8327 tok/s  TTFT p50    55.9 ms  TPOT p50    6.8 ms
+
+[openloop]
+  OK       engine_cb_fa2_prefill_compile_bfloat16           rate=10/s                  598 tok/s  TTFT p50    34.6 ms  TPOT p50    9.3 ms
+  OK       engine_cb_fa2_prefill_compile_bfloat16           rate=50/s                 2754 tok/s  TTFT p50  2077.0 ms  TPOT p50   22.2 ms
+  OK       engine_cb_fa2_prefill_compile_bfloat16           rate=75/s                 2702 tok/s  TTFT p50 10982.7 ms  TPOT p50   23.0 ms
+  OK       sglang_cb_only_flashinfer_bfloat16               rate=10/s                  598 tok/s  TTFT p50    15.3 ms  TPOT p50    8.0 ms
+  OK       sglang_cb_only_flashinfer_bfloat16               rate=50/s                 3086 tok/s  TTFT p50    16.1 ms  TPOT p50   12.2 ms
+  OK       sglang_cb_only_flashinfer_bfloat16               rate=75/s                 4455 tok/s  TTFT p50   859.8 ms  TPOT p50   14.0 ms
+  OK       sglang_default_noradix_flashinfer_bfloat16_gb64  rate=10/s                  608 tok/s  TTFT p50    10.2 ms  TPOT p50    0.9 ms
+  OK       sglang_default_noradix_flashinfer_bfloat16_gb64  rate=50/s                 3146 tok/s  TTFT p50    11.4 ms  TPOT p50    1.6 ms
+  OK       sglang_default_noradix_flashinfer_bfloat16_gb64  rate=75/s                 4682 tok/s  TTFT p50    13.3 ms  TPOT p50    2.3 ms
+
+44/44 cells present

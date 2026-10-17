@@ -1,0 +1,11 @@
+sdpa_flash / flash_attn_pkg  median-latency ratio per sequence length (forward, bf16); gate band [0.9, 1.1]
+  seq     sdpa_flash ms   flash_attn ms   ratio
+     128         0.4454          0.5982   0.745   <-- outside the band
+     256         0.5456          0.7608   0.717   <-- outside the band
+     512         0.6607          0.9013   0.733   <-- outside the band
+    1024         0.9722          1.2108   0.803   <-- outside the band
+    2048         1.7927          2.0132   0.890   <-- outside the band
+    4096         3.4044          3.7851   0.899   <-- outside the band
+    8192         6.5591          7.3699   0.890   <-- outside the band
+   16384        12.9882         14.6500   0.887   <-- outside the band
+GATE NOT TRIGGERED: at least one length differs by more than the band -> carry on.

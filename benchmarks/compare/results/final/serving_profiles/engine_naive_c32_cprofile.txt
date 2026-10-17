@@ -1,0 +1,30 @@
+total profiled time (sum of tottime): 21.78 s
+
+by category (tottime):
+  C builtins / torch C++ ops                        13.23 s   60.7%
+  model Python layer (cs336_basics)                  3.31 s   15.2%
+  other Python (stdlib, third party)                 2.52 s   11.6%
+  engine scheduling (inferenceLM/engine)             1.54 s    7.1%
+  torch Python layer                                 1.16 s    5.3%
+  asyncio event loop                                 0.01 s    0.0%
+  other serving code (inferenceLM/)                  0.00 s    0.0%
+
+GPU sync points (blocking calls; time here = the CPU waiting for the GPU): 0.75 s (3.5% of profiled time)
+  <method 'item' of 'torch._C.TensorBase' objects>                16368 calls      0.75 s
+
+top functions by own time:
+      5.28 s     144255 calls  ~:0(<built-in method torch.einsum>)
+      1.62 s      26895 calls  ~:0(<built-in method torch.as_tensor>)
+      1.36 s        256 calls  ragged_batch.py:105(remove)
+      0.89 s      26895 calls  rmsnorm.py:29(forward)
+      0.87 s     116780 calls  ~:0(<method 'to' of 'torch._C.TensorBase' objects>)
+      0.87 s       1326 calls  ~:0(<built-in method torch.tensor>)
+      0.75 s      16368 calls  ~:0(<method 'item' of 'torch._C.TensorBase' objects>)
+      0.72 s      26080 calls  positionalNencoding.py:64(forward)
+      0.62 s     144255 calls  functional.py:210(einsum)
+      0.62 s     182560 calls  ~:0(<method 'reshape' of 'torch._C.TensorBase' objects>)
+      0.56 s     209455 calls  einops.py:468(reduce)
+      0.47 s      13040 calls  scaled_dot_prod_attention.py:28(scaled_dot_product_attention)
+      0.42 s      13040 calls  transformer.py:77(forward_with_cache)
+      0.37 s      79870 calls  contextlib.py:78(inner)
+      0.32 s      35022 calls  ~:0(<built-in method torch.cat>)

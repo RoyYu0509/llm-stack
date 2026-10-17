@@ -1,0 +1,30 @@
+
+== decode step, B=32, KV width=912, attn=fa2, dtype=bfloat16
+wall per step           :    14.55 ms
+GPU kernel busy / step  :     4.01 ms   (GPU idle share 72%)
+kernel launches / step  :      560
+KV bytes moved / step   :   0.0016 GB read + same written (appended in place (new token only))
+
+top CUDA kernels by self time (per step):
+    1.776 ms  x   16  void flash::flash_fwd_splitkv_kernel<Flash_fwd_kernel_traits<64, 64, 256, 4, false, false, cutlass::
+    0.449 ms  x   64  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(cutlass_
+    0.311 ms  x   32  ampere_bf16_s16816gemm_bf16_64x64_sliced1x2_ldg8_f2f_stages_64x5_tn
+    0.170 ms  x   80  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::direct_co
+    0.138 ms  x   33  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl<at::native::BinaryFunctor<fl
+    0.123 ms  x   16  void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64x64_32x6_nn_align8>(cutlass_80
+    0.122 ms  x   33  void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at::native::MeanOps<float, float,
+    0.120 ms  x   32  void at::native::index_elementwise_kernel<128, 4, at::native::gpu_index_kernel<at::native::index_ker
+    0.100 ms  x   32  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::CUDAFunct
+    0.100 ms  x   32  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_32x1_nn_align2>(cutlass_8
+    0.091 ms  x    1  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x1_tn_align8>(cutlass_
+    0.091 ms  x   33  void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorB
+
+top CPU ops by self CPU time (per step):
+    2.718 ms  x  560  cudaLaunchKernel
+    2.297 ms  x  145  aten::bmm
+    1.536 ms  x  145  aten::einsum
+    0.942 ms  x  235  aten::copy_
+    0.742 ms  x  725  aten::permute
+    0.625 ms  x  113  cuLaunchKernel
+    0.559 ms  x  170  aten::empty_strided
+    0.549 ms  x  483  aten::reshape

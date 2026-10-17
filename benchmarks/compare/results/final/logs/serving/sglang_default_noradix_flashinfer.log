@@ -1,0 +1,13 @@
+waiting for server (log: /workspace/llm-stack/benchmarks/compare/serving/../results/final/logs/serving/sglang_default_noradix_flashinfer_bfloat16_gb64.log)
+sglang_default_noradix_flashinfer_bfloat16_gb64 C=  1 rep0:   1093.7 tok/s  TTFT p50 0.01s  TPOT p50 0.8ms  failed=0
+sglang_default_noradix_flashinfer_bfloat16_gb64 C=  1 rep1:   1093.6 tok/s  TTFT p50 0.01s  TPOT p50 0.8ms  failed=0
+sglang_default_noradix_flashinfer_bfloat16_gb64 C=  1 rep2:   1099.7 tok/s  TTFT p50 0.01s  TPOT p50 0.8ms  failed=0
+sglang_default_noradix_flashinfer_bfloat16_gb64 C=  8 rep0:   4359.9 tok/s  TTFT p50 0.01s  TPOT p50 1.6ms  failed=0
+sglang_default_noradix_flashinfer_bfloat16_gb64 C=  8 rep1:   4307.0 tok/s  TTFT p50 0.01s  TPOT p50 1.6ms  failed=0
+sglang_default_noradix_flashinfer_bfloat16_gb64 C=  8 rep2:   4310.6 tok/s  TTFT p50 0.01s  TPOT p50 1.6ms  failed=0
+sglang_default_noradix_flashinfer_bfloat16_gb64 C= 32 rep0:   7549.6 tok/s  TTFT p50 0.03s  TPOT p50 3.8ms  failed=0
+sglang_default_noradix_flashinfer_bfloat16_gb64 C= 32 rep1:   7312.7 tok/s  TTFT p50 0.03s  TPOT p50 3.7ms  failed=0
+sglang_default_noradix_flashinfer_bfloat16_gb64 C= 32 rep2:   7538.3 tok/s  TTFT p50 0.03s  TPOT p50 3.8ms  failed=0
+sglang_default_noradix_flashinfer_bfloat16_gb64 C= 64 rep0:   8375.9 tok/s  TTFT p50 0.05s  TPOT p50 6.9ms  failed=0
+sglang_default_noradix_flashinfer_bfloat16_gb64 C= 64 rep1:   8090.6 tok/s  TTFT p50 0.05s  TPOT p50 7.1ms  failed=0
+sglang_default_noradix_flashinfer_bfloat16_gb64 C= 64 rep2:   8291.8 tok/s  TTFT p50 0.04s  TPOT p50 7.2ms  failed=0

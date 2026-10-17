@@ -1,0 +1,7 @@
+Loading weights:   0%|          | 0/147 [00:00<?, ?it/s]Loading weights: 100%|██████████| 147/147 [00:00<00:00, 4122.84it/s]
+hf_generate_eager_bfloat16 C=  1 rep0:    101.6 tok/s  TTFT p50 0.01s  TPOT p50 9.9ms  failed=0
+hf_generate_eager_bfloat16 C=  1 rep1:    101.4 tok/s  TTFT p50 0.01s  TPOT p50 9.9ms  failed=0
+hf_generate_eager_bfloat16 C=  1 rep2:    102.4 tok/s  TTFT p50 0.01s  TPOT p50 9.7ms  failed=0
+hf_generate_eager_bfloat16 C= 32 rep0:    100.5 tok/s  TTFT p50 19.94s  TPOT p50 9.9ms  failed=0
+hf_generate_eager_bfloat16 C= 32 rep1:    100.9 tok/s  TTFT p50 19.09s  TPOT p50 9.9ms  failed=0
+hf_generate_eager_bfloat16 C= 32 rep2:    101.1 tok/s  TTFT p50 18.80s  TPOT p50 9.9ms  failed=0

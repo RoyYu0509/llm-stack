@@ -1,0 +1,832 @@
+[
+ {
+  "stage": "attention_check",
+  "timestamp": "2026-10-16T07:15:37+00:00",
+  "argv": [
+   "attention/bench_attention.py",
+   "--check",
+   "--out",
+   "/workspace/llm-stack/benchmarks/compare/results/final/attention.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "seqs": [
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+    16384
+   ],
+   "tokens": 32768
+  }
+ },
+ {
+  "stage": "attention_flash_raises",
+  "timestamp": "2026-10-16T07:16:13+00:00",
+  "argv": [
+   "attention/bench_attention.py",
+   "--check-flash-raises",
+   "--out",
+   "/workspace/llm-stack/benchmarks/compare/results/final/attention.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "seqs": [
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+    16384
+   ],
+   "tokens": 32768
+  }
+ },
+ {
+  "stage": "attention_inductor",
+  "timestamp": "2026-10-16T07:16:15+00:00",
+  "argv": [
+   "attention/bench_attention.py",
+   "--check-inductor",
+   "--out",
+   "/workspace/llm-stack/benchmarks/compare/results/final/attention.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "seqs": [
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+    16384
+   ],
+   "tokens": 32768
+  }
+ },
+ {
+  "stage": "attention_sweep",
+  "timestamp": "2026-10-16T07:16:18+00:00",
+  "argv": [
+   "attention/bench_attention.py",
+   "--mode",
+   "both",
+   "--reps",
+   "5",
+   "--out",
+   "/workspace/llm-stack/benchmarks/compare/results/final/attention.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "seqs": [
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+    16384
+   ],
+   "tokens": 32768
+  }
+ },
+ {
+  "stage": "attention_sweep",
+  "timestamp": "2026-10-16T07:32:54+00:00",
+  "argv": [
+   "attention/bench_attention.py",
+   "--mode",
+   "fwd",
+   "--systems",
+   "sdpa_flash",
+   "flash_attn_pkg",
+   "flash_attn_pkg_flat",
+   "triton_fa_mine",
+   "--out",
+   "/workspace/llm-stack/benchmarks/compare/results/final/attention_diagnostic.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "seqs": [
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+    16384
+   ],
+   "tokens": 32768,
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "attention_sweep",
+  "timestamp": "2026-10-16T07:35:20+00:00",
+  "argv": [
+   "attention/bench_attention.py",
+   "--mode",
+   "fwd",
+   "--systems",
+   "sdpa_flash",
+   "flash_attn_pkg",
+   "flash_attn_pkg_flat",
+   "triton_fa_mine",
+   "--seqs",
+   "128",
+   "256",
+   "512",
+   "--reps",
+   "15",
+   "--out",
+   "/workspace/llm-stack/benchmarks/compare/results/final/attention_diagnostic_shortS.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "seqs": [
+    128,
+    256,
+    512
+   ],
+   "tokens": 32768,
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "attention_profile_prefill",
+  "timestamp": "2026-10-16T07:36:36+00:00",
+  "argv": [
+   "attention/profile_prefill.py",
+   "--tool",
+   "both"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "tool": "both",
+   "nsys": "/opt/nvidia/nsight-systems/2024.5.1/target-linux-x64/nsys",
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "attention_sweep",
+  "timestamp": "2026-10-16T07:50:56+00:00",
+  "argv": [
+   "attention/bench_attention.py",
+   "--mode",
+   "fwd",
+   "--systems",
+   "sdpa_flash",
+   "flash_attn_pkg",
+   "triton_fa_mine",
+   "--seqs",
+   "2048",
+   "4096",
+   "8192",
+   "--out",
+   "results/final/attention_diagnostic_causal_vs_noncausal.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "seqs": [
+    2048,
+    4096,
+    8192
+   ],
+   "tokens": 32768,
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "attention_sweep",
+  "timestamp": "2026-10-16T07:51:44+00:00",
+  "argv": [
+   "attention/bench_attention.py",
+   "--mode",
+   "fwd",
+   "--systems",
+   "sdpa_flash",
+   "flash_attn_pkg",
+   "triton_fa_mine",
+   "--seqs",
+   "2048",
+   "4096",
+   "8192",
+   "--non-causal",
+   "--out",
+   "results/final/attention_diagnostic_causal_vs_noncausal.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "seqs": [
+    2048,
+    4096,
+    8192
+   ],
+   "tokens": 32768,
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "serving_prep",
+  "timestamp": "2026-10-16T08:19:33+00:00",
+  "argv": [
+   "run_stage_b.sh",
+   "prep"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "csv": "serving.csv",
+   "sglang": "/workspace/venv-sglang",
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "serving_engine",
+  "timestamp": "2026-10-16T08:19:35+00:00",
+  "argv": [
+   "run_stage_b.sh",
+   "engine"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "csv": "serving.csv",
+   "sglang": "/workspace/venv-sglang",
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "serving_hf",
+  "timestamp": "2026-10-16T08:19:47+00:00",
+  "argv": [
+   "run_stage_b.sh",
+   "hf"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "csv": "serving.csv",
+   "sglang": "/workspace/venv-sglang",
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "serving_prep",
+  "timestamp": "2026-10-16T08:28:15+00:00",
+  "argv": [
+   "run_stage_b.sh",
+   "prep"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "csv": "serving.csv",
+   "sglang": "/workspace/venv-sglang",
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "serving_engine",
+  "timestamp": "2026-10-16T08:28:16+00:00",
+  "argv": [
+   "run_stage_b.sh",
+   "engine"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "csv": "serving.csv",
+   "sglang": "/workspace/venv-sglang",
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "serving_hf",
+  "timestamp": "2026-10-16T08:44:56+00:00",
+  "argv": [
+   "run_stage_b.sh",
+   "hf"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "csv": "serving.csv",
+   "sglang": "/workspace/venv-sglang",
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "serving_sglang",
+  "timestamp": "2026-10-16T08:58:11+00:00",
+  "argv": [
+   "run_stage_b.sh",
+   "sglang"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "csv": "serving.csv",
+   "sglang": "/workspace/venv-sglang",
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "serving_attrib",
+  "timestamp": "2026-10-16T09:02:43+00:00",
+  "argv": [
+   "run_stage_b.sh",
+   "attrib"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "csv": "serving.csv",
+   "sglang": "/workspace/venv-sglang",
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "c5_greedy_equal",
+  "timestamp": "2026-10-16T09:03:54+00:00",
+  "argv": [
+   "/workspace/llm-stack/benchmarks/compare/serving/c5_greedy_equal.py",
+   "--checkpoint",
+   "/workspace/ckpt/model_only.pt",
+   "--workload",
+   "/workspace/llm-stack/benchmarks/compare/workloads/workload_wiki128.json",
+   "--n-prompts",
+   "32",
+   "--new-tokens",
+   "32",
+   "--dtype",
+   "float32",
+   "--device",
+   "cuda",
+   "--out",
+   "/workspace/llm-stack/benchmarks/compare/results/final/serving_correctness_gpu.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "float32",
+   "device": "cuda",
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "c5_greedy_equal",
+  "timestamp": "2026-10-16T09:04:31+00:00",
+  "argv": [
+   "/workspace/llm-stack/benchmarks/compare/serving/c5_greedy_equal.py",
+   "--checkpoint",
+   "/workspace/ckpt/model_only.pt",
+   "--workload",
+   "/workspace/llm-stack/benchmarks/compare/workloads/workload_wiki128.json",
+   "--n-prompts",
+   "32",
+   "--new-tokens",
+   "32",
+   "--dtype",
+   "bfloat16",
+   "--device",
+   "cuda",
+   "--out",
+   "/workspace/llm-stack/benchmarks/compare/results/final/serving_correctness_gpu.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "device": "cuda",
+   "box": "vast instance 56214460 (RTX 3090 Ti)"
+  }
+ },
+ {
+  "stage": "tokenizer_pretokenize",
+  "timestamp": "2026-10-16T14:32:12+08:00",
+  "argv": [
+   "tokenizer/bench_pretokenize.py",
+   "--corpus",
+   "<OWT valid 290 MB>",
+   "--reps",
+   "5",
+   "--warmup",
+   "1",
+   "--out",
+   "results/final/tokenizer.csv"
+  ],
+  "host": "Yifans-MacBook-Pro-2.local",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "python": "3.12.0",
+  "packages": {
+   "torch": "2.6.0",
+   "transformers": "5.15.1",
+   "regex": "2026.7.19",
+   "numpy": "2.5.2",
+   "tokenizers": "0.22.2"
+  },
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "gpu": "",
+  "extra": {
+   "note": "RECONSTRUCTED 2026-10-16 15:3x: the original entry was overwritten when a rsync pulled the remote manifest.json over the local one. Package versions / host / git state are the same machine and tree as the original run; the timestamp is the one printed at the time (tokenizer) or the mtime of the log (C5).",
+   "corpus": "owt_valid.txt (289,998,753 bytes)",
+   "log": "results/final/logs/tokenizer_pretokenize.log",
+   "run_note": "run from the Terminal panel at nice 0; an earlier background attempt at nice 5 was discarded"
+  }
+ },
+ {
+  "stage": "c5_greedy_equal",
+  "timestamp": "2026-10-16T14:34:00+08:00",
+  "argv": [
+   "serving/c5_greedy_equal.py",
+   "--checkpoint",
+   "training/ckpt_190m_fwe/model_only.pt",
+   "--workload",
+   "workloads/workload_wiki128.json",
+   "--n-prompts",
+   "16",
+   "--new-tokens",
+   "32",
+   "--dtype",
+   "float32",
+   "--device",
+   "cpu",
+   "--attn",
+   "naive",
+   "--concurrency",
+   "8"
+  ],
+  "host": "Yifans-MacBook-Pro-2.local",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "python": "3.12.0",
+  "packages": {
+   "torch": "2.6.0",
+   "transformers": "5.15.1",
+   "regex": "2026.7.19",
+   "numpy": "2.5.2",
+   "tokenizers": "0.22.2"
+  },
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "gpu": "",
+  "extra": {
+   "note": "RECONSTRUCTED 2026-10-16 15:3x: the original entry was overwritten when a rsync pulled the remote manifest.json over the local one. Package versions / host / git state are the same machine and tree as the original run; the timestamp is the one printed at the time (tokenizer) or the mtime of the log (C5).",
+   "dtype": "float32",
+   "device": "cpu",
+   "log": "results/final/logs/c5_fp32_cpu.log"
+  }
+ },
+ {
+  "stage": "serving_c_check",
+  "timestamp": "2026-10-16T12:45:11+00:00",
+  "argv": [
+   "run_stage_c.sh",
+   "check"
+  ],
+  "git_sha": "a3cac72",
+  "git_dirty": false,
+  "host": "5b8aede48317",
+  "platform": "Linux-5.15.0-191-generic-x86_64-with-glibc2.39",
+  "python": "3.12.3",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 580.173.02, 24564 MiB, 450.00 W, 2115 MHz",
+  "extra": {
+   "csv": "serving.csv"
+  }
+ },
+ {
+  "stage": "serving_c_ladder",
+  "timestamp": "2026-10-16T12:53:19+00:00",
+  "argv": [
+   "run_stage_c.sh",
+   "ladder"
+  ],
+  "git_sha": "a3cac72",
+  "git_dirty": false,
+  "host": "5b8aede48317",
+  "platform": "Linux-5.15.0-191-generic-x86_64-with-glibc2.39",
+  "python": "3.12.3",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 580.173.02, 24564 MiB, 450.00 W, 2115 MHz",
+  "extra": {
+   "csv": "serving.csv"
+  }
+ },
+ {
+  "stage": "serving_c_drift",
+  "timestamp": "2026-10-16T13:13:54+00:00",
+  "argv": [
+   "run_stage_c.sh",
+   "drift"
+  ],
+  "git_sha": "a3cac72",
+  "git_dirty": false,
+  "host": "5b8aede48317",
+  "platform": "Linux-5.15.0-191-generic-x86_64-with-glibc2.39",
+  "python": "3.12.3",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 580.173.02, 24564 MiB, 450.00 W, 2115 MHz",
+  "extra": {
+   "csv": "serving.csv"
+  }
+ }
+]

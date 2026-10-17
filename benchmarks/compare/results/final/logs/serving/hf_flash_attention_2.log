@@ -1,0 +1,7 @@
+Loading weights:   0%|          | 0/147 [00:00<?, ?it/s]Loading weights: 100%|██████████| 147/147 [00:00<00:00, 4758.97it/s]
+hf_generate_flash_attention_2_bfloat16 C=  1 rep0:     85.6 tok/s  TTFT p50 0.01s  TPOT p50 11.7ms  failed=0
+hf_generate_flash_attention_2_bfloat16 C=  1 rep1:     85.0 tok/s  TTFT p50 0.01s  TPOT p50 11.7ms  failed=0
+hf_generate_flash_attention_2_bfloat16 C=  1 rep2:     84.7 tok/s  TTFT p50 0.01s  TPOT p50 11.8ms  failed=0
+hf_generate_flash_attention_2_bfloat16 C= 32 rep0:     85.8 tok/s  TTFT p50 22.19s  TPOT p50 11.5ms  failed=0
+hf_generate_flash_attention_2_bfloat16 C= 32 rep1:     86.5 tok/s  TTFT p50 22.58s  TPOT p50 11.5ms  failed=0
+hf_generate_flash_attention_2_bfloat16 C= 32 rep2:     86.2 tok/s  TTFT p50 23.59s  TPOT p50 11.5ms  failed=0

@@ -1,0 +1,3 @@
+[nokv_6.9b_L8192] rep 1: 32 tokens in 77.26s = 0.4 tok/s, TTFT p50 2.108s, forwards 32, peak 13.7 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine_kv/nokv_6.9b_L8192_r1.json
+[nokv_6.9b_L8192] rep 2: 32 tokens in 77.33s = 0.4 tok/s, TTFT p50 2.108s, forwards 32, peak 13.7 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine_kv/nokv_6.9b_L8192_r2.json
+[nokv_6.9b_L8192] rep 3: 32 tokens in 77.32s = 0.4 tok/s, TTFT p50 2.108s, forwards 32, peak 13.7 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine_kv/nokv_6.9b_L8192_r3.json

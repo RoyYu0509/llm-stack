@@ -1,0 +1,5 @@
+[A prefill ] grouped vs single: first token agrees 4/4, worst relative K/V diff 1.190e-02  (gate: >= 95% and <= 2%)
+[B compile ] compiled vs eager decode, 4 teacher-forced steps x 4 rows: max|logit diff| 1.250e-01, argmax agreement 16/16, max|K/V cache diff| 6.250e-02  (gate: <= 0.5 and >= 98%)
+[B compile ] peak extra memory while stepping: 37.3 MiB (one layer's K cache = 6.1 MiB; a value near or above that means the compiled graph is COPYING the cache instead of writing it in place)
+stats compiled: {'steps': 4, 'rows': 16, 'adds': 4, 'removes': 0, 'compiled': 1}
+STAGE_C_CHECK PASS

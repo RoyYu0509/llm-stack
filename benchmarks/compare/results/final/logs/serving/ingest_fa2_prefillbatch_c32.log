@@ -1,0 +1,4 @@
+fa2_prefillbatch_c32_r1.json: 1275.0 tok/s  TTFT p50 0.06s
+fa2_prefillbatch_c32_r2.json: 1271.7 tok/s  TTFT p50 0.06s
+fa2_prefillbatch_c32_r3.json: 1268.8 tok/s  TTFT p50 0.06s
+engine_cb_fa2_prefillbatch_bfloat16: mean 1271.9 tok/s over 3 reps

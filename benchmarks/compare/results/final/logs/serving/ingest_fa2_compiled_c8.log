@@ -1,0 +1,4 @@
+fa2_compiled_c8_r1.json: 904.2 tok/s  TTFT p50 0.04s
+fa2_compiled_c8_r2.json: 899.0 tok/s  TTFT p50 0.04s
+fa2_compiled_c8_r3.json: 899.7 tok/s  TTFT p50 0.04s
+engine_cb_fa2_compiled_bfloat16: mean 901.0 tok/s over 3 reps

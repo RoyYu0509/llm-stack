@@ -1,0 +1,42 @@
+/workspace/venv-fa/lib/python3.12/site-packages/torch/autograd/graph.py:823: UserWarning: Attempting to run cuBLAS, but there was no current CUDA context! Attempting to set the primary context... (Triggered internally at /pytorch/aten/src/ATen/cuda/CublasHandlePool.cpp:180.)
+  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+Traceback (most recent call last):
+  File "/.uv/python_install/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/importlib/metadata/__init__.py", line 397, in from_name
+    return next(cls.discover(name=name))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+StopIteration
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py", line 559, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py", line 550, in main
+    return run_check(args)
+           ^^^^^^^^^^^^^^^
+  File "/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py", line 387, in run_check
+    res = check_correctness(args.systems + (["sdpa_math"] if "sdpa_math" not in args.systems else []),
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py", line 347, in check_correctness
+    fn = get_system(name, heads)
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py", line 128, in get_system
+    spec = get_spec(name)
+           ^^^^^^^^^^^^^^
+  File "/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py", line 120, in get_spec
+    from cs336_basics.transfromer.scaled_dot_prod_attention import ATTENTION_KERNEL_REGISTRY
+  File "/workspace/llm-stack/training/cs336-basics/cs336_basics/transfromer/scaled_dot_prod_attention.py", line 74, in <module>
+    from cs336_systems.FlashAttention.flash_attention_torch_vectorized import vectorized_attn_torch_fn
+  File "/workspace/llm-stack/training/cs336_systems/__init__.py", line 3, in <module>
+    __version__ = importlib.metadata.version("llm-training")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/.uv/python_install/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/importlib/metadata/__init__.py", line 889, in version
+    return distribution(distribution_name).version
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/.uv/python_install/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/importlib/metadata/__init__.py", line 862, in distribution
+    return Distribution.from_name(distribution_name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/.uv/python_install/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/importlib/metadata/__init__.py", line 399, in from_name
+    raise PackageNotFoundError(name)
+importlib.metadata.PackageNotFoundError: No package metadata was found for llm-training
