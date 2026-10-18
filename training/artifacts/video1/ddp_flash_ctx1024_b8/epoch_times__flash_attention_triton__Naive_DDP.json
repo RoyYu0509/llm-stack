@@ -1,0 +1,40 @@
+{
+  "kernel": "flash_attention_triton",
+  "ddp": "Naive DDP",
+  "gpus": 2,
+  "epochs": 12,
+  "global_batch_size": 16,
+  "local_batch_size": 8,
+  "steps_per_epoch": 16,
+  "warmup_epochs": 3,
+  "context_length": 1024,
+  "samples_per_epoch": 256,
+  "epoch_times_s": [
+    17.8099,
+    17.7912,
+    17.8205,
+    17.9086,
+    17.9034,
+    17.9334,
+    17.8332,
+    17.8335,
+    17.8963,
+    17.9066,
+    17.8884,
+    17.8967
+  ],
+  "wall_sec": 214.43,
+  "sec_per_epoch": 17.869,
+  "tokens_per_sec": 14670.2,
+  "peak_gpu_mb": 20004.7,
+  "status": "ok",
+  "meta": {
+    "gpu_name": "NVIDIA GeForce RTX 3090",
+    "gpu_count": 2,
+    "torch": "2.6.0+cu124",
+    "cuda": "12.4",
+    "tf32_matmul_precision": "high",
+    "git_sha": "",
+    "nvidia_driver": "595.71.05"
+  }
+}
