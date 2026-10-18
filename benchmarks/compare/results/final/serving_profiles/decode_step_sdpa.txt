@@ -1,0 +1,30 @@
+
+== decode step, B=32, KV width=912, attn=sdpa, dtype=bfloat16
+wall per step           :    21.88 ms
+GPU kernel busy / step  :    11.27 ms   (GPU idle share 48%)
+kernel launches / step  :      682
+KV bytes moved / step   :   1.4345 GB read + same written (torch.cat in forward_with_cache)
+
+top CUDA kernels by self time (per step):
+    5.532 ms  x   32  void at::native::(anonymous namespace)::CatArrayBatchedCopy<at::native::(anonymous namespace)::Opaqu
+    2.480 ms  x   16  fmha_cutlassF_bf16_aligned_64x64_rf_sm80(PyTorchMemEffAttention::AttentionKernel<cutlass::bfloat16_t
+    0.878 ms  x   32  void at::native::reduce_kernel<512, 1, at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<flo
+    0.449 ms  x   64  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(cutlass_
+    0.310 ms  x   32  ampere_bf16_s16816gemm_bf16_64x64_sliced1x2_ldg8_f2f_stages_64x5_tn
+    0.154 ms  x   61  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::direct_co
+    0.138 ms  x   33  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl<at::native::BinaryFunctor<fl
+    0.125 ms  x   33  void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at::native::MeanOps<float, float,
+    0.124 ms  x   16  void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64x64_32x6_nn_align8>(cutlass_80
+    0.119 ms  x   32  void at::native::index_elementwise_kernel<128, 4, at::native::gpu_index_kernel<at::native::index_ker
+    0.100 ms  x   32  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::CUDAFunct
+    0.100 ms  x   32  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_32x1_nn_align2>(cutlass_8
+
+top CPU ops by self CPU time (per step):
+    3.467 ms  x   67  cudaStreamSynchronize
+    3.203 ms  x  682  cudaLaunchKernel
+    2.208 ms  x  145  aten::bmm
+    1.453 ms  x  145  aten::einsum
+    0.929 ms  x  225  aten::copy_
+    0.732 ms  x  741  aten::permute
+    0.613 ms  x  226  aten::empty
+    0.602 ms  x  113  cuLaunchKernel

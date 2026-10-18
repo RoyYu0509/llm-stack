@@ -1,0 +1,9 @@
+{
+ "system": "attention",
+ "seq": 8192,
+ "tool": "torch",
+ "status": "oom",
+ "n_calls": 20,
+ "batch": 4,
+ "note": "OutOfMemoryError: CUDA out of memory. Tried to allocate 6.00 GiB. GPU 0 has a total capacity of 23.67 GiB of which 5.19 GiB is free. Process 1890493 has 18.47 GiB memory in use. Of the allocated memory 12.21 GiB is allocated by PyTorch, and 5.95 GiB is reserved by PyTorch but unallocated. If reserved but unallocated "
+}

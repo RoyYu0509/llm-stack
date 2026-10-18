@@ -1,0 +1,3 @@
+[naive_c8] rep 1: 4208 tokens in 11.03s = 381.6 tok/s, TTFT p50 0.081s, forwards 623, peak 1.3 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/naive_c8_r1.json
+[naive_c8] rep 2: 4208 tokens in 11.49s = 366.4 tok/s, TTFT p50 0.084s, forwards 623, peak 1.3 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/naive_c8_r2.json
+[naive_c8] rep 3: 4208 tokens in 11.11s = 378.8 tok/s, TTFT p50 0.082s, forwards 623, peak 1.3 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/naive_c8_r3.json

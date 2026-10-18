@@ -1,0 +1,3 @@
+[fa2_prefillbatch_c32] rep 1: 16368 tokens in 12.84s = 1275.0 tok/s, TTFT p50 0.063s, forwards 618, peak 3.0 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/fa2_prefillbatch_c32_r1.json
+[fa2_prefillbatch_c32] rep 2: 16368 tokens in 12.87s = 1271.7 tok/s, TTFT p50 0.063s, forwards 618, peak 3.0 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/fa2_prefillbatch_c32_r2.json
+[fa2_prefillbatch_c32] rep 3: 16368 tokens in 12.90s = 1268.8 tok/s, TTFT p50 0.063s, forwards 618, peak 3.0 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/fa2_prefillbatch_c32_r3.json

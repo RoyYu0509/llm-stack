@@ -1,0 +1,52 @@
+{
+ "system": "attention",
+ "seq": 4096,
+ "tool": "torch",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 8,
+ "baseline_ms": 91.73027954101562,
+ "profiled_wall_ms": 87.03507080078126,
+ "gpu_kernel_ms_per_call": 87.00654425000018,
+ "launches_per_call": 28.0,
+ "top_kernels": [
+  {
+   "name": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native:",
+   "share": 0.24378055274847907,
+   "ms_per_call": 21.210503450000047,
+   "per_call": 4.0
+  },
+  {
+   "name": "void at::native::vectorized_elementwise_kernel<4, at::native::exp_kernel_cuda(at::TensorIt",
+   "share": 0.16325776092411579,
+   "ms_per_call": 14.20449360000003,
+   "per_call": 4.0
+  },
+  {
+   "name": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_tn_align8>",
+   "share": 0.15102995772642663,
+   "ms_per_call": 13.140594699999996,
+   "per_call": 1.0
+  },
+  {
+   "name": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native:",
+   "share": 0.13360949857516055,
+   "ms_per_call": 11.624900750000041,
+   "per_call": 2.0
+  },
+  {
+   "name": "Memcpy DtoD (Device -> Device)",
+   "share": 0.08154317598931637,
+   "ms_per_call": 7.094789950000008,
+   "per_call": 1.0
+  }
+ ],
+ "category_share": {
+  "mask_elementwise": 0.4607645119752018,
+  "softmax_reduce": 0.2420848165107992,
+  "gemm": 0.2156074955246827,
+  "memcpy_memset": 0.08154317598931637
+ },
+ "gpu_busy_frac": 0.9996722407356182,
+ "peak_mem_mb": 9232.75
+}

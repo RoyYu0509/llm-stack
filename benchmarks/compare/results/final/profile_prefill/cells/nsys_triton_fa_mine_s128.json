@@ -1,0 +1,33 @@
+{
+ "system": "triton_fa_mine",
+ "seq": 128,
+ "tool": "nsys",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 256,
+ "gpu_kernel_ms_per_call": 0.38004815000000003,
+ "launches_per_call": 3.0,
+ "top_kernels": [
+  {
+   "name": "flash_fwd_kernel",
+   "share": 0.8546669678565729,
+   "ms_per_call": 0.32481459999999995,
+   "per_call": 1.0
+  },
+  {
+   "name": "void at::native::vectorized_elementwise_kernel<(int)4, at::native::FillFunctor<c10::BFloat",
+   "share": 0.14533303214342708,
+   "ms_per_call": 0.055233550000000006,
+   "per_call": 2.0
+  }
+ ],
+ "category_share": {
+  "fused_attention": 0.8546669678565729,
+  "mask_elementwise": 0.14533303214342708
+ },
+ "n_kernels": 60,
+ "busy_ns": 7600963.0,
+ "span_ns": 7702153.0,
+ "busy_frac": 0.9868621150475717,
+ "nsys_rep": "/workspace/llm-stack/benchmarks/compare/results/final/profile_prefill/nsys/triton_fa_mine_s128.nsys-rep"
+}

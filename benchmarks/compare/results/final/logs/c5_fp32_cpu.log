@@ -1,0 +1,2 @@
+C5 float32 attn=naive mode=seq: exact 16/16  first divergence per prompt [None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]  teacher-forced mean 1.0000 min 1.0000  -> PASS
+C5 float32 attn=naive mode=cb : exact 16/16  first divergence per prompt [None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]  teacher-forced mean 1.0000 min 1.0000  -> PASS

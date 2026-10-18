@@ -1,0 +1,38 @@
+{
+ "system": "torch_compile_attention",
+ "seq": 2048,
+ "tool": "torch",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 16,
+ "baseline_ms": 10.979071807861327,
+ "profiled_wall_ms": 10.750654602050782,
+ "gpu_kernel_ms_per_call": 10.739838099999998,
+ "launches_per_call": 3.0,
+ "top_kernels": [
+  {
+   "name": "triton_red_fused_bitwise_not_div_exp_ge_logsumexp_masked_fill_sub_0",
+   "share": 0.5184112039826744,
+   "ms_per_call": 5.567652399999997,
+   "per_call": 1.0
+  },
+  {
+   "name": "ampere_bf16_s1688gemm_bf16_128x128_ldg8_f2f_stages_32x1_tn",
+   "share": 0.26086064556224564,
+   "ms_per_call": 2.8016011000000014,
+   "per_call": 1.0
+  },
+  {
+   "name": "ampere_bf16_s16816gemm_bf16_64x64_ldg8_f2f_stages_64x5_nn",
+   "share": 0.22072815045507996,
+   "ms_per_call": 2.3705845999999995,
+   "per_call": 1.0
+  }
+ ],
+ "category_share": {
+  "softmax_reduce": 0.5184112039826744,
+  "gemm": 0.4815887960173256
+ },
+ "gpu_busy_frac": 0.998993875028901,
+ "peak_mem_mb": 1584.0
+}

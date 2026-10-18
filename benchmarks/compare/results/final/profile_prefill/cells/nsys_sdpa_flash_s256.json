@@ -1,0 +1,26 @@
+{
+ "system": "sdpa_flash",
+ "seq": 256,
+ "tool": "nsys",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 128,
+ "gpu_kernel_ms_per_call": 0.33989395,
+ "launches_per_call": 1.0,
+ "top_kernels": [
+  {
+   "name": "void pytorch_flash::flash_fwd_kernel<pytorch_flash::Flash_fwd_kernel_traits<(int)64, (int)",
+   "share": 1.0,
+   "ms_per_call": 0.33989395,
+   "per_call": 1.0
+  }
+ ],
+ "category_share": {
+  "fused_attention": 1.0
+ },
+ "n_kernels": 20,
+ "busy_ns": 6797879.0,
+ "span_ns": 6811800.0,
+ "busy_frac": 0.9979563404680114,
+ "nsys_rep": "/workspace/llm-stack/benchmarks/compare/results/final/profile_prefill/nsys/sdpa_flash_s256.nsys-rep"
+}

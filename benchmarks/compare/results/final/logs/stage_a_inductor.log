@@ -1,0 +1,2 @@
+inductor fuse_attention rewrites for positive control (4D textbook attention): 1
+inductor fuse_attention rewrites for torch_compile_attention: 0 

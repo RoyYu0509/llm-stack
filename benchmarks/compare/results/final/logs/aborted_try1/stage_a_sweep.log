@@ -1,0 +1,80 @@
+S=   128 B= 256 fwd      attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   128 B= 256 fwd      torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   128 B= 256 fwd      sdpa_flash                     0.402 ms (±0.107)    16.0 TFLOP/s
+S=   128 B= 256 fwd      flash_attn_pkg                 0.523 ms (±0.128)    12.3 TFLOP/s
+S=   128 B= 256 fwd      triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   128 B= 256 fwd+bwd  attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   128 B= 256 fwd+bwd  torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   128 B= 256 fwd+bwd  sdpa_flash                     2.316 ms (±0.461)     9.7 TFLOP/s
+S=   128 B= 256 fwd+bwd  flash_attn_pkg                 2.124 ms (±0.388)    10.6 TFLOP/s
+S=   128 B= 256 fwd+bwd  triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   256 B= 128 fwd      attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   256 B= 128 fwd      torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   256 B= 128 fwd      sdpa_flash                     0.515 ms (±0.127)    25.0 TFLOP/s
+S=   256 B= 128 fwd      flash_attn_pkg                 0.676 ms (±0.157)    19.1 TFLOP/s
+S=   256 B= 128 fwd      triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   256 B= 128 fwd+bwd  attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   256 B= 128 fwd+bwd  torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   256 B= 128 fwd+bwd  sdpa_flash                     2.406 ms (±0.293)    18.7 TFLOP/s
+S=   256 B= 128 fwd+bwd  flash_attn_pkg                 2.228 ms (±0.285)    20.2 TFLOP/s
+S=   256 B= 128 fwd+bwd  triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   512 B=  64 fwd      attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   512 B=  64 fwd      torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   512 B=  64 fwd      sdpa_flash                     0.656 ms (±0.100)    39.3 TFLOP/s
+S=   512 B=  64 fwd      flash_attn_pkg                 0.814 ms (±0.084)    31.7 TFLOP/s
+S=   512 B=  64 fwd      triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   512 B=  64 fwd+bwd  attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   512 B=  64 fwd+bwd  torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=   512 B=  64 fwd+bwd  sdpa_flash                     2.639 ms (±0.170)    34.2 TFLOP/s
+S=   512 B=  64 fwd+bwd  flash_attn_pkg                 2.546 ms (±0.207)    35.4 TFLOP/s
+S=   512 B=  64 fwd+bwd  triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  1024 B=  32 fwd      attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  1024 B=  32 fwd      torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  1024 B=  32 fwd      sdpa_flash                     0.974 ms (±0.064)    52.9 TFLOP/s
+S=  1024 B=  32 fwd      flash_attn_pkg                 1.102 ms (±0.059)    46.8 TFLOP/s
+S=  1024 B=  32 fwd      triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  1024 B=  32 fwd+bwd  attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  1024 B=  32 fwd+bwd  torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  1024 B=  32 fwd+bwd  sdpa_flash                     3.975 ms (±0.190)    45.4 TFLOP/s
+S=  1024 B=  32 fwd+bwd  flash_attn_pkg                 3.755 ms (±0.262)    48.0 TFLOP/s
+S=  1024 B=  32 fwd+bwd  triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  2048 B=  16 fwd      attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  2048 B=  16 fwd      torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  2048 B=  16 fwd      sdpa_flash                     1.773 ms (±0.062)    58.2 TFLOP/s
+S=  2048 B=  16 fwd      flash_attn_pkg                 1.993 ms (±0.158)    51.7 TFLOP/s
+S=  2048 B=  16 fwd      triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  2048 B=  16 fwd+bwd  attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  2048 B=  16 fwd+bwd  torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  2048 B=  16 fwd+bwd  sdpa_flash                     6.543 ms (±0.353)    55.1 TFLOP/s
+S=  2048 B=  16 fwd+bwd  flash_attn_pkg                 6.312 ms (±0.356)    57.2 TFLOP/s
+S=  2048 B=  16 fwd+bwd  triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  4096 B=   8 fwd      attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  4096 B=   8 fwd      torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  4096 B=   8 fwd      sdpa_flash                     3.379 ms (±0.180)    61.0 TFLOP/s
+S=  4096 B=   8 fwd      flash_attn_pkg                 3.750 ms (±0.269)    55.0 TFLOP/s
+S=  4096 B=   8 fwd      triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  4096 B=   8 fwd+bwd  attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  4096 B=   8 fwd+bwd  torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  4096 B=   8 fwd+bwd  sdpa_flash                    11.507 ms (±0.083)    62.7 TFLOP/s
+S=  4096 B=   8 fwd+bwd  flash_attn_pkg                11.638 ms (±0.584)    62.0 TFLOP/s
+S=  4096 B=   8 fwd+bwd  triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  8192 B=   4 fwd      attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  8192 B=   4 fwd      torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  8192 B=   4 fwd      sdpa_flash                     6.588 ms (±0.365)    62.6 TFLOP/s
+S=  8192 B=   4 fwd      flash_attn_pkg                 7.307 ms (±0.461)    56.4 TFLOP/s
+S=  8192 B=   4 fwd      triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  8192 B=   4 fwd+bwd  attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  8192 B=   4 fwd+bwd  torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S=  8192 B=   4 fwd+bwd  sdpa_flash                    22.004 ms (±0.697)    65.6 TFLOP/s
+S=  8192 B=   4 fwd+bwd  flash_attn_pkg                21.768 ms (±0.641)    66.3 TFLOP/s
+S=  8192 B=   4 fwd+bwd  triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S= 16384 B=   2 fwd      attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S= 16384 B=   2 fwd      torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S= 16384 B=   2 fwd      sdpa_flash                    13.043 ms (±0.665)    63.2 TFLOP/s
+S= 16384 B=   2 fwd      flash_attn_pkg                14.670 ms (±0.849)    56.2 TFLOP/s
+S= 16384 B=   2 fwd      triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S= 16384 B=   2 fwd+bwd  attention                  UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S= 16384 B=   2 fwd+bwd  torch_compile_attention    UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training
+S= 16384 B=   2 fwd+bwd  sdpa_flash                    42.056 ms (±0.499)    68.6 TFLOP/s
+S= 16384 B=   2 fwd+bwd  flash_attn_pkg                42.826 ms (±0.824)    67.4 TFLOP/s
+S= 16384 B=   2 fwd+bwd  triton_fa_mine             UNAVAILABLE PackageNotFoundError: No package metadata was found for llm-training

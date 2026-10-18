@@ -1,0 +1,17 @@
+/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py:429: UserWarning: Memory efficient kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:776.)
+  F.scaled_dot_product_attention(q, k, v, **kw)
+/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py:429: UserWarning: Memory Efficient attention has been runtime disabled. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/sdp_utils_cpp.h:551.)
+  F.scaled_dot_product_attention(q, k, v, **kw)
+/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py:429: UserWarning: Flash attention kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:778.)
+  F.scaled_dot_product_attention(q, k, v, **kw)
+/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py:429: UserWarning: Expected query, key and value to all be of dtype: {Half, BFloat16}. Got Query dtype: float, Key dtype: float, and Value dtype: float instead. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/sdp_utils_cpp.h:93.)
+  F.scaled_dot_product_attention(q, k, v, **kw)
+/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py:429: UserWarning: CuDNN attention kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:780.)
+  F.scaled_dot_product_attention(q, k, v, **kw)
+/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py:429: UserWarning: CuDNN attention has been runtime disabled. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:528.)
+  F.scaled_dot_product_attention(q, k, v, **kw)
+C6.1 fp32 + FLASH only            -> raised=True  RuntimeError: No available kernel. Aborting execution.
+/workspace/llm-stack/benchmarks/compare/attention/bench_attention.py:429: UserWarning: Flash Attention does not support non-null attn_mask. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/sdp_utils_cpp.h:264.)
+  F.scaled_dot_product_attention(q, k, v, **kw)
+C6.2 bfloat16 + attn_mask + FLASH only -> raised=True  RuntimeError: No available kernel. Aborting execution.
+C6.3 bfloat16 + is_causal + FLASH only -> kernels=['void pytorch_flash::flash_fwd_kernel<pytorch_flash::Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlass::bfloat16_t, pytorch_flash::Flash_kernel_traits<64, 128, 128, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(pytorch_flash::Flash_fwd_params)']  flash_kernel_launched=True

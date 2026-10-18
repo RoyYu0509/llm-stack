@@ -1,0 +1,58 @@
+LOC  python code=72 physical=137   c++ code=193 physical=269
+compiling (3 clean builds + 3 per-TU) ...
+compiler: Apple clang version 17.0.0 (clang-1700.4.4.1)  flags: -std=c++20 -O2 -pthread
+compile, one-off: full build median 3.32s  per-TU {'bpe_tokenizer.cpp': 1.0653229169984115, 'pretokenizer.cpp': 0.751436124992324, 'parallel_helper.cpp': 0.6961920829926385, 'pretok_driver.cpp': 0.6556366250006249}
+equal-work check on the first 8.0 MB ...
+  reference {'unique': 135578, 'total': 1321045, 'checksum': '7603733127625520343'}
+  c++ serial   {'unique': 135578, 'total': 1321045, 'checksum': '7603733127625520343'}
+  c++ parallel {'unique': 135578, 'total': 1321045, 'checksum': '7603733127625520343'}
+  his Python (newlines visible) differs from the reference by {'d_unique': 509, 'd_total': 31813}
+round 1/6 python_serial_inproc          46.30s (warm-up)
+round 1/6 python_4proc_steady           13.79s (warm-up)
+Pretokenizing chunks:   0%|          | 0/4 [00:00<?, ?chunk/s]Pretokenizing chunks:  50%|█████     | 2/4 [00:00<00:00,  9.00chunk/s]Pretokenizing chunks:  75%|███████▌  | 3/4 [00:00<00:00,  5.98chunk/s]Pretokenizing chunks: 100%|██████████| 4/4 [00:00<00:00,  4.45chunk/s]Pretokenizing chunks: 100%|██████████| 4/4 [00:00<00:00,  5.07chunk/s]
+round 1/6 python_4proc_cold             14.01s (warm-up)
+round 1/6 cxx_serial                    16.63s (warm-up)
+round 1/6 cxx_4threads                   9.88s (warm-up)
+round 2/6 python_serial_inproc          47.01s
+round 2/6 python_4proc_steady           15.31s
+Pretokenizing chunks:   0%|          | 0/4 [00:00<?, ?chunk/s]Pretokenizing chunks:  50%|█████     | 2/4 [00:00<00:00,  8.80chunk/s]Pretokenizing chunks:  75%|███████▌  | 3/4 [00:00<00:00,  5.63chunk/s]Pretokenizing chunks: 100%|██████████| 4/4 [00:00<00:00,  4.30chunk/s]Pretokenizing chunks: 100%|██████████| 4/4 [00:00<00:00,  4.88chunk/s]
+round 2/6 python_4proc_cold             13.00s
+round 2/6 cxx_serial                    16.96s
+round 2/6 cxx_4threads                   8.95s
+round 3/6 python_serial_inproc          44.29s
+round 3/6 python_4proc_steady           13.14s
+Pretokenizing chunks:   0%|          | 0/4 [00:00<?, ?chunk/s]Pretokenizing chunks:  50%|█████     | 2/4 [00:00<00:00,  8.79chunk/s]Pretokenizing chunks:  75%|███████▌  | 3/4 [00:00<00:00,  5.83chunk/s]Pretokenizing chunks: 100%|██████████| 4/4 [00:00<00:00,  4.43chunk/s]Pretokenizing chunks: 100%|██████████| 4/4 [00:00<00:00,  5.02chunk/s]
+round 3/6 python_4proc_cold             13.14s
+round 3/6 cxx_serial                    16.50s
+round 3/6 cxx_4threads                   8.85s
+round 4/6 python_serial_inproc          44.07s
+round 4/6 python_4proc_steady           13.64s
+Pretokenizing chunks:   0%|          | 0/4 [00:00<?, ?chunk/s]Pretokenizing chunks:  50%|█████     | 2/4 [00:00<00:00,  8.32chunk/s]Pretokenizing chunks:  75%|███████▌  | 3/4 [00:00<00:00,  5.70chunk/s]Pretokenizing chunks: 100%|██████████| 4/4 [00:00<00:00,  4.35chunk/s]Pretokenizing chunks: 100%|██████████| 4/4 [00:00<00:00,  4.91chunk/s]
+round 4/6 python_4proc_cold             12.91s
+round 4/6 cxx_serial                    16.64s
+round 4/6 cxx_4threads                   9.25s
+round 5/6 python_serial_inproc          44.33s
+round 5/6 python_4proc_steady           13.22s
+Pretokenizing chunks:   0%|          | 0/4 [00:00<?, ?chunk/s]Pretokenizing chunks:  50%|█████     | 2/4 [00:00<00:00,  8.80chunk/s]Pretokenizing chunks:  75%|███████▌  | 3/4 [00:00<00:00,  5.91chunk/s]Pretokenizing chunks: 100%|██████████| 4/4 [00:00<00:00,  4.52chunk/s]Pretokenizing chunks: 100%|██████████| 4/4 [00:00<00:00,  5.11chunk/s]
+round 5/6 python_4proc_cold             12.84s
+round 5/6 cxx_serial                    16.62s
+round 5/6 cxx_4threads                   8.90s
+round 6/6 python_serial_inproc          44.49s
+round 6/6 python_4proc_steady           14.73s
+Pretokenizing chunks:   0%|          | 0/4 [00:00<?, ?chunk/s]Pretokenizing chunks:  50%|█████     | 2/4 [00:00<00:00,  8.71chunk/s]Pretokenizing chunks:  75%|███████▌  | 3/4 [00:00<00:00,  5.85chunk/s]Pretokenizing chunks: 100%|██████████| 4/4 [00:00<00:00,  4.44chunk/s]Pretokenizing chunks: 100%|██████████| 4/4 [00:00<00:00,  5.03chunk/s]
+round 6/6 python_4proc_cold             13.63s
+round 6/6 cxx_serial                    17.90s
+round 6/6 cxx_4threads                  10.16s
+
+== pretokenize time, median of 5 (s)
+  python_serial_inproc           44.33   min    44.07   {'unique': 1667752, 'total': 48999175}
+  python_4proc_steady            13.64   min    13.14   {'unique': 1667752, 'total': 48999175}
+  python_4proc_cold              13.00   min    12.84   {'unique': 1667752, 'total': 48999175}
+  cxx_serial                     16.64   min    16.50   {'unique': 1658030, 'total': 47848666}
+  cxx_4threads                    8.95   min     8.85   {'unique': 1658030, 'total': 47848666}
+  Python serial / C++ serial: 2.66x
+  Python 4proc (warm pool) / C++ 4 threads: 1.52x
+  Python 4proc (pool inside call) / C++ 4 threads: 1.45x
+  C++ serial / C++ 4 threads: 1.86x
+  Python serial / Python 4proc (warm pool): 3.25x
+  unique pre-tokens per config (C++ drops newlines, Python keeps them): {'python_serial_inproc': 1667752, 'python_4proc_steady': 1667752, 'python_4proc_cold': 1667752, 'cxx_serial': 1658030, 'cxx_4threads': 1658030}

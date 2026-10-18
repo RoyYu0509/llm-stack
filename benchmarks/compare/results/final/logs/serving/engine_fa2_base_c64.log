@@ -1,0 +1,3 @@
+[fa2_base_c64] rep 1: 32336 tokens in 22.59s = 1431.7 tok/s, TTFT p50 0.421s, forwards 1055, peak 5.2 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/fa2_base_c64_r1.json
+[fa2_base_c64] rep 2: 32336 tokens in 22.63s = 1429.2 tok/s, TTFT p50 0.418s, forwards 1055, peak 5.2 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/fa2_base_c64_r2.json
+[fa2_base_c64] rep 3: 32336 tokens in 22.74s = 1421.9 tok/s, TTFT p50 0.420s, forwards 1055, peak 5.2 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/fa2_base_c64_r3.json

@@ -1,0 +1,4 @@
+nokv_190m_L12288_r1.json: 5.5 tok/s  TTFT p50 0.17s
+nokv_190m_L12288_r2.json: 5.5 tok/s  TTFT p50 0.17s
+nokv_190m_L12288_r3.json: 5.5 tok/s  TTFT p50 0.17s
+engine_kvsweep_nokv_190m_L12288_bfloat16: mean 5.5 tok/s over 3 reps

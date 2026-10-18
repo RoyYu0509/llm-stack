@@ -1,0 +1,3 @@
+[kv_1.4b_L8192] rep 1: 32 tokens in 3.34s = 9.6 tok/s, TTFT p50 0.539s, forwards 32, peak 5.9 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine_kv/kv_1.4b_L8192_r1.json
+[kv_1.4b_L8192] rep 2: 32 tokens in 3.34s = 9.6 tok/s, TTFT p50 0.539s, forwards 32, peak 5.9 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine_kv/kv_1.4b_L8192_r2.json
+[kv_1.4b_L8192] rep 3: 32 tokens in 3.34s = 9.6 tok/s, TTFT p50 0.539s, forwards 32, peak 5.9 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine_kv/kv_1.4b_L8192_r3.json

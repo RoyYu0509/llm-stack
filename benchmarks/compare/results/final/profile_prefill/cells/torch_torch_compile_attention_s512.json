@@ -1,0 +1,38 @@
+{
+ "system": "torch_compile_attention",
+ "seq": 512,
+ "tool": "torch",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 64,
+ "baseline_ms": 2.1481903076171873,
+ "profiled_wall_ms": 2.3529056549072265,
+ "gpu_kernel_ms_per_call": 2.3439124500000017,
+ "launches_per_call": 3.0,
+ "top_kernels": [
+  {
+   "name": "triton_per_fused_bitwise_not_div_exp_ge_logsumexp_masked_fill_sub_0",
+   "share": 0.43707229764490535,
+   "ms_per_call": 1.0244592,
+   "per_call": 1.0
+  },
+  {
+   "name": "ampere_bf16_s1688gemm_bf16_128x128_ldg8_f2f_stages_32x1_tn",
+   "share": 0.3181478045393719,
+   "ms_per_call": 0.7457106000000008,
+   "per_call": 1.0
+  },
+  {
+   "name": "void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64x64_32x6_nn_align8>(",
+   "share": 0.2447798978157227,
+   "ms_per_call": 0.5737426500000006,
+   "per_call": 1.0
+  }
+ ],
+ "category_share": {
+  "gemm": 0.5629277023550946,
+  "softmax_reduce": 0.43707229764490535
+ },
+ "gpu_busy_frac": 0.9961778302124148,
+ "peak_mem_mb": 432.0
+}

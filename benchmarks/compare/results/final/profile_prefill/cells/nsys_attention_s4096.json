@@ -1,0 +1,52 @@
+{
+ "system": "attention",
+ "seq": 4096,
+ "tool": "nsys",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 8,
+ "gpu_kernel_ms_per_call": 79.66868604999999,
+ "launches_per_call": 27.0,
+ "top_kernels": [
+  {
+   "name": "void at::native::elementwise_kernel<(int)128, (int)4, void at::native::gpu_kernel_impl_noc",
+   "share": 0.2651013383946728,
+   "ms_per_call": 21.1202753,
+   "per_call": 4.0
+  },
+  {
+   "name": "void at::native::vectorized_elementwise_kernel<(int)4, at::native::exp_kernel_cuda(at::Ten",
+   "share": 0.17829172733042709,
+   "ms_per_call": 14.20426765,
+   "per_call": 4.0
+  },
+  {
+   "name": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_tn_align8>",
+   "share": 0.16376979773221703,
+   "ms_per_call": 13.0473246,
+   "per_call": 1.0
+  },
+  {
+   "name": "void at::native::elementwise_kernel<(int)128, (int)4, void at::native::gpu_kernel_impl_noc",
+   "share": 0.1451354430866756,
+   "ms_per_call": 11.56275005,
+   "per_call": 2.0
+  },
+  {
+   "name": "void at::native::vectorized_elementwise_kernel<(int)4, at::native::BUnaryFunctor<c10::BFlo",
+   "share": 0.08896414829223859,
+   "ms_per_call": 7.0876567999999995,
+   "per_call": 2.0
+  }
+ ],
+ "category_share": {
+  "mask_elementwise": 0.5012556749704297,
+  "softmax_reduce": 0.26460434325187415,
+  "gemm": 0.2341399817776962
+ },
+ "n_kernels": 540,
+ "busy_ns": 1593373721.0,
+ "span_ns": 1735760149.0,
+ "busy_frac": 0.917968834529338,
+ "nsys_rep": "/workspace/llm-stack/benchmarks/compare/results/final/profile_prefill/nsys/attention_s4096.nsys-rep"
+}

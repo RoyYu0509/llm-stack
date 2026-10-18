@@ -1,0 +1,52 @@
+{
+ "system": "attention",
+ "seq": 256,
+ "tool": "torch",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 128,
+ "baseline_ms": 5.099878311157227,
+ "profiled_wall_ms": 5.814550399780273,
+ "gpu_kernel_ms_per_call": 5.7911346499999965,
+ "launches_per_call": 20.0,
+ "top_kernels": [
+  {
+   "name": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native:",
+   "share": 0.22203871567724637,
+   "ms_per_call": 1.285856099999999,
+   "per_call": 2.0
+  },
+  {
+   "name": "void at::native::vectorized_elementwise_kernel<4, at::native::exp_kernel_cuda(at::TensorIt",
+   "share": 0.1546222811448536,
+   "ms_per_call": 0.895438450000003,
+   "per_call": 2.0
+  },
+  {
+   "name": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_tn_align8>",
+   "share": 0.13648839955741682,
+   "ms_per_call": 0.7904227000000009,
+   "per_call": 1.0
+  },
+  {
+   "name": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native:",
+   "share": 0.11348622329131992,
+   "ms_per_call": 0.6572139999999995,
+   "per_call": 1.0
+  },
+  {
+   "name": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<c10::BFloat16, at::native::fun",
+   "share": 0.08917885375018866,
+   "ms_per_call": 0.5164467499999997,
+   "per_call": 1.0
+  }
+ ],
+ "category_share": {
+  "mask_elementwise": 0.4175150460367898,
+  "softmax_reduce": 0.3012351215145727,
+  "gemm": 0.20405709268044733,
+  "memcpy_memset": 0.07719273976819023
+ },
+ "gpu_busy_frac": 0.9959729044947032,
+ "peak_mem_mb": 576.8125
+}

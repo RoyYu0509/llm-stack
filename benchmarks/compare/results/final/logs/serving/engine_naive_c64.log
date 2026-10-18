@@ -1,0 +1,3 @@
+[naive_c64] rep 1: 32336 tokens in 37.41s = 864.3 tok/s, TTFT p50 0.533s, forwards 1055, peak 6.4 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/naive_c64_r1.json
+[naive_c64] rep 2: 32336 tokens in 37.39s = 864.9 tok/s, TTFT p50 0.527s, forwards 1055, peak 6.4 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/naive_c64_r2.json
+[naive_c64] rep 3: 32336 tokens in 36.99s = 874.1 tok/s, TTFT p50 0.527s, forwards 1055, peak 6.4 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/naive_c64_r3.json

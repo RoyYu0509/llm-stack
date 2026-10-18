@@ -1,0 +1,32 @@
+{
+ "system": "triton_fa_mine",
+ "seq": 4096,
+ "tool": "torch",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 8,
+ "baseline_ms": 9.588735961914063,
+ "profiled_wall_ms": 9.63588638305664,
+ "gpu_kernel_ms_per_call": 9.627786400000003,
+ "launches_per_call": 3.0,
+ "top_kernels": [
+  {
+   "name": "flash_fwd_kernel",
+   "share": 0.9943096265617192,
+   "ms_per_call": 9.573000700000003,
+   "per_call": 1.0
+  },
+  {
+   "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<c10::BFloat16>, ",
+   "share": 0.005690373438280842,
+   "ms_per_call": 0.05478570000000155,
+   "per_call": 2.0
+  }
+ ],
+ "category_share": {
+  "fused_attention": 0.9943096265617192,
+  "mask_elementwise": 0.005690373438280842
+ },
+ "gpu_busy_frac": 0.9991593940884484,
+ "peak_mem_mb": 48.75
+}

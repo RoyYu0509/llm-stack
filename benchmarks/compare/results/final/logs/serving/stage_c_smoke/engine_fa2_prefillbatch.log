@@ -1,0 +1,2 @@
+[smoke_fa2_prefillbatch] rep 1: 576 tokens in 3.10s = 185.7 tok/s, TTFT p50 0.037s, forwards 163, peak 0.8 GiB -> /tmp/smoke_stage_c/smoke_fa2_prefillbatch_r1.json
+[smoke_fa2_prefillbatch] rep 2: 576 tokens in 3.09s = 186.6 tok/s, TTFT p50 0.037s, forwards 163, peak 0.8 GiB -> /tmp/smoke_stage_c/smoke_fa2_prefillbatch_r2.json

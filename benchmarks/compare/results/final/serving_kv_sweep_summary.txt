@@ -1,0 +1,23 @@
+KV-cache size sweep: /workspace/llm-stack/benchmarks/compare/results/final/serving_kv_sweep.csv
+ model  prompt |   TTFT ms | TPOT ms nokv  TPOT ms kv  speed-up | peak GiB (kv arm)
+  190m    1024 | MISSING nokv, kv
+  190m    4096 | MISSING nokv, kv
+  190m   16384 | MISSING nokv, kv
+  1.4b    1024 | MISSING nokv, kv
+  1.4b    4096 | MISSING nokv, kv
+  1.4b   16384 | MISSING nokv, kv
+  2.8b    1024 | MISSING nokv, kv
+  2.8b    4096 | MISSING nokv, kv
+  2.8b   16384 | MISSING nokv, kv
+  6.9b    1024 | MISSING nokv, kv
+  6.9b    4096 | MISSING nokv, kv
+  6.9b   12288 | MISSING kv
+  1.4b    8192 |       539 |        628.9        42.3     14.9x |               5.9   (fall-back cell)
+  1.4b   12288 |       867 |       1003.2        53.3     18.8x |               7.5   (fall-back cell)
+  190m    8192 |        97 |        113.4        21.2      5.3x |               1.2   (fall-back cell)
+  190m   12288 |       158 |        181.7        22.6      8.1x |               1.6   (fall-back cell)
+  2.8b    8192 |      1012 |       1181.0        65.1     18.1x |              10.5   (fall-back cell)
+  2.8b   12288 |      1624 |       1891.0        81.2     23.3x |              13.1   (fall-back cell)
+  6.9b    8192 |      2053 |       2460.5        89.6     27.5x |              21.2   (fall-back cell)
+
+1/24 cells present; 23 MISSING
