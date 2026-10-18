@@ -19,10 +19,17 @@
 
 ## 2. ⚠️ 设计 vs 实现进度（容易踩的坑）
 
-**continuous batching 还没写成代码**。现在 `InferenceEngine._keep_get_request_and_inference`
-（`serving/inferenceLM/engine/inference_engine.py`）一次只从 `pending_queue` 里取一条 request，
-`await`着跑完整个 prefill+decode 才取下一条——是靠 `asyncio.sleep(0)` 做协程级别的礼让，
-**不是**把多条 request 的 forward pass 合成一个 batch。这不是 bug，是还没做到的部分。
+**continuous batching 已经实现（2026-10），但还不是目标设计。** 现在的状态：
+
+| 已实现 | 在哪里 |
+|---|---|
+| 逐轮推进：每轮 admit → prefill → **所有**在飞请求各 decode 一步 → 让出 | `serving/inferenceLM/engine/inference_engine.py::_keep_get_request_and_inference` |
+| 变长批量 decode：左补零的 KV 矩形 + 每行位置 + key mask，一次前向 | `serving/inferenceLM/engine/ragged_batch.py`（`RaggedDecodeBatch`）、`TransformerLM.forward_with_cache(positions=, attn_mask=)` |
+| 优化路径（**默认关闭**）：预分配 KV、FA-2 decode、合批 prefill、`torch.compile` | `serving/inferenceLM/engine/prealloc_batch.py`、`training/cs336-basics/.../kv_cache_attention.py`、`InferenceEngine.prefill_batch_tokens` |
+| 对标 SGLang / vLLM / flash-attn 的 benchmark 与结果 | `benchmarks/compare/`（结果在 `results/final/`，入口见根目录 README） |
+
+**还没做的（别把"有 CB"当成"有这些"）**：block-based（paged）KV cache 分配器（LMS-8, #12）、不 padding 的 ragged attention（LMS-9, #13）、radix tree 前缀缓存、
+**准入控制**（在飞请求超过 KV 槽位数时 `_batch.add()` 抛错没人接，主循环 task 静默死掉）、CUDA graph decode。
 
 **目标设计换过一次，别照旧的读**：`week3-discussion.md` 锁定的是「每轮两次 `model()` 调用，
 prefill microbatch 和 decode microbatch 顺序执行」（stage-homogeneous batching）。这个设计
@@ -30,9 +37,8 @@ prefill microbatch 和 decode microbatch 顺序执行」（stage-homogeneous bat
 `attention_mask` 只认矩形 padding mask）本身能绕开，因为 serving 用的是自己写的 CS336 GPT2
 架构，不是 HF `model()`。现在的目标是完整 RadixAttention：block-based KV cache 分配器
 （paged）+ ragged attention forward（按 block table gather，不再 padding）+ radix tree
-前缀缓存（引用计数/copy-on-write）+ LRU 淘汰。**读代码时别把"有个 while 循环"当成
-"continuous batching 已实现"，也别把 stage-homogeneous batching 当成还要去建的目标——
-那个设计已经作废。**
+前缀缓存（引用计数/copy-on-write）+ LRU 淘汰。**读代码时别把 stage-homogeneous batching 当成还要去建的目标——
+那个设计已经作废；也别把现在的左补零 ragged 矩形当成最终的 KV 布局——它是 LMS-7/10 的中间态。**
 
 ## 3. 模块地图
 
@@ -51,7 +57,10 @@ prefill microbatch 和 decode microbatch 顺序执行」（stage-homogeneous bat
 
 | 模块 | 文件 |
 |---|---|
-| 推理主循环入口 | `serving/inferenceLM/engine/inference_engine.py` → `InferenceEngine._keep_get_request_and_inference`（见上面第 2 节的限定） |
+| 推理主循环入口（逐轮调度） | `serving/inferenceLM/engine/inference_engine.py` → `InferenceEngine._keep_get_request_and_inference`（见上面第 2 节的限定） |
+| 批量 decode 的 KV 数据结构 | `serving/inferenceLM/engine/ragged_batch.py`· `prealloc_batch.py`（默认关闭） |
+| serving 测量工具 | `serving/benchmarks/`（指标定义只在 `serving_metrics.py`） |
+| 跨系统对标（SGLang / vLLM / flash-attn / torch DDP） | `benchmarks/compare/`，入口 `README.md` · `RUNBOOK.md` · `results/final/` |
 | 单请求 prefill/decode 逻辑 | `serving/inferenceLM/engine/lm_engine.py` → `LMEngine.prefill` / `.decode` / `.inference` |
 | 请求接收 / tokenize | `serving/inferenceLM/request_receiver/` |
 | 请求数据结构 / 状态 | `serving/inferenceLM/data/request.py`、`request_status.py`、`tokenized_data.py` |

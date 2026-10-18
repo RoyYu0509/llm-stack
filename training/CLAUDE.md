@@ -77,7 +77,7 @@ distinction matters:
 - **`FlashAttention/`**: three attention implementations selectable at runtime
   - `flash_attention_torch_naive.py` — O(N²) memory baseline
   - `flash_attention_torch_vectorized.py` — vectorized PyTorch
-  - `flash_attention_triton.py` — autotuned Triton kernel (6.54× faster at seq_len=8192; only one that handles seq_len=16384)
+  - `flash_attention_triton.py` — autotuned Triton kernel (forward only; constant extra memory, 2.2–3.0× faster than torch.compile'd attention but 2.8–3.1× slower than PyTorch SDPA flash — see benchmarks/compare/results/final/attention.csv; the old 6.54× figure is withdrawn)
 
 - **`Parallelization/DDP/`**: PyTorch DDP baseline
   - `naiveDDP.py`: per-parameter all-reduce
