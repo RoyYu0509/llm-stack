@@ -1,0 +1,52 @@
+{
+ "system": "attention",
+ "seq": 2048,
+ "tool": "torch",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 16,
+ "baseline_ms": 47.9836669921875,
+ "profiled_wall_ms": 44.25600891113281,
+ "gpu_kernel_ms_per_call": 44.23016214999998,
+ "launches_per_call": 20.0,
+ "top_kernels": [
+  {
+   "name": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native:",
+   "share": 0.27638170777088145,
+   "ms_per_call": 12.224407749999994,
+   "per_call": 2.0
+  },
+  {
+   "name": "void at::native::vectorized_elementwise_kernel<4, at::native::exp_kernel_cuda(at::TensorIt",
+   "share": 0.1602191718395046,
+   "ms_per_call": 7.086519949999999,
+   "per_call": 2.0
+  },
+  {
+   "name": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native:",
+   "share": 0.14459979545880988,
+   "ms_per_call": 6.395672399999992,
+   "per_call": 1.0
+  },
+  {
+   "name": "ampere_bf16_s1688gemm_bf16_128x128_ldg8_f2f_stages_32x1_tn",
+   "share": 0.09244109339083659,
+   "ms_per_call": 4.088684549999993,
+   "per_call": 1.0
+  },
+  {
+   "name": "ampere_bf16_s16816gemm_bf16_64x64_ldg8_f2f_stages_64x5_nn",
+   "share": 0.08086630426246379,
+   "ms_per_call": 3.5767297500000073,
+   "per_call": 1.0
+  }
+ ],
+ "category_share": {
+  "mask_elementwise": 0.5029035090254581,
+  "softmax_reduce": 0.24351092843551744,
+  "gemm": 0.17330739765330036,
+  "memcpy_memset": 0.08027816488572392
+ },
+ "gpu_busy_frac": 0.9994159717116667,
+ "peak_mem_mb": 4612.75
+}

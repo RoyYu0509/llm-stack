@@ -1,0 +1,4 @@
+naive_c64_r1.json: 864.3 tok/s  TTFT p50 0.53s
+naive_c64_r2.json: 864.9 tok/s  TTFT p50 0.53s
+naive_c64_r3.json: 874.1 tok/s  TTFT p50 0.53s
+engine_cb_naive_bfloat16: mean 867.8 tok/s over 3 reps

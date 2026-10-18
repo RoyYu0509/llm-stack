@@ -1,0 +1,25 @@
+{
+ "system": "sdpa_flash",
+ "seq": 256,
+ "tool": "torch",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 128,
+ "baseline_ms": 0.34278240203857424,
+ "profiled_wall_ms": 0.3472800016403198,
+ "gpu_kernel_ms_per_call": 0.3407392500000001,
+ "launches_per_call": 1.0,
+ "top_kernels": [
+  {
+   "name": "void pytorch_flash::flash_fwd_kernel<pytorch_flash::Flash_fwd_kernel_traits<64, 128, 128, ",
+   "share": 1.0,
+   "ms_per_call": 0.3407392500000001,
+   "per_call": 1.0
+  }
+ ],
+ "category_share": {
+  "fused_attention": 1.0
+ },
+ "gpu_busy_frac": 0.9811657693808294,
+ "peak_mem_mb": 49.5
+}

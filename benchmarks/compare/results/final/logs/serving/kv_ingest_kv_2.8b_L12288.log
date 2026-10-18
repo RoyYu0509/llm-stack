@@ -1,0 +1,4 @@
+kv_2.8b_L12288_r1.json: 3.6 tok/s  TTFT p50 1.62s
+kv_2.8b_L12288_r2.json: 3.6 tok/s  TTFT p50 1.62s
+kv_2.8b_L12288_r3.json: 3.6 tok/s  TTFT p50 1.62s
+engine_kvsweep_kv_2.8b_L12288_bfloat16: mean 3.6 tok/s over 3 reps

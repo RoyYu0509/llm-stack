@@ -1,0 +1,6 @@
+runtime hints: ['CONTAINER_RUNTIME=runc', 'VAST_CONTAINERLABEL=C.56214460']
+gpu                         : NVIDIA GeForce RTX 3090 Ti  torch 2.6.0+cu126
+eager tiny-op launch        :      4.1 us   (warn > 50 us)
+iterations with a >5 ms stall:   0.0 %  (median 10-op block 50 us)
+matmul 2048^3 fp16: eager 0.271 ms  vs  CUDA-graph 0.277 ms  (eager/graph = 0.98x)
+PASS: launch overhead looks normal

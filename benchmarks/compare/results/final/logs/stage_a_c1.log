@@ -1,0 +1,16 @@
+/workspace/venv-fa/lib/python3.12/site-packages/torch/autograd/graph.py:823: UserWarning: Attempting to run cuBLAS, but there was no current CUDA context! Attempting to set the primary context... (Triggered internally at /pytorch/aten/src/ATen/cuda/CublasHandlePool.cpp:180.)
+  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+Triton autotuning for function flash_fwd_kernel finished after 13.54s; best config selected: Q_TILE_SIZE: 32, K_TILE_SIZE: 64, num_warps: 4, num_ctas: 1, num_stages: 2, num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
+C1 seq=512 dtype=bfloat16  rounding floor out=7.79e-03  tol out=3.11e-02 dq=4.15e-02 dk=5.61e-02 dv=7.82e-02
+C1 attention                  out=2.744e-02 dq=3.009e-02 dk=3.763e-02 dv=3.020e-02  PASS
+C1 torch_compile_attention    out=1.658e-02 dq=2.472e-02 dk=2.234e-02 dv=2.162e-02  PASS
+C1 sdpa_flash                 out=1.393e-02 dq=1.246e-02 dk=1.517e-02 dv=2.162e-02  PASS
+C1 flash_attn_pkg             out=1.393e-02 dq=1.246e-02 dk=1.517e-02 dv=2.162e-02  PASS
+C1 triton_fa_mine             out=1.331e-02 dq=4.117e-02 dk=4.339e-02 dv=3.130e-02  PASS
+Triton autotuning for function flash_fwd_kernel finished after 13.54s; best config selected: Q_TILE_SIZE: 64, K_TILE_SIZE: 32, num_warps: 4, num_ctas: 1, num_stages: 2, num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
+C1 seq=1000 dtype=bfloat16  rounding floor out=7.76e-03  tol out=3.10e-02 dq=5.29e-02 dk=4.89e-02 dv=7.19e-02
+C1 attention                  out=2.781e-02 dq=3.278e-02 dk=4.618e-02 dv=3.039e-02  PASS
+C1 torch_compile_attention    out=1.224e-02 dq=2.151e-02 dk=2.878e-02 dv=2.045e-02  PASS
+C1 sdpa_flash                 out=1.264e-02 dq=1.397e-02 dk=2.240e-02 dv=2.169e-02  PASS
+C1 flash_attn_pkg             out=1.264e-02 dq=1.397e-02 dk=2.240e-02 dv=2.169e-02  PASS
+C1 triton_fa_mine             out=1.264e-02 dq=5.366e-02 dk=3.817e-02 dv=4.531e-02  FAIL

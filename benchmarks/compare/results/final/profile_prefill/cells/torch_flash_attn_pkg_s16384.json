@@ -1,0 +1,25 @@
+{
+ "system": "flash_attn_pkg",
+ "seq": 16384,
+ "tool": "torch",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 2,
+ "baseline_ms": 13.856561279296875,
+ "profiled_wall_ms": 13.8912109375,
+ "gpu_kernel_ms_per_call": 13.8839017,
+ "launches_per_call": 1.0,
+ "top_kernels": [
+  {
+   "name": "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlas",
+   "share": 1.0,
+   "ms_per_call": 13.8839017,
+   "per_call": 1.0
+  }
+ ],
+ "category_share": {
+  "fused_attention": 1.0
+ },
+ "gpu_busy_frac": 0.9994738228702388,
+ "peak_mem_mb": 49.50048828125
+}

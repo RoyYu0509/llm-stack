@@ -1,0 +1,32 @@
+
+== decode step, B=8, KV width=788, attn=fa2, dtype=bfloat16
+wall per step           :    18.49 ms
+GPU kernel busy / step  :     2.85 ms   (GPU idle share 85%)
+kernel launches / step  :      544
+blocking CUDA calls/step: StreamSynchronize 34.0, DeviceSynchronize 0.7, Memcpy 0.0, EventSynchronize 0.0   (cudaMemcpyAsync 52.0)
+flags                   : compile_decode=False
+KV bytes moved / step   :   0.0004 GB read + same written (appended in place (new token only))
+
+top CUDA kernels by self time (per step):
+    0.679 ms  x   96  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(cutlass_
+    0.648 ms  x   16  void flash::flash_fwd_splitkv_kernel<Flash_fwd_kernel_traits<64, 64, 256, 4, false, false, cutlass::
+    0.173 ms  x   80  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::direct_co
+    0.145 ms  x   33  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl<at::native::BinaryFunctor<fl
+    0.127 ms  x   32  void at::native::index_elementwise_kernel<128, 4, at::native::gpu_index_kernel<at::native::index_ker
+    0.118 ms  x   33  void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at::native::MeanOps<float, float,
+    0.100 ms  x   16  void cutlass::Kernel2<cutlass_80_wmma_tensorop_s161616gemm_bf16_16x16_64x1_nn_align8>(cutlass_80_wmm
+    0.099 ms  x   32  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::CUDAFunct
+    0.096 ms  x   33  void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorB
+    0.088 ms  x    1  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x1_tn_align8>(cutlass_
+    0.078 ms  x   16  void flash::flash_fwd_splitkv_combine_kernel<Flash_fwd_kernel_traits<64, 64, 256, 4, false, false, c
+    0.076 ms  x   65  void at::native::vectorized_elementwise_kernel<4, at::native::bfloat16_copy_kernel_cuda(at::TensorIt
+
+top CPU ops by self CPU time (per step):
+    3.464 ms  x  544  cudaLaunchKernel
+    2.772 ms  x  145  aten::bmm
+    1.823 ms  x  145  aten::einsum
+    1.326 ms  x  235  aten::copy_
+    0.951 ms  x  725  aten::permute
+    0.891 ms  x  145  cuLaunchKernel
+    0.742 ms  x  170  aten::empty_strided
+    0.688 ms  x  580  aten::view

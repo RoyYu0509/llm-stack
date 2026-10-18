@@ -1,0 +1,4 @@
+naive_c8_r1.json: 381.6 tok/s  TTFT p50 0.08s
+naive_c8_r2.json: 366.4 tok/s  TTFT p50 0.08s
+naive_c8_r3.json: 378.8 tok/s  TTFT p50 0.08s
+engine_cb_naive_bfloat16: mean 375.6 tok/s over 3 reps

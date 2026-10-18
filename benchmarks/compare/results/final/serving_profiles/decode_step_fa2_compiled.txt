@@ -1,0 +1,32 @@
+
+== decode step, B=32, KV width=912, attn=fa2, dtype=bfloat16
+wall per step           :     7.27 ms
+GPU kernel busy / step  :     3.37 ms   (GPU idle share 54%)
+GPU kernel runs / step  :      397   (cudaLaunchKernel calls 71; compiled Triton kernels use cuLaunchKernel)
+blocking CUDA calls/step: StreamSynchronize 1.0, DeviceSynchronize 0.2, Memcpy 0.0, EventSynchronize 0.0   (cudaMemcpyAsync 3.0)
+flags                   : compile_decode=True
+KV bytes moved / step   :   0.0016 GB read + same written (appended in place (new token only))
+
+top CUDA kernels by self time (per step):
+    1.834 ms  x   16  void flash::flash_fwd_splitkv_kernel<Flash_fwd_kernel_traits<64, 64, 256, 4, false, false, cutlass::
+    0.462 ms  x   64  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(cutlass_
+    0.322 ms  x   32  ampere_bf16_s16816gemm_bf16_64x64_sliced1x2_ldg8_f2f_stages_64x5_tn
+    0.126 ms  x   16  void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64x64_32x6_tn_align8>(cutlass_80
+    0.103 ms  x   32  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_32x1_nn_align2>(cutlass_8
+    0.091 ms  x    1  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x1_tn_align8>(cutlass_
+    0.047 ms  x   32  triton_poi_fused_clone_2
+    0.042 ms  x   32  triton_poi_fused_clone_3
+    0.037 ms  x   32  triton_per_fused__to_copy_add_index_mean_pow_6
+    0.036 ms  x   16  triton_poi_fused_mul_sigmoid_8
+    0.028 ms  x   16  void cublasLt::splitKreduce_kernel<32, 16, int, __nv_bfloat16, __nv_bfloat16, float, false, __nv_bfl
+    0.025 ms  x   16  triton_poi_fused_clone_4
+
+top CPU ops by self CPU time (per step):
+    3.556 ms  x    1  Torch-Compiled Region: 0/1
+    2.021 ms  x  145  aten::bmm
+    1.582 ms  x  322  cuLaunchKernel
+    1.207 ms  x   16  llmstack::kvcache_attention
+    0.388 ms  x   71  cudaLaunchKernel
+    0.251 ms  x   32  triton_poi_fused_clone_2
+    0.244 ms  x   32  triton_poi_fused_clone_3
+    0.204 ms  x   32  triton_per_fused__to_copy_add_index_mean_pow_6

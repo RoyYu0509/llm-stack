@@ -1,0 +1,3 @@
+smoke_fa2_prefillbatch_r1.json: 185.7 tok/s  TTFT p50 0.04s
+smoke_fa2_prefillbatch_r2.json: 186.6 tok/s  TTFT p50 0.04s
+smoke_fa2_prefillbatch: mean 186.1 tok/s over 2 reps

@@ -1,0 +1,161 @@
+[
+ {
+  "stage": "attention_check",
+  "timestamp": "2026-10-16T07:12:08+00:00",
+  "argv": [
+   "attention/bench_attention.py",
+   "--check",
+   "--out",
+   "/workspace/llm-stack/benchmarks/compare/results/final/attention.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "seqs": [
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+    16384
+   ],
+   "tokens": 32768
+  }
+ },
+ {
+  "stage": "attention_flash_raises",
+  "timestamp": "2026-10-16T07:12:10+00:00",
+  "argv": [
+   "attention/bench_attention.py",
+   "--check-flash-raises",
+   "--out",
+   "/workspace/llm-stack/benchmarks/compare/results/final/attention.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "seqs": [
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+    16384
+   ],
+   "tokens": 32768
+  }
+ },
+ {
+  "stage": "attention_inductor",
+  "timestamp": "2026-10-16T07:12:12+00:00",
+  "argv": [
+   "attention/bench_attention.py",
+   "--check-inductor",
+   "--out",
+   "/workspace/llm-stack/benchmarks/compare/results/final/attention.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "seqs": [
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+    16384
+   ],
+   "tokens": 32768
+  }
+ },
+ {
+  "stage": "attention_sweep",
+  "timestamp": "2026-10-16T07:12:16+00:00",
+  "argv": [
+   "attention/bench_attention.py",
+   "--mode",
+   "both",
+   "--reps",
+   "5",
+   "--out",
+   "/workspace/llm-stack/benchmarks/compare/results/final/attention.csv"
+  ],
+  "git_sha": "a3cac72686",
+  "git_dirty": true,
+  "host": "f47fcc59ed18",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "python": "3.12.14",
+  "packages": {
+   "torch": "2.6.0+cu126",
+   "triton": "3.2.0",
+   "flash-attn": "2.8.3",
+   "transformers": "5.15.1",
+   "regex": "2026.9.29",
+   "numpy": "2.5.4",
+   "tokenizers": "0.22.2"
+  },
+  "gpu": "NVIDIA GeForce RTX 3090 Ti, 550.163.01, 24564 MiB, 300.00 W, 2145 MHz",
+  "extra": {
+   "dtype": "bfloat16",
+   "seqs": [
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+    16384
+   ],
+   "tokens": 32768
+  }
+ }
+]

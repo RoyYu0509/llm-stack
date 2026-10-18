@@ -1,0 +1,3 @@
+[sdpa_c8] rep 1: 4208 tokens in 10.30s = 408.6 tok/s, TTFT p50 0.083s, forwards 623, peak 1.3 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/sdpa_c8_r1.json
+[sdpa_c8] rep 2: 4208 tokens in 10.35s = 406.4 tok/s, TTFT p50 0.083s, forwards 623, peak 1.3 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/sdpa_c8_r2.json
+[sdpa_c8] rep 3: 4208 tokens in 10.37s = 405.7 tok/s, TTFT p50 0.083s, forwards 623, peak 1.3 GiB -> /workspace/llm-stack/benchmarks/compare/results/final/serving_raw/engine/sdpa_c8_r3.json

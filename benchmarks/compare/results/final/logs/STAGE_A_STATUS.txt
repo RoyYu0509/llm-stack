@@ -1,0 +1,11 @@
+2026-10-16T07:15:36+00:00 gpu state
+2026-10-16T07:15:36+00:00 C1 bf16
+2026-10-16T07:16:12+00:00 C1 rc=1
+2026-10-16T07:16:12+00:00 C6 flash raises
+2026-10-16T07:16:14+00:00 C6 rc=0
+2026-10-16T07:16:14+00:00 inductor
+2026-10-16T07:16:17+00:00 inductor rc=0
+2026-10-16T07:16:17+00:00 sweep (5 systems x 8 seqs x fwd,fwd+bwd; one fresh process per cell)
+2026-10-16T07:25:17+00:00 sweep rc=0
+2026-10-16T07:25:17+00:00 gate rc=0 (0 carry on, 3 triggered -> stop and discuss, 4 cannot evaluate)
+2026-10-16T07:25:17+00:00 STAGE_A_DONE

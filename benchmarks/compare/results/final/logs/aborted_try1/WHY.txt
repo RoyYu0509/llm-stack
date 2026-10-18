@@ -1,0 +1,1 @@
+first stage-A try died: cs336_systems needs the editable install (importlib.metadata llm-training); C6 and the sdpa_flash/flash_attn_pkg cells are valid but the run was stopped and redone from scratch

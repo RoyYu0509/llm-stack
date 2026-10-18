@@ -1,0 +1,13 @@
+waiting for server (log: /workspace/llm-stack/benchmarks/compare/serving/../results/final/logs/serving/sglang_cb_only_flashinfer_bfloat16.log)
+sglang_cb_only_flashinfer_bfloat16 C=  1 rep0:    204.8 tok/s  TTFT p50 0.01s  TPOT p50 4.8ms  failed=0
+sglang_cb_only_flashinfer_bfloat16 C=  1 rep1:    203.2 tok/s  TTFT p50 0.01s  TPOT p50 5.0ms  failed=0
+sglang_cb_only_flashinfer_bfloat16 C=  1 rep2:    210.2 tok/s  TTFT p50 0.01s  TPOT p50 4.7ms  failed=0
+sglang_cb_only_flashinfer_bfloat16 C=  8 rep0:   1302.3 tok/s  TTFT p50 0.01s  TPOT p50 5.7ms  failed=0
+sglang_cb_only_flashinfer_bfloat16 C=  8 rep1:   1296.5 tok/s  TTFT p50 0.02s  TPOT p50 5.7ms  failed=0
+sglang_cb_only_flashinfer_bfloat16 C=  8 rep2:   1297.5 tok/s  TTFT p50 0.02s  TPOT p50 5.7ms  failed=0
+sglang_cb_only_flashinfer_bfloat16 C= 32 rep0:   4180.0 tok/s  TTFT p50 0.03s  TPOT p50 6.8ms  failed=0
+sglang_cb_only_flashinfer_bfloat16 C= 32 rep1:   4035.4 tok/s  TTFT p50 0.02s  TPOT p50 7.0ms  failed=0
+sglang_cb_only_flashinfer_bfloat16 C= 32 rep2:   4090.7 tok/s  TTFT p50 0.02s  TPOT p50 7.1ms  failed=0
+sglang_cb_only_flashinfer_bfloat16 C= 64 rep0:   6607.3 tok/s  TTFT p50 0.03s  TPOT p50 9.1ms  failed=0
+sglang_cb_only_flashinfer_bfloat16 C= 64 rep1:   6581.0 tok/s  TTFT p50 0.03s  TPOT p50 8.9ms  failed=0
+sglang_cb_only_flashinfer_bfloat16 C= 64 rep2:   6743.4 tok/s  TTFT p50 0.03s  TPOT p50 8.7ms  failed=0

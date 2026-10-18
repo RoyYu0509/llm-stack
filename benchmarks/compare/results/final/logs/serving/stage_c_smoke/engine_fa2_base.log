@@ -1,0 +1,2 @@
+[smoke_fa2_base] rep 1: 576 tokens in 3.15s = 182.9 tok/s, TTFT p50 0.078s, forwards 167, peak 0.8 GiB -> /tmp/smoke_stage_c/smoke_fa2_base_r1.json
+[smoke_fa2_base] rep 2: 576 tokens in 3.13s = 184.0 tok/s, TTFT p50 0.077s, forwards 167, peak 0.8 GiB -> /tmp/smoke_stage_c/smoke_fa2_base_r2.json

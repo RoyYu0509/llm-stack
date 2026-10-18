@@ -1,0 +1,7 @@
+Loading weights:   0%|          | 0/147 [00:00<?, ?it/s]Loading weights: 100%|██████████| 147/147 [00:00<00:00, 4931.44it/s]
+hf_generate_sdpa_bfloat16 C=  1 rep0:    115.0 tok/s  TTFT p50 0.01s  TPOT p50 8.6ms  failed=0
+hf_generate_sdpa_bfloat16 C=  1 rep1:    114.3 tok/s  TTFT p50 0.01s  TPOT p50 8.6ms  failed=0
+hf_generate_sdpa_bfloat16 C=  1 rep2:    113.5 tok/s  TTFT p50 0.01s  TPOT p50 8.9ms  failed=0
+hf_generate_sdpa_bfloat16 C= 32 rep0:    112.9 tok/s  TTFT p50 17.68s  TPOT p50 8.8ms  failed=0
+hf_generate_sdpa_bfloat16 C= 32 rep1:    113.1 tok/s  TTFT p50 17.60s  TPOT p50 8.8ms  failed=0
+hf_generate_sdpa_bfloat16 C= 32 rep2:    112.9 tok/s  TTFT p50 17.54s  TPOT p50 8.9ms  failed=0

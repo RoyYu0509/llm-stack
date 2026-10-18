@@ -1,0 +1,4 @@
+fa2_lastlogits_c32_r1.json: 1001.8 tok/s  TTFT p50 0.22s
+fa2_lastlogits_c32_r2.json: 993.0 tok/s  TTFT p50 0.22s
+fa2_lastlogits_c32_r3.json: 999.7 tok/s  TTFT p50 0.22s
+engine_cb_fa2_lastlogits_bfloat16: mean 998.2 tok/s over 3 reps

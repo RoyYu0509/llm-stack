@@ -1,0 +1,39 @@
+{
+ "system": "torch_compile_attention",
+ "seq": 128,
+ "tool": "nsys",
+ "status": "ok",
+ "n_calls": 20,
+ "batch": 256,
+ "gpu_kernel_ms_per_call": 0.8291850500000001,
+ "launches_per_call": 3.0,
+ "top_kernels": [
+  {
+   "name": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_tn_align8>",
+   "share": 0.3895231227335804,
+   "ms_per_call": 0.32298675,
+   "per_call": 1.0
+  },
+  {
+   "name": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_64x1_nn_align8>",
+   "share": 0.34185849105697214,
+   "ms_per_call": 0.28346395,
+   "per_call": 1.0
+  },
+  {
+   "name": "triton_per_fused_bitwise_not_div_exp_ge_logsumexp_masked_fill_sub_0",
+   "share": 0.26861838620944745,
+   "ms_per_call": 0.22273435,
+   "per_call": 1.0
+  }
+ ],
+ "category_share": {
+  "gemm": 0.7313816137905526,
+  "softmax_reduce": 0.26861838620944745
+ },
+ "n_kernels": 60,
+ "busy_ns": 16583701.0,
+ "span_ns": 16626168.0,
+ "busy_frac": 0.9974457734337823,
+ "nsys_rep": "/workspace/llm-stack/benchmarks/compare/results/final/profile_prefill/nsys/torch_compile_attention_s128.nsys-rep"
+}

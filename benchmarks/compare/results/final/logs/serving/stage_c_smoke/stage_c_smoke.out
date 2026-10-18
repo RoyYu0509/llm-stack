@@ -1,0 +1,12 @@
+SMOKE PASS engine_fa2_base
+SMOKE PASS ingest_fa2_base
+SMOKE PASS engine_fa2_lastlogits
+SMOKE PASS ingest_fa2_lastlogits
+SMOKE PASS engine_fa2_prefillbatch
+SMOKE PASS ingest_fa2_prefillbatch
+SMOKE PASS engine_fa2_compiled
+SMOKE PASS ingest_fa2_compiled
+SMOKE PASS naive_drift
+SMOKE PASS check_stage_c
+SMOKE PASS decode_step_base
+SMOKE PASS decode_step_compiled

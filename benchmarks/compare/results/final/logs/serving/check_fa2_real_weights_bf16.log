@@ -1,0 +1,6 @@
+[1 kernel ] flash vs reference: max|out diff| 3.906e-03   max|cache diff after append| 0.000e+00
+[2 model  ] prealloc(flash) vs prealloc(reference): max|logit diff| 1.260e-01, argmax agreement 127/128
+[3 system ] prealloc(flash) vs ragged(naive), same KV, teacher-forced: max|logit diff| 1.250e-01, argmax agreement 128/128
+[3 system ] free-running greedy, 16 tokens: 8/8 rows identical to the ragged/naive path
+stats: {'steps': 16, 'rows': 128, 'adds': 8, 'removes': 0}
+[4 truth  ] fp32 logit std 2.65; max|logit - fp32 truth|: flash mean 0.07 / worst 0.15, reference mean 0.07 / worst 0.11, naive mean 0.07 / worst 0.14
